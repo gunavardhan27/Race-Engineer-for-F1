@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import socket
 import struct
 import sys
 import threading
@@ -603,11 +604,37 @@ class Engineer:
             await asyncio.sleep(0.05)
 
 
+def get_local_ip() -> str:
+    """Returns local LAN IP address for setting up in-game UDP telemetry destination."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
 class Listener(asyncio.DatagramProtocol):
     def __init__(self, on_packet):
         self.on_packet = on_packet
+        self.packet_count = 0
+        self.first_packet = True
+        self.last_log_time = 0.0
 
     def datagram_received(self, data, addr):
+        now = time.monotonic()
+        self.packet_count += 1
+        if self.first_packet:
+            self.first_packet = False
+            self.last_log_time = now
+            print(f"\n[TELEMETRY] First UDP packet received from {addr[0]}:{addr[1]} ({len(data)} bytes)! F1 game is streaming data.\n", flush=True)
+            log.info("First UDP packet received from %s:%s (%d bytes)", addr[0], addr[1], len(data))
+        elif now - self.last_log_time >= 5.0:
+            self.last_log_time = now
+            print(f"[TELEMETRY] Receiving data: {self.packet_count} packets processed (from {addr[0]}:{addr[1]})", flush=True)
+
         self.on_packet(data)
 
 
@@ -815,9 +842,10 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
             await asyncio.sleep(1)
             print(json.dumps(engineer.state.snapshot(), indent=2))
         else:
+            listener_instance = Listener(engineer.on_packet)
             try:
                 transport, _ = await loop.create_datagram_endpoint(
-                    lambda: Listener(engineer.on_packet), local_addr=(host, port))
+                    lambda: listener_instance, local_addr=(host, port))
             except OSError as e:
                 if e.errno == 48 or "Address already in use" in str(e):
                     log.error("UDP port %d is already in use by another process.", port)
@@ -828,7 +856,35 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
                     print(f"     • Or start with a different port: python main.py --port {port + 1} (or --ask-port)\n")
                     return
                 raise
+            local_ip = get_local_ip()
             log.info("listening on %s:%d (PTT = UDP Action %d)", host, port, ptt_action)
+            print(f"\n==============================================================")
+            print(f"  🏎️  F1 25 TELEMETRY LISTENER ACTIVE")
+            print(f"  Listening on UDP: {host}:{port}")
+            print(f"  In-Game Target IP: {local_ip}:{port} (or 127.0.0.1 if on same PC)")
+            print(f"  Status: Waiting for F1 25 packets...")
+            print(f"==============================================================\n", flush=True)
+
+            async def _telemetry_watchdog():
+                await asyncio.sleep(10)
+                if listener_instance.packet_count == 0:
+                    print("\n" + "="*62)
+                    print("  ⚠️  NO F1 25 TELEMETRY PACKETS RECEIVED YET")
+                    print("="*62)
+                    print(f"  Race Engineer is listening on UDP port {port}, but 0 packets")
+                    print(f"  have arrived from F1.")
+                    print(f"  Please verify your F1 25 in-game settings:")
+                    print(f"    1. Go to Game Options > Settings > Telemetry Settings")
+                    print(f"    2. UDP Telemetry: ON")
+                    print(f"    3. UDP IP Address: {local_ip} (or 127.0.0.1 if on same PC)")
+                    print(f"    4. UDP Port: {port}")
+                    print(f"    5. UDP Packet Format: 2025")
+                    print(f"    6. UDP Send Rate: 20Hz (or 60Hz)")
+                    print("="*62 + "\n", flush=True)
+
+            watchdog_task = asyncio.create_task(_telemetry_watchdog())
+            tasks.append(watchdog_task)
+
             try:
                 await asyncio.Event().wait()
             finally:

@@ -568,6 +568,9 @@ def parse(buf: bytes):
     if h.packet_format not in KNOWN_FORMATS:
         _warn_once(("fmt", h.packet_format), "Packet format %s not verified; parsing with F1 25 layouts",
                    h.packet_format)
+        if ("fmt_print", h.packet_format) not in _warned:
+            _warned.add(("fmt_print", h.packet_format))
+            print(f"\n[TELEMETRY WARNING] Received F1 UDP packet format {h.packet_format} (expected 2025). Please set UDP Format to 2025 in F1 Telemetry Settings.\n", flush=True)
     parser = _PARSERS.get(h.packet_id)
     if parser is None:
         return h, None

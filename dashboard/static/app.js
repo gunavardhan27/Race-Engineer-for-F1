@@ -435,14 +435,15 @@
     }
 
     if (isLive || (lastPacketTime > 0 && (Date.now() - lastPacketTime) < 3500)) {
-      el.noTelemetryBanner.classList.add('hidden');
+      if (el.noTelemetryBanner) el.noTelemetryBanner.classList.add('hidden');
       el.connectionBadge.className = 'status-pill connected';
       el.connectionText.textContent = 'LIVE';
       if (el.sessionStatus) el.sessionStatus.textContent = 'ACTIVE';
     } else {
       // Connected to dashboard server, waiting for game telemetry packets
-      el.connectionBadge.className = 'status-pill connected';
-      el.connectionText.textContent = 'CONNECTED';
+      if (el.noTelemetryBanner) el.noTelemetryBanner.classList.remove('hidden');
+      el.connectionBadge.className = 'status-pill standby';
+      el.connectionText.textContent = 'STANDBY (WAITING FOR F1)';
       if (el.sessionStatus && !data.track) el.sessionStatus.textContent = 'STANDBY';
     }
 
@@ -1120,19 +1121,37 @@
       return;
     }
 
+    let lastLiveLoggedState = null;
+    let lastConsoleLogTime = 0;
+
     socket.onopen = function () {
       reconnectAttempts = 0;
-      el.connectionBadge.className = 'status-pill connected';
-      el.connectionText.textContent = (lastPacketTime > 0 && (Date.now() - lastPacketTime) < 3500) ? 'LIVE' : 'CONNECTED';
-      console.log('[Dashboard] WebSocket connected to', wsUrl);
+      console.log('[Dashboard] WebSocket connected to Race Engineer server:', wsUrl);
+      console.log('[Dashboard] Waiting for F1 25 game telemetry stream from Python...');
     };
 
     socket.onmessage = function (event) {
       try {
         const payload = JSON.parse(event.data);
         if (payload.type === 'radio') {
+          console.log('[Dashboard Radio Message]', payload);
           addRadioMessage(payload);
         } else {
+          const isLive = !!payload.session_live;
+          const now = Date.now();
+          if (isLive !== lastLiveLoggedState || (now - lastConsoleLogTime > 2500)) {
+            lastConsoleLogTime = now;
+            lastLiveLoggedState = isLive;
+            console.log(`[Dashboard Telemetry] Server: Connected | F1 Game: ${isLive ? 'STREAMING (LIVE)' : 'STANDBY (NO GAME DATA YET)'}`, {
+              f1_game_streaming: isLive,
+              track: payload.track || '(waiting for session)',
+              speed_kph: payload.speed_kph,
+              gear: payload.gear,
+              lap: payload.lap,
+              position: payload.position,
+              telemetry_age_s: payload.telemetry_age_s
+            });
+          }
           updateTelemetryUI(payload);
         }
       } catch (err) {

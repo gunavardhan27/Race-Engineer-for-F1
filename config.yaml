@@ -2,7 +2,7 @@
 # Target: Windows 11, RTX 2050 (4GB VRAM) - all local AI runs on CPU by default.
 
 telemetry:
-  host: "127.0.0.1"
+  host: "0.0.0.0"
   port: 20777
   ptt_action: 1                # In-game "UDP Action 1" button bound to wheel
   ask_port: false              # Prompt interactively for ports on launch if true (or use --ask-port)

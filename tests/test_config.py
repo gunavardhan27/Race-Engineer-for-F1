@@ -11,7 +11,7 @@ from main import parse_args
 def test_default_config():
     """AppConfig defaults should have sensible values and CPU-first settings."""
     cfg = AppConfig()
-    assert cfg.telemetry.host == "127.0.0.1"
+    assert cfg.telemetry.host == "0.0.0.0"
     assert cfg.telemetry.port == 20777
     assert cfg.telemetry.ptt_action == 1
     assert cfg.stt.device == "cpu"
@@ -33,7 +33,7 @@ def test_load_nonexistent_config_falls_back_to_defaults(caplog):
 def test_load_config_yaml():
     """Loading config.yaml in workspace should match expected schema."""
     cfg = load_config("config.yaml")
-    assert cfg.telemetry.host == "127.0.0.1"
+    assert cfg.telemetry.host == "0.0.0.0"
     assert cfg.telemetry.port == 20777
     assert cfg.stt.model == "small.en"
     assert cfg.tts.engine == "piper"

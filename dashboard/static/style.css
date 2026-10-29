@@ -208,6 +208,9 @@ body {
 .status-pill.connecting { color: var(--color-amber); border-color: rgba(255, 171, 0, 0.4); }
 .status-pill.connecting .status-dot { background: var(--color-amber); }
 
+.status-pill.standby { color: var(--color-amber); border-color: rgba(255, 171, 0, 0.4); }
+.status-pill.standby .status-dot { background: var(--color-amber); box-shadow: 0 0 8px var(--color-amber); }
+
 .status-pill.offline { color: var(--color-red); border-color: rgba(255, 61, 0, 0.4); }
 .status-pill.offline .status-dot { background: var(--color-red); }
 

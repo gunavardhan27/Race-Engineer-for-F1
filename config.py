@@ -17,7 +17,7 @@ log = logging.getLogger("engineer.config")
 
 @dataclass
 class TelemetryConfig:
-    host: str = "127.0.0.1"
+    host: str = "0.0.0.0"
     port: int = 20777
     ptt_action: int = 1
     ask_port: bool = False
