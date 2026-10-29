@@ -1055,6 +1055,37 @@ def create_app(
             "services": {},
         }
 
+    @app.get("/api/usage/history")
+    async def get_usage_history(
+        days: int = Query(7, ge=1, le=90),
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        guard = usage_guard or (getattr(engineer, "usage_guard", None) if engineer else None)
+        if guard:
+            return {
+                "days": days,
+                "history": guard.get_daily_history(days),
+                "preflight": guard.run_preflight_check(print_banner=False),
+            }
+        return {
+            "days": days,
+            "history": [],
+            "preflight": {
+                "health": "OK",
+                "overall_pct": 0.0,
+                "cutoff_pct": 80.0,
+                "message": "Local only",
+                "seconds_to_reset": 0,
+                "countdown_str": "--",
+                "services": [],
+            },
+        }
+
     @app.websocket("/ws/live")
     async def ws_live(websocket: WebSocket, token_param: str | None = Query(None, alias="token")):
         if not verify_token(token_param, token):
@@ -1147,6 +1178,15 @@ class DashboardServer:
                 if self.track_map:
                     self.track_map.update_from_state(self.state)
                 payload = build_live_payload(self.state, self.track_map)
+                guard = self.usage_guard or (getattr(self.engineer, "usage_guard", None) if self.engineer else None)
+                if guard:
+                    st = guard.get_status()
+                    payload["cloud_quota"] = {
+                        "pct": st.get("overall_quota_pct", 0.0),
+                        "cutoff_pct": st.get("cutoff_pct", 80.0),
+                        "countdown_str": st.get("countdown_str", "--"),
+                        "last_provider": st.get("last_provider", "none"),
+                    }
                 self.broadcaster.broadcast_state(payload)
                 await asyncio.sleep(interval)
         except asyncio.CancelledError:

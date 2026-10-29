@@ -12,7 +12,7 @@ Enforces:
 from __future__ import annotations
 
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 import logging
 from pathlib import Path
@@ -25,6 +25,21 @@ from typing import Any, Dict, List, Optional, Tuple
 from config import ModelRateLimits, EdgeTTSRateLimits, UsageConfig
 
 log = logging.getLogger("engineer.usage")
+
+
+def get_seconds_until_utc_midnight() -> float:
+    """Calculates remaining seconds until the next 00:00:00 UTC (Groq daily quota reset)."""
+    now_utc = datetime.now(timezone.utc)
+    tomorrow_utc = (now_utc + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(0.0, (tomorrow_utc - now_utc).total_seconds())
+
+
+def format_countdown(seconds: float) -> str:
+    """Formats seconds into human-readable hours and minutes (e.g. '4h 12m')."""
+    secs = int(max(0.0, seconds))
+    h = secs // 3600
+    m = (secs % 3600) // 60
+    return f"{h}h {m}m"
 
 
 def parse_duration_s(val: Any) -> float:
@@ -93,6 +108,10 @@ class UsageGuard:
 
         # Last LLM provider used
         self.last_provider_used: str = "none"
+
+        # Caching for high-frequency dashboard polling
+        self._cached_status: Optional[Dict[str, Any]] = None
+        self._last_status_mono: float = 0.0
 
         self._init_db()
 
@@ -394,6 +413,7 @@ class UsageGuard:
         """Records actual usage and response headers. Handles 429 pausing and threshold alerts."""
         now = time.monotonic()
         with self._lock:
+            self._cached_status = None
             # 1. Handle HTTP 429
             if status_code == 429:
                 retry_after_val = None
@@ -514,10 +534,20 @@ class UsageGuard:
                     log.warning("UsageGuard: Service '%s' reached 80%% of a daily limit (current: %.1f%%)", service, max_pct)
                     alerted.add(80)
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self, force: bool = False) -> Dict[str, Any]:
         """Collects usage statistics, limits, percentages, and states for dashboard and CLI."""
         now = time.monotonic()
+        sec_to_reset = get_seconds_until_utc_midnight()
+        countdown_str = format_countdown(sec_to_reset)
+
         with self._lock:
+            if not force and self._cached_status and (now - self._last_status_mono < 1.0):
+                cached = dict(self._cached_status)
+                cached["seconds_to_reset"] = round(sec_to_reset, 1)
+                cached["countdown_str"] = countdown_str
+                cached["last_provider"] = self.last_provider_used
+                return cached
+
             self._clean_minute_window(now)
             services_tracked = {"groq", "groq_stt", "edge_tts"}
             for k in list(self._minute_reqs.keys()) + list(self._header_state.keys()):
@@ -528,9 +558,15 @@ class UsageGuard:
                 "date": today,
                 "allow_paid": self.allow_paid,
                 "max_fraction": self.max_fraction,
+                "cutoff_pct": round(self.max_fraction * 100.0, 1),
+                "seconds_to_reset": round(sec_to_reset, 1),
+                "countdown_str": countdown_str,
                 "last_provider": self.last_provider_used,
+                "overall_quota_pct": 0.0,
                 "services": {},
             }
+
+            max_overall_daily_pct = 0.0
 
             for s_name in sorted(services_tracked):
                 limits = self.get_service_limits(s_name)
@@ -567,7 +603,11 @@ class UsageGuard:
                 pct_chr_min = (min_chr / float(chars_min)) * 100.0 if chars_min > 0 else 0.0
                 pct_chr_day = (daily["characters"] / float(chars_day)) * 100.0 if chars_day > 0 else 0.0
 
-                max_pct = max(pct_req_min, pct_req_day, pct_tok_min, pct_tok_day, pct_aud_day, pct_chr_min, pct_chr_day)
+                daily_pct = max(pct_req_day, pct_tok_day, pct_aud_day, pct_chr_day)
+                if daily_pct > max_overall_daily_pct:
+                    max_overall_daily_pct = daily_pct
+
+                max_pct = max(pct_req_min, daily_pct, pct_chr_min)
 
                 if is_p:
                     state = "paused"
@@ -609,7 +649,126 @@ class UsageGuard:
                     "header": self._header_state.get(s_name, {}),
                 }
 
+            result["overall_quota_pct"] = round(max_overall_daily_pct, 1)
+            self._cached_status = result
+            self._last_status_mono = now
             return result
+
+    def get_daily_history(self, days: int = 7) -> List[Dict[str, Any]]:
+        """Queries SQLite for daily totals over the past N days."""
+        days = max(1, min(days, 90))
+        result = []
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT date, service, requests, tokens, audio_seconds, characters
+                    FROM usage_daily
+                    ORDER BY date DESC, service ASC
+                """)
+                rows = cur.fetchall()
+                seen_dates: List[str] = []
+                for row in rows:
+                    d_str = row[0]
+                    if d_str not in seen_dates:
+                        seen_dates.append(d_str)
+                    if len(seen_dates) > days:
+                        continue
+
+                    limits = self.get_service_limits(row[1])
+                    rpd = limits.get("rpd", 1000)
+                    tpd = limits.get("tpd", 100000)
+                    asd = limits.get("asd", 28800)
+                    chars_day = limits.get("chars_per_day", 200000)
+
+                    pct_req = (row[2] / float(rpd)) * 100.0 if rpd > 0 else 0.0
+                    pct_tok = (row[3] / float(tpd)) * 100.0 if tpd > 0 else 0.0
+                    pct_aud = (row[4] / float(asd)) * 100.0 if asd > 0 else 0.0
+                    pct_chr = (row[5] / float(chars_day)) * 100.0 if chars_day > 0 else 0.0
+                    max_pct = max(pct_req, pct_tok, pct_aud, pct_chr)
+
+                    result.append({
+                        "date": row[0],
+                        "service": row[1],
+                        "requests": int(row[2]),
+                        "tokens": int(row[3]),
+                        "audio_seconds": round(float(row[4]), 1),
+                        "characters": int(row[5]),
+                        "limits": {
+                            "rpd": rpd,
+                            "tpd": tpd,
+                            "asd": asd,
+                            "chars_day": chars_day,
+                        },
+                        "max_pct": round(max_pct, 1),
+                    })
+        except Exception as e:
+            log.warning("UsageGuard: Failed to query daily history: %s", e)
+        return result
+
+    def run_preflight_check(self, print_banner: bool = True) -> Dict[str, Any]:
+        """Runs pre-flight check on startup, verifying remaining quota and logging summary."""
+        today = self._today_str()
+        sec_reset = get_seconds_until_utc_midnight()
+        countdown_str = format_countdown(sec_reset)
+
+        status = self.get_status()
+        services = status["services"]
+
+        overall_pct = 0.0
+        service_summaries = []
+
+        for name, data in services.items():
+            d = data["daily"]
+            r_pct = d.get("requests_pct", 0.0)
+            t_pct = d.get("tokens_pct", 0.0)
+            a_pct = d.get("audio_pct", 0.0)
+            c_pct = d.get("characters_pct", 0.0)
+            s_pct = max(r_pct, t_pct, a_pct, c_pct)
+            if s_pct > overall_pct:
+                overall_pct = s_pct
+
+            service_summaries.append({
+                "service": name,
+                "pct": s_pct,
+                "state": data["state"],
+                "requests": d.get("requests", 0),
+                "requests_limit": d.get("requests_limit", 0),
+            })
+
+        cutoff_pct = self.max_fraction * 100.0
+        if overall_pct >= cutoff_pct:
+            health = "CUTOFF"
+            msg = f"Cloud AI usage is at or above safety cutoff ({overall_pct:.1f}% >= {cutoff_pct:.0f}%). Using local fallback."
+            log.warning("UsageGuard Pre-Flight: %s", msg)
+        elif overall_pct >= 60.0:
+            health = "NEAR_LIMIT"
+            msg = f"Cloud AI usage is near limit ({overall_pct:.1f}%). Safety cutoff at {cutoff_pct:.0f}%."
+            log.warning("UsageGuard Pre-Flight: %s", msg)
+        else:
+            health = "OK"
+            msg = f"All cloud services within free-tier limits ({overall_pct:.1f}% used). Quota resets in {countdown_str}."
+            log.info("UsageGuard Pre-Flight: %s", msg)
+
+        if print_banner:
+            print("\n" + "─" * 70)
+            print(f" 🛡️  AI USAGE PRE-FLIGHT CHECK ({today})")
+            print(f"    Mode: {'PAID ALLOWED' if self.allow_paid else 'FREE TIER ENFORCED'} | Safety Cutoff: {cutoff_pct:.0f}%")
+            print(f"    Daily Quota Reset: in {countdown_str} (00:00 UTC)")
+            for s in service_summaries:
+                print(f"    • {s['service'].upper()}: {s['pct']:.1f}% used ({s['requests']}/{s['requests_limit']} reqs) [{s['state'].upper()}]")
+            print(f"    Status: {health} — {msg}")
+            print("─" * 70 + "\n", flush=True)
+
+        return {
+            "health": health,
+            "overall_pct": round(overall_pct, 1),
+            "cutoff_pct": round(cutoff_pct, 1),
+            "message": msg,
+            "seconds_to_reset": sec_reset,
+            "countdown_str": countdown_str,
+            "services": service_summaries,
+        }
 
     def print_usage_summary(self) -> None:
         """Formatted terminal output for `python main.py --usage`."""
@@ -618,6 +777,7 @@ class UsageGuard:
         print(f" RACE ENGINEER AI USAGE & RATE LIMIT GUARD ({status['date']})")
         print(f" Mode: {'PAID ALLOWED' if status['allow_paid'] else 'FREE TIER ENFORCED (allow_paid=false)'}")
         print(f" Safety Margin: Cutoff at {status['max_fraction'] * 100:.0f}% of limits")
+        print(f" Daily Reset: in {status.get('countdown_str', '--')} (00:00 UTC)")
         print(f" Last Provider Used: {status['last_provider']}")
         print("=" * 72)
 
@@ -665,3 +825,4 @@ class UsageGuard:
                     print(f"    Remaining Tokens:   {hdr.get('remaining_tokens')} (reset in {hdr.get('reset_tokens_s', 0):.1f}s)")
 
         print("\n" + "=" * 72)
+

@@ -276,6 +276,14 @@
     btnRefreshUsage: document.getElementById('btn-refresh-usage'),
     usageLastProviderBadge: document.getElementById('usage-last-provider-badge'),
     usageCardsContainer: document.getElementById('usage-cards-container'),
+    cloudQuotaPill: document.getElementById('cloud-quota-pill'),
+    cloudQuotaText: document.getElementById('cloud-quota-text'),
+    usageResetCountdown: document.getElementById('usage-reset-countdown'),
+    usagePreflightBanner: document.getElementById('usage-preflight-banner'),
+    usagePreflightBadge: document.getElementById('usage-preflight-badge'),
+    usagePreflightMsg: document.getElementById('usage-preflight-msg'),
+    usageHistoryRange: document.getElementById('usage-history-range'),
+    usageHistoryTbody: document.getElementById('usage-history-tbody'),
   };
 
   // --- Track Map & G-Force State ---
@@ -359,12 +367,36 @@
     }, 500);
   }
 
+  // --- Helper: Update Top-Bar Cloud Quota Pill ---
+  function updateCloudQuotaPill(quota) {
+    if (!el.cloudQuotaPill || !el.cloudQuotaText) return;
+    const pct = quota.pct !== undefined ? quota.pct : (quota.overall_pct || 0);
+    const cutoff = quota.cutoff_pct || 80;
+    el.cloudQuotaText.textContent = `CLOUD: ${pct.toFixed(0)}%`;
+    el.cloudQuotaPill.className = 'status-pill cursor-pointer';
+    if (pct >= cutoff) {
+      el.cloudQuotaPill.classList.add('danger');
+      el.cloudQuotaPill.title = `Cloud AI at safety cutoff (${pct.toFixed(1)}% >= ${cutoff}%). Using local fallback. Click to view Usage tab.`;
+    } else if (pct >= 50) {
+      el.cloudQuotaPill.classList.add('warning');
+      el.cloudQuotaPill.title = `Cloud AI approaching cutoff (${pct.toFixed(1)}%). Safety margin at ${cutoff}%. Click to view Usage tab.`;
+    } else {
+      el.cloudQuotaPill.classList.add('ok');
+      el.cloudQuotaPill.title = `Cloud AI Quota: ${pct.toFixed(1)}% used. Click to view Usage tab.`;
+    }
+  }
+
   // --- UI Update: Full Telemetry State ---
   function updateTelemetryUI(data) {
     lastPacketTime = Date.now();
     el.noTelemetryBanner.classList.add('hidden');
     el.connectionBadge.className = 'status-pill connected';
     el.connectionText.textContent = 'LIVE';
+
+    // Cloud AI Quota Top-Bar Pill
+    if (data.cloud_quota) {
+      updateCloudQuotaPill(data.cloud_quota);
+    }
 
     // 1. Session & Track
     if (data.track) {
@@ -1104,10 +1136,19 @@
       });
     }
 
+    if (el.cloudQuotaPill) {
+      el.cloudQuotaPill.addEventListener('click', () => {
+        switchTab(el.tabBtnUsage, el.viewUsage);
+        fetchUsageStatus();
+        fetchUsageHistory();
+      });
+    }
+
     if (el.tabBtnUsage) {
       el.tabBtnUsage.addEventListener('click', () => {
         switchTab(el.tabBtnUsage, el.viewUsage);
         fetchUsageStatus();
+        fetchUsageHistory();
       });
     }
 
@@ -1121,6 +1162,13 @@
     if (el.btnRefreshUsage) {
       el.btnRefreshUsage.addEventListener('click', () => {
         fetchUsageStatus();
+        fetchUsageHistory();
+      });
+    }
+
+    if (el.usageHistoryRange) {
+      el.usageHistoryRange.addEventListener('change', () => {
+        fetchUsageHistory(el.usageHistoryRange.value);
       });
     }
 
@@ -3425,6 +3473,14 @@
         el.usageLastProviderBadge.textContent = (data.last_provider || 'NONE').toUpperCase();
       }
 
+      if (el.usageResetCountdown && data.countdown_str) {
+        el.usageResetCountdown.textContent = `RESET IN: ${data.countdown_str} (00:00 UTC)`;
+      }
+
+      if (data.overall_quota_pct !== undefined) {
+        updateCloudQuotaPill({ pct: data.overall_quota_pct, cutoff_pct: data.cutoff_pct });
+      }
+
       if (!el.usageCardsContainer) return;
       el.usageCardsContainer.innerHTML = '';
 
@@ -3516,6 +3572,88 @@
     }
   }
 
+  // --- AI Daily Usage History & Pre-Flight Audit ---
+  async function fetchUsageHistory(days) {
+    if (!el.usageHistoryTbody) return;
+    try {
+      const token = getToken();
+      const numDays = days || (el.usageHistoryRange ? el.usageHistoryRange.value : 7);
+      const query = token ? `?days=${encodeURIComponent(numDays)}&token=${encodeURIComponent(token)}` : `?days=${encodeURIComponent(numDays)}`;
+      const res = await fetch(`/api/usage/history${query}`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      // 1. Update Pre-Flight Banner
+      if (data.preflight && el.usagePreflightBanner && el.usagePreflightBadge && el.usagePreflightMsg) {
+        const pf = data.preflight;
+        el.usagePreflightMsg.textContent = pf.message || '';
+        el.usagePreflightBanner.className = 'usage-preflight-banner';
+        el.usagePreflightBadge.className = 'usage-status-badge';
+        if (pf.health === 'CUTOFF') {
+          el.usagePreflightBanner.classList.add('danger');
+          el.usagePreflightBadge.classList.add('danger');
+          el.usagePreflightBadge.textContent = 'CUTOFF ACTIVE';
+        } else if (pf.health === 'NEAR_LIMIT') {
+          el.usagePreflightBanner.classList.add('warning');
+          el.usagePreflightBadge.classList.add('warning');
+          el.usagePreflightBadge.textContent = 'APPROACHING LIMIT';
+        } else {
+          el.usagePreflightBanner.classList.add('ok');
+          el.usagePreflightBadge.classList.add('ok');
+          el.usagePreflightBadge.textContent = 'ALL SYSTEMS GO';
+        }
+      }
+
+      // 2. Render Multi-Day History Table Rows
+      el.usageHistoryTbody.innerHTML = '';
+      const history = data.history || [];
+      if (history.length === 0) {
+        el.usageHistoryTbody.innerHTML = '<tr><td colspan="8" style="text-align: center; opacity: 0.6; padding: 1.5rem;">No historical usage recorded in this timeframe.</td></tr>';
+        return;
+      }
+
+      for (const row of history) {
+        const tr = document.createElement('tr');
+        const sTagClass = (row.service || '').toLowerCase().includes('edge') ? 'edge_tts' : ((row.service || '').toLowerCase().includes('stt') || (row.service || '').toLowerCase().includes('whisper')) ? 'groq_stt' : '';
+        const sName = (row.service || 'UNKNOWN').toUpperCase();
+        const p = Math.min(100, Math.max(0, row.max_pct || 0));
+        const fillClass = p >= 80 ? 'fill-red' : (p >= 50 ? 'fill-yellow' : 'fill-green');
+
+        let statusBadge = '<span class="usage-status-badge ok">OK</span>';
+        if (p >= 80) {
+          statusBadge = '<span class="usage-status-badge danger">CUTOFF</span>';
+        } else if (p >= 50) {
+          statusBadge = '<span class="usage-status-badge warning">HIGH</span>';
+        }
+
+        const audioStr = row.audio_seconds > 0 ? `${row.audio_seconds.toFixed(1)}s` : '--';
+        const charsStr = row.characters > 0 ? Number(row.characters).toLocaleString() : '--';
+        const tokensStr = row.tokens > 0 ? Number(row.tokens).toLocaleString() : '--';
+
+        tr.innerHTML = `
+          <td><strong>${row.date}</strong></td>
+          <td><span class="service-tag ${sTagClass}">${sName}</span></td>
+          <td>${Number(row.requests).toLocaleString()}</td>
+          <td>${tokensStr}</td>
+          <td>${audioStr}</td>
+          <td>${charsStr}</td>
+          <td>
+            <div class="pct-bar-wrap">
+              <div class="pct-bar-track">
+                <div class="pct-bar-fill ${fillClass}" style="width: ${p}%"></div>
+              </div>
+              <span>${p.toFixed(1)}%</span>
+            </div>
+          </td>
+          <td>${statusBadge}</td>
+        `;
+        el.usageHistoryTbody.appendChild(tr);
+      }
+    } catch (err) {
+      console.warn("Could not fetch usage history:", err);
+    }
+  }
+
   // --- Init on DOM Load ---
   window.addEventListener('DOMContentLoaded', () => {
     initTheme();
@@ -3524,6 +3662,7 @@
     initTracksTab();
     fetchPersonaSettings();
     fetchUsageStatus();
+    fetchUsageHistory();
     if (el.btnRebuildMap) {
       el.btnRebuildMap.addEventListener('click', rebuildTrackMap);
     }

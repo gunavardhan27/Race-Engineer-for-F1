@@ -641,6 +641,8 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
 
 
     usage_guard = UsageGuard(config=cfg.usage)
+    if not args.selftest:
+        usage_guard.run_preflight_check()
 
     # HOOK 2: initialize LLM client with warmup
     llm_client = LLMClient(config=cfg.llm, usage_guard=usage_guard)

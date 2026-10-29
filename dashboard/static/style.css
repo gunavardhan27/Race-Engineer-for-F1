@@ -211,6 +211,18 @@ body {
 .status-pill.offline { color: var(--color-red); border-color: rgba(255, 61, 0, 0.4); }
 .status-pill.offline .status-dot { background: var(--color-red); }
 
+.status-pill.ok { color: var(--color-green); border-color: rgba(0, 230, 118, 0.4); }
+.status-pill.ok .status-dot { background: var(--color-green); box-shadow: 0 0 8px var(--color-green); }
+
+.status-pill.warning { color: var(--color-amber); border-color: rgba(255, 171, 0, 0.4); }
+.status-pill.warning .status-dot { background: var(--color-amber); box-shadow: 0 0 8px var(--color-amber); }
+
+.status-pill.danger { color: var(--color-red); border-color: rgba(255, 61, 0, 0.4); }
+.status-pill.danger .status-dot { background: var(--color-red); box-shadow: 0 0 8px var(--color-red); }
+
+.cursor-pointer { cursor: pointer; transition: transform 0.15s ease, opacity 0.15s ease; }
+.cursor-pointer:hover { transform: translateY(-1px); opacity: 0.9; }
+
 .theme-btn {
   background: var(--bg-input);
   border: 1px solid var(--border-color);
@@ -2985,6 +2997,236 @@ body {
   flex-direction: column;
   gap: 0.25rem;
 }
+
+.usage-badge.countdown {
+  color: #60a5fa;
+  border-color: rgba(96, 165, 250, 0.4);
+  background: rgba(59, 130, 246, 0.08);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* Pre-Flight Health Alert Banner */
+.usage-preflight-banner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  margin-bottom: 1.5rem;
+  transition: all 0.2s ease;
+}
+
+.usage-preflight-banner.ok {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.usage-preflight-banner.warning {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.usage-preflight-banner.danger {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.preflight-icon {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.preflight-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.preflight-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.preflight-heading {
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: var(--text-main);
+}
+
+.usage-status-badge {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 12px;
+  text-transform: uppercase;
+}
+
+.usage-status-badge.ok {
+  background: rgba(16, 185, 129, 0.2);
+  color: #10b981;
+}
+
+.usage-status-badge.warning {
+  background: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+}
+
+.usage-status-badge.danger {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.preflight-message {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+/* Multi-Day Usage History Card */
+.usage-history-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 1.25rem 1.5rem;
+  margin-top: 1.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.usage-history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.usage-history-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.usage-history-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin: 0.2rem 0 0 0;
+}
+
+.usage-history-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.usage-range-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.usage-select {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+}
+
+.usage-select:focus {
+  border-color: var(--color-cyan);
+}
+
+.usage-table-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.usage-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+}
+
+.usage-history-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  border-bottom: 2px solid var(--border-color);
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  z-index: 2;
+}
+
+.usage-history-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-main);
+  white-space: nowrap;
+}
+
+.usage-history-table tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.usage-history-table .service-tag {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: rgba(0, 229, 255, 0.1);
+  color: var(--color-cyan);
+  border: 1px solid rgba(0, 229, 255, 0.25);
+}
+
+.usage-history-table .service-tag.edge_tts {
+  background: rgba(168, 85, 247, 0.1);
+  color: #c084fc;
+  border-color: rgba(168, 85, 247, 0.25);
+}
+
+.usage-history-table .service-tag.groq_stt {
+  background: rgba(59, 130, 246, 0.1);
+  color: #60a5fa;
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+.usage-history-table .pct-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.usage-history-table .pct-bar-track {
+  width: 70px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.usage-history-table .pct-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+}
+
 
 
 

@@ -370,3 +370,96 @@ def test_no_spoken_warnings_on_threshold_alert(tmp_path):
     # RadioQueue must remain completely untouched: no spoken callout queued
     assert radio.pop() is None
 
+
+def test_daily_history_retrieval(tmp_path):
+    import sqlite3
+    db_file = tmp_path / "test_history.db"
+    cfg = UsageConfig(
+        allow_paid=False,
+        max_fraction=0.8,
+        groq_models={"llama-3.1-8b-instant": ModelRateLimits(rpm=30, rpd=1000, tpm=6000, tpd=100000)},
+    )
+    guard = UsageGuard(config=cfg, db_path=str(db_file))
+
+    # Insert historical data for 2 different days
+    with sqlite3.connect(str(db_file)) as conn:
+        conn.execute(
+            "INSERT INTO usage_daily (date, service, requests, tokens, audio_seconds, characters) VALUES (?, ?, ?, ?, ?, ?)",
+            ("2026-10-27", "groq", 100, 20000, 0.0, 0),
+        )
+        conn.execute(
+            "INSERT INTO usage_daily (date, service, requests, tokens, audio_seconds, characters) VALUES (?, ?, ?, ?, ?, ?)",
+            ("2026-10-28", "edge_tts", 50, 0, 0.0, 15000),
+        )
+        conn.commit()
+
+    # Query last 7 days
+    history = guard.get_daily_history(days=7)
+    assert len(history) == 2
+    dates = [h["date"] for h in history]
+    assert "2026-10-28" in dates
+    assert "2026-10-27" in dates
+
+    groq_entry = next(h for h in history if h["service"] == "groq")
+    assert groq_entry["requests"] == 100
+    assert groq_entry["tokens"] == 20000
+    assert groq_entry["max_pct"] == pytest.approx(20.0)  # 20k / 100k TPD = 20%
+
+
+def test_preflight_check(tmp_path):
+    db_file = tmp_path / "test_preflight.db"
+    cfg = UsageConfig(
+        allow_paid=False,
+        max_fraction=0.8,
+        groq_models={"llama-3.1-8b-instant": ModelRateLimits(rpm=30, rpd=100, tpm=6000, tpd=1000)},
+    )
+    guard = UsageGuard(config=cfg, db_path=str(db_file))
+
+    # Clean pre-flight: OK
+    pf = guard.run_preflight_check(print_banner=False)
+    assert pf["health"] == "OK"
+    assert pf["overall_pct"] == 0.0
+    assert pf["cutoff_pct"] == 80.0
+
+    # Near limit (60%): NEAR_LIMIT
+    guard.record_usage("groq", requests=65, tokens=650, model="llama-3.1-8b-instant")
+    pf = guard.run_preflight_check(print_banner=False)
+    assert pf["health"] == "NEAR_LIMIT"
+    assert pf["overall_pct"] == 65.0
+
+    # Past safety margin (85%): CUTOFF
+    guard.record_usage("groq", requests=20, tokens=200, model="llama-3.1-8b-instant")
+    pf = guard.run_preflight_check(print_banner=False)
+    assert pf["health"] == "CUTOFF"
+    assert pf["overall_pct"] >= 80.0
+
+
+def test_dashboard_usage_history_api(tmp_path):
+    from fastapi.testclient import TestClient
+    from dashboard.server import Broadcaster, create_app
+    from f1telemetry.state import RaceState
+
+    db_file = tmp_path / "test_api_history.db"
+    guard = UsageGuard(db_path=str(db_file))
+    guard.record_usage("groq", requests=10, tokens=500, model="llama-3.1-8b-instant")
+
+    state = RaceState()
+    broadcaster = Broadcaster()
+    app = create_app(state, broadcaster, token="history-token", usage_guard=guard)
+    client = TestClient(app)
+
+    # 403 without token
+    resp = client.get("/api/usage/history")
+    assert resp.status_code == 403
+
+    # 200 with token
+    resp = client.get("/api/usage/history?days=14&token=history-token")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["days"] == 14
+    assert len(data["history"]) >= 1
+    assert data["history"][0]["service"] == "groq"
+    assert "preflight" in data
+    assert data["preflight"]["health"] == "OK"
+
+

@@ -24,6 +24,10 @@
     </div>
 
     <div class="system-status">
+      <div id="cloud-quota-pill" class="status-pill ok cursor-pointer" title="Cloud AI Quota (Click to view Usage tab)">
+        <span class="status-dot"></span>
+        <span id="cloud-quota-text">CLOUD: 0%</span>
+      </div>
       <div id="connection-badge" class="status-pill connecting">
         <span class="status-dot"></span>
         <span id="connection-text">CONNECTING</span>
@@ -931,6 +935,7 @@
             <div class="usage-badges-wrap">
               <span id="usage-paid-mode" class="usage-badge protected">FREE TIER ENFORCED</span>
               <span id="usage-safety-margin" class="usage-badge">SAFETY MARGIN: 80%</span>
+              <span id="usage-reset-countdown" class="usage-badge countdown">RESET IN: --:--:--</span>
               <span class="usage-badge provider">LAST PROVIDER: <strong id="usage-last-provider-badge">NONE</strong></span>
             </div>
           </div>
@@ -941,10 +946,59 @@
           </div>
         </section>
 
+        <!-- Pre-Flight Health Alert Banner -->
+        <div id="usage-preflight-banner" class="usage-preflight-banner ok">
+          <div class="preflight-icon">🛡️</div>
+          <div class="preflight-content">
+            <div class="preflight-title-row">
+              <span class="preflight-heading">SYSTEM HEALTH CHECK</span>
+              <span id="usage-preflight-badge" class="usage-status-badge ok">ALL SYSTEMS GO</span>
+            </div>
+            <p id="usage-preflight-msg" class="preflight-message">All cloud AI services within free-tier limits. Daily quota resets at 00:00 UTC.</p>
+          </div>
+        </div>
+
         <!-- Dynamic Service Usage Cards Grid -->
         <div id="usage-cards-container" class="usage-grid">
           <!-- Populated dynamically via fetchUsageStatus() in app.js -->
         </div>
+
+        <!-- Multi-Day Usage History Table -->
+        <section class="usage-history-card">
+          <div class="usage-history-header">
+            <div>
+              <h3 class="usage-history-title">DAILY USAGE HISTORY</h3>
+              <p class="usage-history-subtitle">Persistent SQLite audit log tracking quota consumption across days</p>
+            </div>
+            <div class="usage-history-controls">
+              <label for="usage-history-range" class="usage-range-label">Timeframe:</label>
+              <select id="usage-history-range" class="usage-select">
+                <option value="7" selected>Last 7 Days</option>
+                <option value="14">Last 14 Days</option>
+                <option value="30">Last 30 Days</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-container usage-table-scroll">
+            <table class="data-table usage-history-table">
+              <thead>
+                <tr>
+                  <th>DATE</th>
+                  <th>SERVICE</th>
+                  <th>REQUESTS</th>
+                  <th>TOKENS</th>
+                  <th>AUDIO TIME</th>
+                  <th>CHARACTERS</th>
+                  <th>DAILY QUOTA %</th>
+                  <th>STATUS</th>
+                </tr>
+              </thead>
+              <tbody id="usage-history-tbody">
+                <tr><td colspan="8" style="text-align: center; opacity: 0.6;">Loading history...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </div> <!-- /#view-usage -->
 
