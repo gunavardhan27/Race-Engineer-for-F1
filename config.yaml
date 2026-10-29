@@ -61,7 +61,7 @@ dashboard:
   host: "0.0.0.0"
   port: 8765
   hz: 10.0
-  token: null                 # Auto-generated shared secret token on first run if null
+  token: "xlQvJBOipAGFjQbTXmdOhA"                 # Auto-generated shared secret token on first run if null
 
 logging:
   level: "INFO"
