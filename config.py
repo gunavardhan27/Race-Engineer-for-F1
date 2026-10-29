@@ -125,6 +125,18 @@ class DebriefConfig:
 
 
 @dataclass
+class PersonaConfig:
+    name: str = "cocky"                   # file in lines/ and prompts/personas/; "professional" = no reactions
+    profanity: str = "mild"               # "none" | "mild" | "strong"
+    reaction_frequency: str = "normal"    # "low" | "normal" | "high"
+    min_gap_s: float = 20.0               # minimum time between personality reactions
+    spin_angle_deg: float = 60.0
+    spin_entry_speed_kph: float = 50.0
+    spin_exit_speed_kph: float = 30.0
+    spin_window_s: float = 3.0
+
+
+@dataclass
 class LoggingConfig:
     level: str = "INFO"
     format: str = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -142,6 +154,7 @@ class AppConfig:
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     spotter: SpotterConfig = field(default_factory=SpotterConfig)
     debrief: DebriefConfig = field(default_factory=DebriefConfig)
+    persona: PersonaConfig = field(default_factory=PersonaConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 

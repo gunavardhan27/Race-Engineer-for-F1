@@ -83,13 +83,29 @@ def check_number_guardrail(reply: str, snapshot_str: str, question: str) -> list
     return hallucinated
 
 
+REFUSAL_PATTERN = re.compile(
+    r"\b(I cannot|I can't|I am unable|I'm unable|unable to comply|as an AI|I am an AI|my guidelines|apologize|I'm sorry|apologies)\b",
+    re.I,
+)
+
+
+def is_refusal_or_empty(text: str) -> bool:
+    """Checks if model output is empty, an apology, or a safety refusal."""
+    if not text or not text.strip():
+        return True
+    return bool(REFUSAL_PATTERN.search(text))
+
+
 def build_prompt(
     question: str,
     snapshot: dict,
     knowledge_text: str = "",
+    persona_name: str = "cocky",
+    profanity: str = "mild",
     system_prompt_path: str = "prompts/engineer_system.txt",
+    personas_dir: str = "prompts/personas",
 ) -> tuple[str, str]:
-    """Constructs (system_prompt, user_message) with compact telemetry state."""
+    """Constructs (system_prompt, user_message) with compact telemetry state and persona additions."""
     p = Path(system_prompt_path)
     if p.is_file():
         system_prompt = p.read_text(encoding="utf-8").strip()
@@ -98,6 +114,20 @@ def build_prompt(
             "You are the driver's race engineer on the pit wall during an F1 25 race, speaking over team radio.\n"
             "Reply in at most 2 short sentences, under 30 words total. Only use numbers from STATE."
         )
+
+    if persona_name and persona_name != "professional":
+        p_persona = Path(personas_dir) / f"{persona_name}.txt"
+        if p_persona.is_file():
+            system_prompt += "\n\n" + p_persona.read_text(encoding="utf-8").strip()
+
+        prof = (profanity or "mild").lower()
+        if prof == "none":
+            prof_inst = "Do not swear."
+        elif prof == "mild":
+            prof_inst = "Mild swearing allowed."
+        else:
+            prof_inst = "Swearing allowed, keep it natural, not every sentence."
+        system_prompt += f"\n\nProfanity guidelines: {prof_inst}"
 
     clean_state = clean_snapshot(snapshot)
     state_json = json.dumps(clean_state, separators=(",", ":"))
@@ -117,14 +147,30 @@ class RaceEngineerAgent:
         llm: LLMClient,
         radio: RadioQueue,
         latency: Optional[LatencyTracker] = None,
+        persona_name: str = "cocky",
+        profanity: str = "mild",
     ):
         self.llm = llm
         self.radio = radio
         self.latency = latency
+        self.persona_name = persona_name
+        self.profanity = profanity
 
-    async def answer(self, question: str, snapshot: dict, knowledge_text: str = "") -> str:
-        """Streams LLM reply, splits into sentences, and pushes each sentence to RadioQueue at priority -1."""
-        system, user = build_prompt(question, snapshot, knowledge_text)
+    async def answer(
+        self,
+        question: str,
+        snapshot: dict,
+        knowledge_text: str = "",
+        fallback_text: Optional[str] = None,
+    ) -> str:
+        """Streams LLM reply, splits into sentences, pushes to RadioQueue, and falls back if refused/empty."""
+        system, user = build_prompt(
+            question,
+            snapshot,
+            knowledge_text,
+            persona_name=self.persona_name,
+            profanity=self.profanity,
+        )
         snapshot_json = json.dumps(clean_snapshot(snapshot))
 
         first_token_recorded = False
@@ -152,6 +198,9 @@ class RaceEngineerAgent:
 
                     cleaned = clean_for_speech(sentence_raw)
                     if cleaned:
+                        if is_refusal_or_empty(cleaned):
+                            all_sentences = [cleaned]
+                            break
                         sentences_pushed += 1
                         all_sentences.append(cleaned)
                         self.radio.push(Callout(-1, time.monotonic(), cleaned))
@@ -159,26 +208,74 @@ class RaceEngineerAgent:
                     if sentences_pushed >= 2:
                         break
 
-                if sentences_pushed >= 2:
+                if sentences_pushed >= 2 or (all_sentences and is_refusal_or_empty(all_sentences[0])):
                     break
 
             # Handle remaining buffer if under 2 sentences
             if sentences_pushed < 2 and buffer.strip():
                 cleaned = clean_for_speech(buffer.strip())
                 if cleaned:
-                    all_sentences.append(cleaned)
-                    self.radio.push(Callout(-1, time.monotonic(), cleaned))
+                    if is_refusal_or_empty(cleaned):
+                        all_sentences = [cleaned]
+                    else:
+                        all_sentences.append(cleaned)
+                        self.radio.push(Callout(-1, time.monotonic(), cleaned))
 
         finally:
             if self.latency:
                 self.latency.record("llm_done")
 
-        full_reply = " ".join(all_sentences)
-        if not full_reply:
-            fallback_text = "Radio check, say again."
-            self.radio.push(Callout(-1, time.monotonic(), fallback_text))
-            return fallback_text
+        full_reply = " ".join(all_sentences).strip()
+
+        # Check refusal or empty response -> fallback
+        if is_refusal_or_empty(full_reply):
+            log.warning("LLM response was refused or empty (%r); using fallback", full_reply)
+            while sentences_pushed > 0:
+                self.radio.pop()
+                sentences_pushed -= 1
+            chosen_fallback = fallback_text or ("Radio check, say again." if not full_reply else "Copy, keep pushing.")
+            self.radio.push(Callout(-1, time.monotonic(), chosen_fallback))
+            return chosen_fallback
 
         # Validate numbers against telemetry state
         check_number_guardrail(full_reply, snapshot_json, question)
         return full_reply
+
+    async def generate_post_race_message(
+        self,
+        summary: dict,
+    ) -> str:
+        """Generates a 2-3 sentence post-race radio debrief message in persona from race summary."""
+        system = (
+            "You are the driver's race engineer speaking over team radio right after crossing the finish line.\n"
+            "Write a concise 2 to 3 sentence post-race message reacting to the race results."
+        )
+        if self.persona_name and self.persona_name != "professional":
+            p_persona = Path("prompts/personas") / f"{self.persona_name}.txt"
+            if p_persona.is_file():
+                system += "\n\n" + p_persona.read_text(encoding="utf-8").strip()
+            prof = (self.profanity or "mild").lower()
+            prof_inst = "Do not swear." if prof == "none" else ("Mild swearing allowed." if prof == "mild" else "Swearing allowed, keep it natural, not every sentence.")
+            system += f"\n\nProfanity guidelines: {prof_inst}"
+
+        summary_json = json.dumps(summary, indent=2)
+        user = f"RACE SUMMARY:\n{summary_json}\n\nDeliver the post-race debrief over the radio now."
+
+        tokens = []
+        try:
+            async for tok in self.llm.stream(system, user, max_tokens=100, timeout_s=6.0):
+                tokens.append(tok)
+            result = clean_for_speech("".join(tokens).strip())
+            if not is_refusal_or_empty(result):
+                return result
+        except Exception as e:
+            log.warning("Post-race LLM message generation failed: %s", e)
+
+        pos = summary.get("finish_position", 10)
+        if pos == 1:
+            return "P1! You've won it! Absolutely mega drive!"
+        elif 2 <= pos <= 3:
+            return f"P{pos}! On the podium, mate! Great drive today."
+        elif pos <= 10:
+            return f"P{pos}, points in the bag. Solid job today."
+        return f"P{pos}. Not our day today, but we'll come back stronger."

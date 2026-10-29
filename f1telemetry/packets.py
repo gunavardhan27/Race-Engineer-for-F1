@@ -41,6 +41,7 @@ class PacketId:
     CAR_SETUPS = 5
     CAR_TELEMETRY = 6
     CAR_STATUS = 7
+    FINAL_CLASSIFICATION = 8
     CAR_DAMAGE = 10
 
 
@@ -76,6 +77,9 @@ class CarMotion:
     right_x: float = 0.0
     right_y: float = 0.0
     right_z: float = 0.0
+    vx: float = 0.0
+    vy: float = 0.0
+    vz: float = 0.0
 
 
 @dataclass(slots=True)
@@ -97,6 +101,7 @@ class LapData:
     sector2_ms: int = 0
     total_warnings: int = 0
     corner_cutting_warnings: int = 0
+    grid_position: int = 0
 
 
 @dataclass(slots=True)
@@ -196,6 +201,26 @@ class Event:
     penalty_time: int | None = None
     other_vehicle_idx: int | None = None
     places_gained: int | None = None
+    overtaking_vehicle_idx: int | None = None
+    being_overtaken_vehicle_idx: int | None = None
+    vehicle_1_idx: int | None = None
+    vehicle_2_idx: int | None = None
+    flashback_frame: int | None = None
+    flashback_time: float | None = None
+
+
+@dataclass(slots=True)
+class FinalClassification:
+    position: int
+    num_laps: int
+    grid_position: int
+    points: int
+    num_pit_stops: int
+    result_status: int
+    best_lap_time_ms: int
+    total_race_time: float
+    penalties_time: int
+    num_penalties: int
 
 
 @dataclass(slots=True)
@@ -302,6 +327,7 @@ def parse_motion(buf: bytes, h: Header):
             y=f[1],
             fwd_x=f[6] / 32767.0, fwd_y=f[7] / 32767.0, fwd_z=f[8] / 32767.0,
             right_x=f[9] / 32767.0, right_y=f[10] / 32767.0, right_z=f[11] / 32767.0,
+            vx=f[3], vy=f[4], vz=f[5],
         ))
     return cars
 
@@ -323,7 +349,8 @@ def parse_lap_data(buf: bytes, h: Header):
             sector1_ms=f[3] * 60_000 + f[2],
             sector2_ms=f[5] * 60_000 + f[4],
             total_warnings=f[20],
-            corner_cutting_warnings=f[21]))
+            corner_cutting_warnings=f[21],
+            grid_position=f[24]))
     return cars
 
 
@@ -431,9 +458,52 @@ def parse_event(buf: bytes, h: Header):
                 _,
                 ev.places_gained,
             ) = struct.unpack_from("<BBBBBBB", buf, p)
+    elif ev.code == "OVTK":
+        if len(buf) >= p + 2:
+            ev.overtaking_vehicle_idx, ev.being_overtaken_vehicle_idx = struct.unpack_from("<BB", buf, p)
+    elif ev.code == "COLL":
+        if len(buf) >= p + 2:
+            ev.vehicle_1_idx, ev.vehicle_2_idx = struct.unpack_from("<BB", buf, p)
+    elif ev.code == "FLBK":
+        if len(buf) >= p + 8:
+            ev.flashback_frame, ev.flashback_time = struct.unpack_from("<If", buf, p)
+    elif ev.code == "RCWN":
+        if len(buf) >= p + 1:
+            (ev.vehicle_idx,) = struct.unpack_from("<B", buf, p)
+    elif ev.code == "CHQF":
+        pass
     elif ev.code in ("RTMT", "TMPT", "DRSF"):
         ev.vehicle_idx = buf[p]
     return ev
+
+
+FINAL_CLASS_DATA = struct.Struct("<BBBBBBIdBBB8B8B8B")  # 45 bytes per car
+
+
+def parse_final_classification(buf: bytes, h: Header):
+    stride = _stride(buf, "FinalClassification", FINAL_CLASS_DATA.size, lead=1)
+    if stride is None:
+        return None
+    cars = []
+    num_cars = buf[HEADER.size] if len(buf) > HEADER.size else 0
+    for i in range(NUM_CARS):
+        if i >= num_cars:
+            break
+        base = HEADER.size + 1 + i * stride
+        f = FINAL_CLASS_DATA.unpack_from(buf, base)
+        cars.append(FinalClassification(
+            position=f[0],
+            num_laps=f[1],
+            grid_position=f[2],
+            points=f[3],
+            num_pit_stops=f[4],
+            result_status=f[5],
+            best_lap_time_ms=f[6],
+            total_race_time=f[7],
+            penalties_time=f[8],
+            num_penalties=f[9],
+        ))
+    return cars
 
 
 def parse_car_setups(buf: bytes, h: Header):
@@ -485,6 +555,7 @@ _PARSERS = {
     PacketId.CAR_SETUPS: parse_car_setups,
     PacketId.CAR_TELEMETRY: parse_car_telemetry,
     PacketId.CAR_STATUS: parse_car_status,
+    PacketId.FINAL_CLASSIFICATION: parse_final_classification,
     PacketId.CAR_DAMAGE: parse_car_damage,
 }
 

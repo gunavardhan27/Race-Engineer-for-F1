@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import struct
@@ -32,11 +33,12 @@ from audio_player import AudioPlayer
 from config import AppConfig, load_config
 from f1telemetry import packets
 from f1telemetry.deterministic import Callout, Callouts, RadioQueue, route
-from f1telemetry.spotter import Spotter, SPOTTER_PHRASES
+from f1telemetry.spotter import Spotter, SPOTTER_PHRASES, SpotterState
 from f1telemetry.state import RaceState
 from knowledge import KnowledgeBase
 from latency import LatencyTracker
 from llm import LLMClient
+from personality import PersonalityEngine
 from radio_fx import apply_radio_fx
 from stt import SpeechToText, build_initial_prompt
 from tts import TTSProvider, create_tts_engine
@@ -77,12 +79,14 @@ class Engineer:
         broadcaster: Any | None = None,
         storage: SessionStorage | None = None,
         setups_storage: SetupsStorage | None = None,
+        personality: PersonalityEngine | None = None,
     ):
         self.config = config or AppConfig()
         self.state = RaceState(ptt_action=ptt_action)
         self.callouts = Callouts(debrief_config=self.config.debrief)
         self.spotter = Spotter(self.config.spotter)
         self.spotter_audio: dict[str, tuple[np.ndarray, int]] = {}
+        self.personality = personality or PersonalityEngine(config=self.config.persona)
         self.radio = RadioQueue()
         self.recorder = recorder
         self.latency = latency or LatencyTracker()
@@ -122,6 +126,39 @@ class Engineer:
                 log.warning("Failed to pre-render spotter phrase %r: %s", phrase, e)
         log.info("Pre-rendered %d spotter phrases", len(self.spotter_audio))
 
+    async def prerender_persona_lines(self):
+        """Pre-renders static persona lines (no placeholders) to disk and memory cache for zero latency."""
+        if not self.tts or not self.personality or not self.personality.lines:
+            return
+        log.info("Pre-rendering static persona lines...")
+        voice = getattr(self.config.tts, "voice_name", "default")
+        cache_dir = Path("cache/audio")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        for event_name, lines in self.personality.lines.items():
+            for line in lines:
+                if line.has_placeholders:
+                    continue
+                text = line.text
+                key = hashlib.sha256(f"{voice}:{text}".encode("utf-8")).hexdigest()
+                cache_file = cache_dir / f"{key}.npz"
+                if cache_file.is_file():
+                    try:
+                        data = np.load(cache_file)
+                        self.personality.prerendered_audio[text] = (data["audio"], int(data["sr"]))
+                        continue
+                    except Exception as e:
+                        log.debug("Cache read error for %r: %s", text, e)
+                try:
+                    audio, sr = await self.tts.synth(text)
+                    if self.config.tts.radio_fx:
+                        audio = apply_radio_fx(audio, sr, enable_clicks=True)
+                    np.savez_compressed(cache_file, audio=audio, sr=sr)
+                    self.personality.prerendered_audio[text] = (audio, sr)
+                except Exception as e:
+                    log.warning("Failed to pre-render persona line %r: %s", text, e)
+        log.info("Pre-rendered %d static persona lines", len(self.personality.prerendered_audio))
+
     def _play_spotter(self, phrase: str):
         if self.broadcaster:
             self.broadcaster.broadcast_radio("engineer", phrase)
@@ -132,6 +169,62 @@ class Engineer:
             self.radio.push(Callout(0, time.monotonic(), phrase, ttl=self.config.spotter.ttl_s))
         else:
             print(f"[SPOTTER] {phrase}", flush=True)
+
+    def _on_final_classification(self, cars):
+        """Builds race summary and triggers post-race agent message in persona."""
+        p = self.state.player
+        if not cars or p >= len(cars):
+            return
+        fc = cars[p]
+        pos = fc.position
+        grid_pos = 0
+        if self.state.laps:
+            grid_pos = self.state.laps[0].grid_position
+        elif self.state.me:
+            grid_pos = self.state.me.grid_position
+
+        gained = (grid_pos - pos) if grid_pos > 0 else 0
+        blunders = len(self.personality.blunders) if self.personality else 0
+
+        best_lap_s = None
+        if self.state.personal_best:
+            best_lap_s = self.state.personal_best.get("lap_time_s")
+
+        summary = {
+            "grid": grid_pos,
+            "finish_position": pos,
+            "positions_gained": gained,
+            "fastest_lap": False,
+            "penalties_s": self.state.me.penalties_s if self.state.me else 0,
+            "blunder_count": blunders,
+            "best_lap": f"{best_lap_s:.2f}s" if best_lap_s else "N/A",
+        }
+
+        async def _run_post_race():
+            msg = None
+            if self.agent:
+                try:
+                    msg = await self.agent.generate_post_race_message(summary)
+                except Exception as e:
+                    log.warning("Agent post-race debrief failed: %s", e)
+            if not msg and self.personality:
+                evt = "win" if pos == 1 else ("podium" if 2 <= pos <= 3 else ("points" if pos <= 10 else "no_points"))
+                c_fallback = self.personality.trigger(evt, self.state, {"pos": pos})
+                if c_fallback:
+                    msg = c_fallback.text
+            if not msg:
+                msg = f"P{pos} across the line. That's the chequered flag."
+
+            self.radio.push(Callout(1, time.monotonic(), msg, ttl=15.0))
+
+        if self.loop and self.loop.is_running():
+            self.loop.create_task(_run_post_race())
+        else:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_run_post_race())
+            except RuntimeError:
+                asyncio.run(_run_post_race())
 
     def _on_lap_completed_debrief(self, rec):
         """Asynchronously calculates worst-corner analysis and queues debrief."""
@@ -158,6 +251,10 @@ class Engineer:
                     self.config.debrief.worst_corner_threshold_s,
                 )
                 self.callouts.queue_debrief(text, rec.lap)
+                if self.personality and "that's your best lap" in text:
+                    c_pb = self.personality.trigger("personal_best", self.state)
+                    if c_pb:
+                        self.radio.push(c_pb)
             except Exception as e:
                 log.debug("Error computing lap debrief: %s", e)
 
@@ -223,11 +320,30 @@ class Engineer:
                 for c in self.callouts.process(sig, self.state):
                     self.radio.push(c)
 
-            # Check spotter on motion update
-            if h.packet_id == packets.PacketId.MOTION and self.spotter:
-                phrase = self.spotter.process(self.state)
-                if phrase:
-                    self._play_spotter(phrase)
+                # Personality reaction check (overrides: never replaces neutral calls; no reaction on active spotter/PTT)
+                if self.personality:
+                    spotter_active = (self.spotter.state != SpotterState.CLEAR) if self.spotter else False
+                    c_pers = self.personality.on_signal(sig, self.state, spotter_active=spotter_active)
+                    if c_pers:
+                        self.radio.push(c_pers)
+
+                # Post-race trigger on final classification
+                if sig[0] == "final_classification":
+                    self._on_final_classification(sig[1])
+
+            # Check spotter and personality spin on motion update
+            if h.packet_id == packets.PacketId.MOTION:
+                if self.spotter:
+                    phrase = self.spotter.process(self.state)
+                    if phrase:
+                        self._play_spotter(phrase)
+                if self.personality:
+                    spotter_active = (self.spotter.state != SpotterState.CLEAR) if self.spotter else False
+                    if not spotter_active and not self.state.ptt_down:
+                        if self.personality.check_spin(self.state):
+                            c_spin = self.personality.trigger("spin", self.state)
+                            if c_spin:
+                                self.radio.push(c_spin)
 
             # Check debrief release on telemetry ticks
             for c in self.callouts.check_debrief_release(self.state):
@@ -379,12 +495,15 @@ class Engineer:
 
                 if self.tts and self.player:
                     try:
-                        audio, sr = await self.tts.synth(c.text)
+                        if self.personality and c.text in self.personality.prerendered_audio:
+                            audio, sr = self.personality.prerendered_audio[c.text]
+                        else:
+                            audio, sr = await self.tts.synth(c.text)
+                            if self.config.tts.radio_fx:
+                                audio = apply_radio_fx(audio, sr, enable_clicks=True)
+
                         if c.priority == -1:
                             self.latency.record("tts_first_audio")
-
-                        if self.config.tts.radio_fx:
-                            audio = apply_radio_fx(audio, sr, enable_clicks=True)
 
                         # Play audio and monitor for PTT interruption
                         completed = await asyncio.to_thread(
@@ -543,10 +662,17 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
     )
     if audio_capture:
         audio_capture.on_audio_recorded = engineer.on_audio_recorded
-    engineer.agent = RaceEngineerAgent(llm=llm_client, radio=engineer.radio, latency=latency)
+    engineer.agent = RaceEngineerAgent(
+        llm=llm_client,
+        radio=engineer.radio,
+        latency=latency,
+        persona_name=cfg.persona.name,
+        profanity=cfg.persona.profanity,
+    )
 
     if tts_engine and not args.selftest:
         await engineer.prerender_spotter()
+        await engineer.prerender_persona_lines()
 
     tasks = [asyncio.create_task(engineer.speaker())]
 
@@ -561,6 +687,7 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
             setups_storage=engineer.setups_storage,
             llm_client=llm_client,
             knowledge=engineer.knowledge,
+            engineer=engineer,
         )
         server_task, bcast_task = dashboard_server.start(loop=loop)
         tasks.extend([server_task, bcast_task])

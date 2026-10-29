@@ -14,12 +14,14 @@ from typing import Any
 
 import qrcode
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from config import AppConfig
+
+log = logging.getLogger("dashboard")
 from f1telemetry.state import COMPOUNDS, TRACKS, RaceState
 from trackmap import TrackMapManager
 from storage import SessionStorage
@@ -317,6 +319,8 @@ def create_app(
     setups_storage: SetupsStorage | None = None,
     llm_client: Any | None = None,
     knowledge: KnowledgeBase | None = None,
+    config: AppConfig | None = None,
+    engineer: Any | None = None,
 ) -> FastAPI:
     """Creates the FastAPI app instance."""
     app = FastAPI(title="Race Engineer Live Dashboard", docs_url=None, redoc_url=None)
@@ -947,6 +951,89 @@ def create_app(
             "data": saved,
         }
 
+    @app.get("/api/settings/persona")
+    async def get_persona_settings(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        pers_cfg = config.persona if config else None
+        name = pers_cfg.name if pers_cfg else "cocky"
+        prof = pers_cfg.profanity if pers_cfg else "mild"
+        freq = pers_cfg.reaction_frequency if pers_cfg else "normal"
+        gap = pers_cfg.min_gap_s if pers_cfg else 20.0
+
+        lines_p = Path("lines")
+        available = ["professional"]
+        if lines_p.is_dir():
+            for f in lines_p.glob("*.yaml"):
+                if f.stem not in available:
+                    available.append(f.stem)
+        if "cocky" not in available:
+            available.insert(0, "cocky")
+
+        return {
+            "name": name,
+            "profanity": prof,
+            "reaction_frequency": freq,
+            "min_gap_s": gap,
+            "available_personas": sorted(available),
+            "available_profanities": ["none", "mild", "strong"],
+            "available_frequencies": ["low", "normal", "high"],
+        }
+
+    @app.post("/api/settings/persona")
+    async def update_persona_settings(
+        payload: dict = Body(...),
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        name = payload.get("name")
+        prof = payload.get("profanity")
+        freq = payload.get("reaction_frequency")
+        gap = payload.get("min_gap_s")
+
+        if config and config.persona:
+            if name is not None:
+                config.persona.name = str(name).strip().lower()
+            if prof is not None:
+                config.persona.profanity = str(prof).strip().lower()
+            if freq is not None:
+                config.persona.reaction_frequency = str(freq).strip().lower()
+            if gap is not None:
+                try:
+                    config.persona.min_gap_s = float(gap)
+                except (ValueError, TypeError):
+                    pass
+
+        if engineer:
+            if hasattr(engineer, "personality") and engineer.personality:
+                if config and config.persona:
+                    engineer.personality.config = config.persona
+                if name is not None:
+                    engineer.personality.reload_persona(str(name).strip().lower())
+            if hasattr(engineer, "agent") and engineer.agent:
+                if name is not None:
+                    engineer.agent.persona_name = str(name).strip().lower()
+                if prof is not None:
+                    engineer.agent.profanity = str(prof).strip().lower()
+
+        log.info("Live updated persona settings: name=%s, profanity=%s", name, prof)
+        return {
+            "status": "ok",
+            "name": config.persona.name if (config and config.persona) else name,
+            "profanity": config.persona.profanity if (config and config.persona) else prof,
+            "reaction_frequency": config.persona.reaction_frequency if (config and config.persona) else freq,
+            "min_gap_s": config.persona.min_gap_s if (config and config.persona) else gap,
+        }
+
     @app.websocket("/ws/live")
     async def ws_live(websocket: WebSocket, token_param: str | None = Query(None, alias="token")):
         if not verify_token(token_param, token):
@@ -979,9 +1066,11 @@ class DashboardServer:
         setups_storage: SetupsStorage | None = None,
         llm_client: Any | None = None,
         knowledge: KnowledgeBase | None = None,
+        engineer: Any | None = None,
     ):
         self.state = state
         self.config = config
+        self.engineer = engineer
         self.token = ensure_token(config, config_path)
         self.broadcaster = Broadcaster()
         self.track_map = track_map or TrackMapManager()
@@ -998,6 +1087,8 @@ class DashboardServer:
             self.setups_storage,
             self.llm_client,
             knowledge=self.knowledge,
+            config=self.config,
+            engineer=self.engineer,
         )
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None

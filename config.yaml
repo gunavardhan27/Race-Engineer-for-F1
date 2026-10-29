@@ -77,6 +77,12 @@ debrief:
   track_limits_callouts: true
   track_limits_penalty_at: null                   # e.g. 3 -> "Track limits warning, 2 of 3."
 
+persona:
+  name: cocky                                     # file in lines/ and prompts/personas/; "professional" = no reactions
+  profanity: mild                                 # none | mild | strong — max line level used
+  reaction_frequency: normal                      # low | normal | high (scales cooldowns)
+  min_gap_s: 20                                   # minimum time between personality reactions
+
 logging:
   level: "INFO"
   format: "%(asctime)s %(levelname)s %(name)s: %(message)s"

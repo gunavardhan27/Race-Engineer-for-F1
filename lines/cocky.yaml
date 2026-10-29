@@ -1,0 +1,133 @@
+# Reaction lines for the "cocky" persona. Edit freely.
+# level: omit for clean lines, "mild" or "strong" for swearing.
+# config persona.profanity (none | mild | strong) sets the maximum level used.
+# Placeholders: {name} other driver's surname, {pos} position, {gained} / {lost} positions,
+# {laptime} lap time, {count} how many times this happened this race.
+
+overtake_made:
+  - text: "Lovely. {name} didn't see that coming."
+  - text: "That's how it's done. P{pos}."
+  - text: "Textbook. Next one."
+  - text: "Send it! Bloody brilliant move on {name}."
+    level: mild
+  - text: "Fucking mega! {name}'s still wondering where you came from."
+    level: strong
+
+overtaken:
+  - text: "{name} got you. Get it back."
+  - text: "Door was wide open there. Close it next time."
+  - text: "That's P{pos} gone. Wake up."
+  - text: "Bloody hell, you just let {name} walk past."
+    level: mild
+  - text: "What the fuck was that? {name} just strolled by."
+    level: strong
+
+defended:
+  - text: "Held {name} off for {count} laps. Proper racecraft."
+  - text: "{name}'s given up. Good defending."
+  - text: "Brick wall. {name} can't find a way past, damn good work."
+    level: mild
+
+good_start:
+  - text: "Great launch, up {gained}. Keep it tidy."
+  - text: "Plus {gained} off the line. Love it."
+  - text: "Holy hell, what a start. Up {gained}."
+    level: mild
+
+bad_start:
+  - text: "Down {lost} at the start. Plenty of race left, settle in."
+  - text: "Bogged it. Down {lost}. Let's earn them back."
+  - text: "Shit start, down {lost}. Shake it off."
+    level: strong
+
+fastest_lap:
+  - text: "Purple lap. {laptime}. Show-off."
+  - text: "Fastest lap of the race, {laptime}. That's my driver."
+  - text: "Fastest lap, {laptime}. Bloody rapid."
+    level: mild
+
+personal_best:
+  - text: "{laptime}, personal best. More of that."
+  - text: "Best lap yet. Keep pushing."
+
+win:
+  - text: "P1! You've won it! Absolutely mega!"
+  - text: "Winner! That's the one. What a drive."
+  - text: "Get in there! P1! Bloody incredible!"
+    level: mild
+  - text: "You fucking legend! P1! Champagne's on you!"
+    level: strong
+
+podium:
+  - text: "P{pos}! On the podium. Great job."
+  - text: "Podium, P{pos}. Smashed it today."
+  - text: "P{pos}, on the bloody podium! Proud of you."
+    level: mild
+  - text: "Fucking yes! P{pos}, podium!"
+    level: strong
+
+points:
+  - text: "P{pos}, in the points. Solid day."
+  - text: "P{pos}. Points in the bag."
+
+no_points:
+  - text: "P{pos}. Not our day. We go again."
+  - text: "P{pos}. We'll look at the data and come back stronger."
+  - text: "P{pos}. Bit of a crap one. We go again."
+    level: mild
+
+spin:
+  - text: "Did you just spin? Get it pointed the right way."
+  - text: "Round and round. Feet in, get going."
+  - text: "Bloody hell. Gather it up, keep going."
+    level: mild
+  - text: "Oh for fuck's sake. Get it facing forwards."
+    level: strong
+
+collision:
+  - text: "Contact with {name}. Check your mirrors next time."
+  - text: "Was that necessary? Keep it clean."
+  - text: "Ouch. Bloody hell, give him some room."
+    level: mild
+  - text: "Jesus Christ, what the hell was that?"
+    level: strong
+
+flashback:
+  - text: "Flashback? We'll pretend that never happened."
+  - text: "Rewinding time now, are we? Fine."
+  - text: "Flashback. Yeah, I saw that cock-up too."
+    level: strong
+
+track_limits:
+  - text: "Track limits again. The white line is there for a reason."
+  - text: "That's {count} warnings. Keep it on the black stuff."
+  - text: "Track limits, {count}. Bloody hell, stay inside the lines."
+    level: mild
+
+penalty:
+  - text: "Penalty. Brilliant. Just brilliant."
+  - text: "We've picked up a penalty. Let's not do that again."
+  - text: "Penalty. For fuck's sake."
+    level: strong
+
+lost_positions:
+  - text: "Lost {lost} places that lap. What happened?"
+  - text: "Down {lost}. Get your head in the game."
+  - text: "Down {lost} places. What the hell was that lap?"
+    level: mild
+
+escalation:
+  - text: "That's {count} mistakes this race. Reset, breathe, drive."
+  - text: "{count} cock-ups now. Bring it home in one piece, yeah?"
+    level: mild
+  - text: "{count} fuck-ups and counting. Seriously, calm down."
+    level: strong
+
+clean_stint:
+  - text: "Ten clean laps. Metronomic."
+  - text: "Lovely rhythm. Keep doing exactly that."
+
+retirement:
+  - text: "That's it, we're out. Bring it back to the garage."
+  - text: "Race over. Shit happens. We go again."
+    level: strong

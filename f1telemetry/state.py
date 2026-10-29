@@ -45,6 +45,7 @@ class LapRecord:
     sector3_ms: int = 0
     total_warnings: int = 0
     corner_cutting_warnings: int = 0
+    grid_position: int = 0
 
 
 class RaceState:
@@ -72,12 +73,14 @@ class RaceState:
         self._buttons = 0
         self.personal_best = None
         self.last_lap_vs_best = None
+        self.final_classification = None
 
     # ---- ingestion -------------------------------------------------------
     def update(self, h: packets.Header, data) -> list[tuple]:
         """Apply one parsed packet. Returns signals: ('lap', rec), ('ptt', bool),
         ('event', Event), ('damage',), ('new_session',), ('flashback', lap_num),
-        ('lap_invalidated',), ('track_limits_warning', n), ('penalty', Event)."""
+        ('lap_invalidated',), ('track_limits_warning', n), ('penalty', Event),
+        ('final_classification', data)."""
         signals = []
         self.last_packet_time = time.monotonic()
         if h.session_uid != self.session_uid:
@@ -111,6 +114,9 @@ class RaceState:
                 if fp != self.current_setup_fingerprint:
                     self.current_setup_fingerprint = fp
                     signals.append(("setup_change", my, fp))
+        elif pid == PacketId.FINAL_CLASSIFICATION:
+            self.final_classification = data
+            signals.append(("final_classification", data))
         elif pid == PacketId.EVENT:
             if data.code == "BUTN":
                 was = bool(self._buttons & self.ptt_mask)
@@ -165,7 +171,8 @@ class RaceState:
             tyre_wear=dmg.tyre_wear if dmg else None, stint=me.num_pit_stops,
             sector1_ms=s1, sector2_ms=s2, sector3_ms=s3,
             total_warnings=me.total_warnings,
-            corner_cutting_warnings=me.corner_cutting_warnings)
+            corner_cutting_warnings=me.corner_cutting_warnings,
+            grid_position=me.grid_position)
         self.laps.append(rec)
         self._lap_num, self._lap_invalid = me.lap_num, me.lap_invalid
         self._corner_cutting_warnings = me.corner_cutting_warnings
@@ -200,6 +207,14 @@ class RaceState:
     @property
     def my_motion(self):
         return self._mine(self.motion)
+
+    @property
+    def ptt(self) -> bool:
+        return bool(self._buttons & self.ptt_mask)
+
+    @property
+    def ptt_down(self) -> bool:
+        return self.ptt
 
     @property
     def my_setup(self):

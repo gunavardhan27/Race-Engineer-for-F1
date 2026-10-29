@@ -39,6 +39,7 @@
       <button id="tab-btn-laps" class="nav-tab">LAPS & ANALYSIS</button>
       <button id="tab-btn-setups" class="nav-tab">SETUPS</button>
       <button id="tab-btn-tracks" class="nav-tab">TRACKS</button>
+      <button id="tab-btn-settings" class="nav-tab">SETTINGS</button>
     </nav>
   </header>
 
@@ -851,6 +852,73 @@
         </section>
       </div>
     </div> <!-- /#view-tracks -->
+
+    <!-- ==================== VIEW 5: SETTINGS ==================== -->
+    <div id="view-settings" class="view-panel hidden">
+      <div class="settings-container" style="max-width: 800px; margin: 0 auto; padding: 1.5rem 1rem;">
+        <section class="analysis-panel" style="padding: 1.5rem; border-radius: 8px; background: rgba(18, 22, 32, 0.85); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 0.75rem;">
+            <div>
+              <h2 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin: 0 0 0.25rem 0;">ENGINEER PERSONALITY & RADIO</h2>
+              <p style="font-size: 0.85rem; color: #94a3b8; margin: 0;">Configure the pit-wall race engineer's persona, profanity filter, and reaction pacing.</p>
+            </div>
+            <span id="settings-save-indicator" class="track-status-pill" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid #10b981; font-size: 0.75rem; padding: 0.25rem 0.6rem; border-radius: 9999px;">
+              ● LIVE
+            </span>
+          </div>
+
+          <form id="persona-settings-form" style="display: flex; flex-direction: column; gap: 1.25rem;">
+            <div class="form-group" style="display: flex; flex-direction: column; gap: 0.4rem;">
+              <label for="setting-persona-name" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0; text-transform: uppercase; letter-spacing: 0.05em;">
+                Engineer Persona
+              </label>
+              <select id="setting-persona-name" class="filter-select" style="width: 100%; padding: 0.6rem 0.75rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.95rem;">
+                <option value="cocky">Cocky (Confident, sarcastic, British pit-wall banter, roasts mistakes)</option>
+                <option value="professional">Professional (Standard neutral engineer, no reactions)</option>
+              </select>
+              <span style="font-size: 0.75rem; color: #64748b;">Loads reactions from lines/&lt;persona&gt;.yaml and applies tone to AI agent.</span>
+            </div>
+
+            <div class="form-group" style="display: flex; flex-direction: column; gap: 0.4rem;">
+              <label for="setting-profanity" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0; text-transform: uppercase; letter-spacing: 0.05em;">
+                Profanity Level
+              </label>
+              <select id="setting-profanity" class="filter-select" style="width: 100%; padding: 0.6rem 0.75rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.95rem;">
+                <option value="none">None (Clean radio only, no swear words)</option>
+                <option value="mild">Mild (Untagged + mild lines allowed, realistic pit-wall swearing)</option>
+                <option value="strong">Strong (All lines allowed, uncensored passionate reactions)</option>
+              </select>
+              <span style="font-size: 0.75rem; color: #64748b;">Filters reaction lines and instructs the AI agent model accordingly.</span>
+            </div>
+
+            <div class="form-group" style="display: flex; flex-direction: column; gap: 0.4rem;">
+              <label for="setting-reaction-frequency" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0; text-transform: uppercase; letter-spacing: 0.05em;">
+                Reaction Frequency
+              </label>
+              <select id="setting-reaction-frequency" class="filter-select" style="width: 100%; padding: 0.6rem 0.75rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.95rem;">
+                <option value="low">Low (1.5x cooldowns, speaks only on major occurrences)</option>
+                <option value="normal">Normal (1.0x baseline cooldowns, balanced chat)</option>
+                <option value="high">High (0.6x cooldowns, highly vocal and chatty pit wall)</option>
+              </select>
+              <span style="font-size: 0.75rem; color: #64748b;">Scales event-specific cooldowns between spoken reactions.</span>
+            </div>
+
+            <div class="form-group" style="display: flex; flex-direction: column; gap: 0.4rem;">
+              <label for="setting-min-gap-s" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0; text-transform: uppercase; letter-spacing: 0.05em;">
+                Minimum Gap Between Reactions (Seconds)
+              </label>
+              <input type="number" id="setting-min-gap-s" min="5" max="120" step="1" value="20" class="filter-select" style="width: 100%; padding: 0.6rem 0.75rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.95rem;" />
+              <span style="font-size: 0.75rem; color: #64748b;">Global cooldown between personality reactions (wins, podiums, and retirements ignore this).</span>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; align-items: center; gap: 1rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.1);">
+              <span id="settings-feedback-msg" style="font-size: 0.85rem; color: #10b981; display: none;">✓ Applied live to race engineer</span>
+              <button type="button" id="btn-save-settings" class="btn-primary success" style="padding: 0.6rem 1.25rem;">APPLY SETTINGS</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </div> <!-- /#view-settings -->
 
     <!-- Setup Details Modal -->
     <div id="setup-details-modal" class="modal-backdrop hidden">

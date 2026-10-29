@@ -259,6 +259,16 @@
     previewParamsGrid: document.getElementById('preview-params-grid'),
     btnConfirmSaveImport: document.getElementById('btn-confirm-save-import'),
     btnCloseImportModal: document.getElementById('btn-close-import-modal'),
+
+    // Settings
+    tabBtnSettings: document.getElementById('tab-btn-settings'),
+    viewSettings: document.getElementById('view-settings'),
+    settingPersonaName: document.getElementById('setting-persona-name'),
+    settingProfanity: document.getElementById('setting-profanity'),
+    settingReactionFreq: document.getElementById('setting-reaction-frequency'),
+    settingMinGapS: document.getElementById('setting-min-gap-s'),
+    btnSaveSettings: document.getElementById('btn-save-settings'),
+    settingsFeedbackMsg: document.getElementById('settings-feedback-msg'),
   };
 
   // --- Track Map & G-Force State ---
@@ -1059,10 +1069,12 @@
       if (el.tabBtnLaps) el.tabBtnLaps.classList.remove('active');
       if (el.tabBtnSetups) el.tabBtnSetups.classList.remove('active');
       if (el.tabBtnTracks) el.tabBtnTracks.classList.remove('active');
+      if (el.tabBtnSettings) el.tabBtnSettings.classList.remove('active');
       if (el.viewLive) el.viewLive.classList.remove('hidden');
       if (el.viewLaps) el.viewLaps.classList.add('hidden');
       if (el.viewSetups) el.viewSetups.classList.add('hidden');
       if (el.viewTracks) el.viewTracks.classList.add('hidden');
+      if (el.viewSettings) el.viewSettings.classList.add('hidden');
     });
 
     el.tabBtnLaps.addEventListener('click', () => {
@@ -1070,10 +1082,12 @@
       if (el.tabBtnLive) el.tabBtnLive.classList.remove('active');
       if (el.tabBtnSetups) el.tabBtnSetups.classList.remove('active');
       if (el.tabBtnTracks) el.tabBtnTracks.classList.remove('active');
+      if (el.tabBtnSettings) el.tabBtnSettings.classList.remove('active');
       if (el.viewLaps) el.viewLaps.classList.remove('hidden');
       if (el.viewLive) el.viewLive.classList.add('hidden');
       if (el.viewSetups) el.viewSetups.classList.add('hidden');
       if (el.viewTracks) el.viewTracks.classList.add('hidden');
+      if (el.viewSettings) el.viewSettings.classList.add('hidden');
       if (loadedSessions.length === 0) {
         fetchSessions();
       }
@@ -1085,10 +1099,12 @@
         if (el.tabBtnLive) el.tabBtnLive.classList.remove('active');
         if (el.tabBtnLaps) el.tabBtnLaps.classList.remove('active');
         if (el.tabBtnTracks) el.tabBtnTracks.classList.remove('active');
+        if (el.tabBtnSettings) el.tabBtnSettings.classList.remove('active');
         if (el.viewSetups) el.viewSetups.classList.remove('hidden');
         if (el.viewLive) el.viewLive.classList.add('hidden');
         if (el.viewLaps) el.viewLaps.classList.add('hidden');
         if (el.viewTracks) el.viewTracks.classList.add('hidden');
+        if (el.viewSettings) el.viewSettings.classList.add('hidden');
         fetchSetups();
         fetchCurrentSetup();
       });
@@ -1100,12 +1116,46 @@
         if (el.tabBtnLive) el.tabBtnLive.classList.remove('active');
         if (el.tabBtnLaps) el.tabBtnLaps.classList.remove('active');
         if (el.tabBtnSetups) el.tabBtnSetups.classList.remove('active');
+        if (el.tabBtnSettings) el.tabBtnSettings.classList.remove('active');
         if (el.viewTracks) el.viewTracks.classList.remove('hidden');
         if (el.viewLive) el.viewLive.classList.add('hidden');
         if (el.viewLaps) el.viewLaps.classList.add('hidden');
         if (el.viewSetups) el.viewSetups.classList.add('hidden');
+        if (el.viewSettings) el.viewSettings.classList.add('hidden');
         fetchTracksList();
       });
+    }
+
+    if (el.tabBtnSettings) {
+      el.tabBtnSettings.addEventListener('click', () => {
+        el.tabBtnSettings.classList.add('active');
+        if (el.tabBtnLive) el.tabBtnLive.classList.remove('active');
+        if (el.tabBtnLaps) el.tabBtnLaps.classList.remove('active');
+        if (el.tabBtnSetups) el.tabBtnSetups.classList.remove('active');
+        if (el.tabBtnTracks) el.tabBtnTracks.classList.remove('active');
+        if (el.viewSettings) el.viewSettings.classList.remove('hidden');
+        if (el.viewLive) el.viewLive.classList.add('hidden');
+        if (el.viewLaps) el.viewLaps.classList.add('hidden');
+        if (el.viewSetups) el.viewSetups.classList.add('hidden');
+        if (el.viewTracks) el.viewTracks.classList.add('hidden');
+        fetchPersonaSettings();
+      });
+    }
+
+    if (el.btnSaveSettings) {
+      el.btnSaveSettings.addEventListener('click', savePersonaSettings);
+    }
+    if (el.settingPersonaName) {
+      el.settingPersonaName.addEventListener('change', savePersonaSettings);
+    }
+    if (el.settingProfanity) {
+      el.settingProfanity.addEventListener('change', savePersonaSettings);
+    }
+    if (el.settingReactionFreq) {
+      el.settingReactionFreq.addEventListener('change', savePersonaSettings);
+    }
+    if (el.settingMinGapS) {
+      el.settingMinGapS.addEventListener('change', savePersonaSettings);
     }
 
     if (el.filterTrack) {
@@ -3335,12 +3385,58 @@
       });
   }
 
+  // --- Engineer Persona & Settings ---
+  async function fetchPersonaSettings() {
+    try {
+      const token = getToken();
+      const url = token ? `/api/settings/persona?token=${encodeURIComponent(token)}` : '/api/settings/persona';
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (el.settingPersonaName && data.name) el.settingPersonaName.value = data.name;
+      if (el.settingProfanity && data.profanity) el.settingProfanity.value = data.profanity;
+      if (el.settingReactionFreq && data.reaction_frequency) el.settingReactionFreq.value = data.reaction_frequency;
+      if (el.settingMinGapS && data.min_gap_s != null) el.settingMinGapS.value = data.min_gap_s;
+    } catch (e) {
+      console.warn("Could not fetch persona settings:", e);
+    }
+  }
+
+  async function savePersonaSettings() {
+    try {
+      const token = getToken();
+      const payload = {
+        name: el.settingPersonaName ? el.settingPersonaName.value : 'cocky',
+        profanity: el.settingProfanity ? el.settingProfanity.value : 'mild',
+        reaction_frequency: el.settingReactionFreq ? el.settingReactionFreq.value : 'normal',
+        min_gap_s: el.settingMinGapS ? parseFloat(el.settingMinGapS.value) : 20,
+      };
+      const url = token ? `/api/settings/persona?token=${encodeURIComponent(token)}` : '/api/settings/persona';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        if (el.settingsFeedbackMsg) {
+          el.settingsFeedbackMsg.style.display = 'inline';
+          setTimeout(() => {
+            if (el.settingsFeedbackMsg) el.settingsFeedbackMsg.style.display = 'none';
+          }, 3000);
+        }
+      }
+    } catch (e) {
+      console.error("Could not save persona settings:", e);
+    }
+  }
+
   // --- Init on DOM Load ---
   window.addEventListener('DOMContentLoaded', () => {
     initTheme();
     initTabs();
     initSetupsTab();
     initTracksTab();
+    fetchPersonaSettings();
     if (el.btnRebuildMap) {
       el.btnRebuildMap.addEventListener('click', rebuildTrackMap);
     }
