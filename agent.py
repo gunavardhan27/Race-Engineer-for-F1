@@ -20,13 +20,51 @@ from llm import LLMClient
 log = logging.getLogger("engineer.agent")
 
 
-def clean_snapshot(d: Any) -> Any:
-    """Recursively removes None fields from dict/list for compact prompt injection."""
+CORE_KEYS = {"lap", "lap_num", "position", "pos", "driver_name", "gear", "speed", "me"}
+
+INTENT_MAP = {
+    ("tyre", "tire", "wear", "compound", "pit", "box"): {"tyres", "tyre_wear", "weather", "track_temp", "air_temp", "pit_status"},
+    ("gap", "behind", "ahead", "delta", "battle", "catch", "drs", "overtake"): {"ahead", "behind", "drs", "gap_ahead", "gap_behind", "rival"},
+    ("engine", "ers", "battery", "fuel", "mode", "deploy", "harvest"): {"engine", "ers", "fuel", "drs"},
+    ("weather", "rain", "track", "temp", "conditions"): {"weather", "air_temp", "track_temp", "rain_percentage"},
+    ("damage", "wing", "puncture", "warning", "penalty"): {"damage", "car_damage", "penalties", "warnings"},
+    ("pace", "sector", "time", "best", "delta"): {"sectors", "last_lap", "best_lap", "delta_to_best"},
+}
+
+
+def clean_snapshot(d: Any, question: Optional[str] = None) -> Any:
+    """Recursively removes None, empty strings/containers, rounds floats, and filters relevant intent sections."""
     if isinstance(d, dict):
-        return {k: clean_snapshot(v) for k, v in d.items() if v is not None}
+        # Optional intent-based top-level filtering if many sections present
+        filter_keys = None
+        if question and len(d) > 6:
+            q_lower = question.lower()
+            matched_keys = set()
+            for triggers, keys in INTENT_MAP.items():
+                if any(tr in q_lower for tr in triggers):
+                    matched_keys.update(keys)
+            if matched_keys:
+                filter_keys = CORE_KEYS | matched_keys
+
+        cleaned = {}
+        for k, v in d.items():
+            if filter_keys is not None and k not in filter_keys:
+                continue
+            if v is None:
+                continue
+            if isinstance(v, (str, list, dict)) and len(v) == 0:
+                continue
+            res = clean_snapshot(v, question=question)
+            if res is not None and not (isinstance(res, (dict, list, str)) and len(res) == 0):
+                cleaned[k] = res
+        return cleaned
     elif isinstance(d, list):
-        return [clean_snapshot(v) for v in d if v is not None]
+        cleaned_list = [clean_snapshot(v, question=question) for v in d if v is not None]
+        return [v for v in cleaned_list if v is not None and not (isinstance(v, (dict, list, str)) and len(v) == 0)]
+    elif isinstance(d, float):
+        return round(d, 2)
     return d
+
 
 
 def clean_for_speech(text: str) -> str:
@@ -129,7 +167,7 @@ def build_prompt(
             prof_inst = "Swearing allowed, keep it natural, not every sentence."
         system_prompt += f"\n\nProfanity guidelines: {prof_inst}"
 
-    clean_state = clean_snapshot(snapshot)
+    clean_state = clean_snapshot(snapshot, question=question)
     state_json = json.dumps(clean_state, separators=(",", ":"))
 
     user_parts = [f"STATE:\n{state_json}"]
@@ -138,6 +176,11 @@ def build_prompt(
     user_parts.append(f"DRIVER: {question.strip()}")
 
     user_message = "\n\n".join(user_parts)
+
+    prompt_chars = len(system_prompt) + len(user_message)
+    est_tokens = int(prompt_chars / 4)
+    log.info("Prompt size for AI request: ~%d tokens (%d chars)", est_tokens, prompt_chars)
+
     return system_prompt, user_message
 
 
@@ -261,9 +304,12 @@ class RaceEngineerAgent:
         summary_json = json.dumps(summary, indent=2)
         user = f"RACE SUMMARY:\n{summary_json}\n\nDeliver the post-race debrief over the radio now."
 
+        post_chars = len(system) + len(user)
+        log.info("Prompt size for post-race AI request: ~%d tokens (%d chars)", int(post_chars / 4), post_chars)
+
         tokens = []
         try:
-            async for tok in self.llm.stream(system, user, max_tokens=100, timeout_s=6.0):
+            async for tok in self.llm.stream(system, user, max_tokens=150, timeout_s=6.0):
                 tokens.append(tok)
             result = clean_for_speech("".join(tokens).strip())
             if not is_refusal_or_empty(result):

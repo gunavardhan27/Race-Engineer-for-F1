@@ -143,6 +143,50 @@ class LoggingConfig:
 
 
 @dataclass
+class ModelRateLimits:
+    rpm: int = 30
+    rpd: int = 14400
+    tpm: int = 6000
+    tpd: int = 500000
+    ash: int = 7200      # Audio seconds per hour (Whisper)
+    asd: int = 28800     # Audio seconds per day (Whisper)
+
+
+@dataclass
+class EdgeTTSRateLimits:
+    # Note: self-imposed conservative limit, not an official quota
+    rpm: int = 20
+    rpd: int = 2000
+    chars_per_min: int = 10000
+    chars_per_day: int = 200000
+
+
+@dataclass
+class UsageConfig:
+    allow_paid: bool = False
+    max_fraction: float = 0.8
+    groq_models: dict[str, ModelRateLimits] = field(default_factory=lambda: {
+        "llama-3.1-8b-instant": ModelRateLimits(rpm=30, rpd=14400, tpm=6000, tpd=500000),
+        "llama-3.3-70b-versatile": ModelRateLimits(rpm=30, rpd=1000, tpm=12000, tpd=100000),
+        "whisper-large-v3": ModelRateLimits(rpm=20, rpd=2000, ash=7200, asd=28800),
+        "whisper-large-v3-turbo": ModelRateLimits(rpm=20, rpd=2000, ash=7200, asd=28800),
+    })
+    edge_tts: EdgeTTSRateLimits = field(default_factory=EdgeTTSRateLimits)
+
+    def __post_init__(self):
+        if isinstance(self.groq_models, dict):
+            new_models = {}
+            for k, v in self.groq_models.items():
+                if isinstance(v, dict):
+                    new_models[k] = ModelRateLimits(**v)
+                elif isinstance(v, ModelRateLimits):
+                    new_models[k] = v
+            self.groq_models = new_models
+        if isinstance(self.edge_tts, dict):
+            self.edge_tts = EdgeTTSRateLimits(**self.edge_tts)
+
+
+@dataclass
 class AppConfig:
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
@@ -156,6 +200,7 @@ class AppConfig:
     debrief: DebriefConfig = field(default_factory=DebriefConfig)
     persona: PersonaConfig = field(default_factory=PersonaConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    usage: UsageConfig = field(default_factory=UsageConfig)
 
 
 def _load_dataclass(cls: type, data: Any, prefix: str = "") -> Any:

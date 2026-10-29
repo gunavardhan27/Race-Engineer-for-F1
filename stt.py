@@ -6,10 +6,13 @@ and filters out known Whisper hallucinations on silence.
 """
 from __future__ import annotations
 
+import io
 import logging
+import os
 import re
-from typing import Optional
+from typing import Any, Optional
 
+import httpx
 import numpy as np
 
 from config import STTConfig
@@ -132,3 +135,98 @@ class SpeechToText:
             return ""
 
         return text
+
+
+class GroqWhisperSTT:
+    """Optional cloud STT using Groq Whisper with UsageGuard and local faster-whisper fallback."""
+
+    def __init__(
+        self,
+        model: str = "whisper-large-v3",
+        api_key: Optional[str] = None,
+        usage_guard: Optional[Any] = None,
+        fallback_engine: Optional[SpeechToText] = None,
+    ):
+        self.model = model
+        self.api_key = api_key or os.getenv("GROQ_API_KEY", "")
+        self.usage_guard = usage_guard
+        self.fallback_engine = fallback_engine
+        self.base_url = "https://api.groq.com/openai/v1/audio/transcriptions"
+
+    def transcribe(self, audio: np.ndarray, initial_prompt: str = "") -> str:
+        if audio is None or len(audio) == 0:
+            return ""
+
+        dur_s = float(len(audio)) / 16000.0
+
+        # 1. Check UsageGuard
+        if self.usage_guard:
+            allowed, reason = self.usage_guard.check_allowed("groq_stt", est_audio_seconds=dur_s, model=self.model)
+            if not allowed:
+                log.warning("GroqWhisperSTT: Denied by UsageGuard (%s); falling back to local STT", reason)
+                if self.fallback_engine:
+                    return self.fallback_engine.transcribe(audio, initial_prompt)
+                return ""
+
+        # 2. Check API key
+        if not self.api_key:
+            log.warning("GroqWhisperSTT: GROQ_API_KEY not set; falling back to local STT")
+            if self.fallback_engine:
+                return self.fallback_engine.transcribe(audio, initial_prompt)
+            return ""
+
+        # 3. Call Groq audio transcriptions API
+        try:
+            import soundfile as sf
+            bio = io.BytesIO()
+            sf.write(bio, audio.astype(np.float32), 16000, format="WAV")
+            bio.seek(0)
+            wav_bytes = bio.read()
+
+            files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
+            data = {"model": self.model, "language": "en"}
+            if initial_prompt:
+                data["prompt"] = initial_prompt
+
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post(self.base_url, headers=headers, data=data, files=files)
+
+            if resp.status_code == 429:
+                if self.usage_guard:
+                    self.usage_guard.record_usage("groq_stt", status_code=429, headers=dict(resp.headers), model=self.model)
+                log.warning("GroqWhisperSTT got HTTP 429; falling back to local STT")
+                if self.fallback_engine:
+                    return self.fallback_engine.transcribe(audio, initial_prompt)
+                return ""
+
+            if resp.status_code != 200:
+                log.warning("GroqWhisperSTT API error %d; falling back to local STT", resp.status_code)
+                if self.fallback_engine:
+                    return self.fallback_engine.transcribe(audio, initial_prompt)
+                return ""
+
+            # Record usage on success
+            if self.usage_guard:
+                self.usage_guard.record_usage(
+                    "groq_stt",
+                    requests=1,
+                    audio_seconds=dur_s,
+                    headers=dict(resp.headers),
+                    status_code=200,
+                    model=self.model,
+                )
+
+            res_json = resp.json()
+            text = res_json.get("text", "").strip()
+            if is_filler_or_empty(text):
+                return ""
+            return text
+
+        except Exception as e:
+            log.warning("GroqWhisperSTT request failed (%s); falling back to local STT", e)
+            if self.fallback_engine:
+                return self.fallback_engine.transcribe(audio, initial_prompt)
+            return ""
+

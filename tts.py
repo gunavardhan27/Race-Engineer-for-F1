@@ -12,10 +12,11 @@ returning a 1D float32 NumPy array and the audio sample rate.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import logging
 from pathlib import Path
-from typing import Optional, Protocol, Tuple
+from typing import Any, Optional, Protocol, Tuple
 
 import httpx
 import numpy as np
@@ -150,28 +151,77 @@ class KokoroTTS:
 
 
 class EdgeTTS:
-    """Optional cloud TTS using edge-tts (off by default)."""
+    """Cloud TTS using edge-tts with audio disk caching, UsageGuard, and PiperTTS fallback."""
 
-    def __init__(self, voice: str = "en-GB-RyanNeural"):
+    def __init__(
+        self,
+        voice: str = "en-GB-RyanNeural",
+        usage_guard: Optional[Any] = None,
+        fallback_engine: Optional[TTSProvider] = None,
+        cache_dir: str = "cache/audio",
+    ):
         self.voice = voice
+        self.usage_guard = usage_guard
+        self.fallback_engine = fallback_engine or PiperTTS()
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     async def synth(self, text: str) -> Tuple[np.ndarray, int]:
+        clean_text = text.strip()
+        if not clean_text:
+            return np.array([], dtype=np.float32), 24000
+
+        # 1. Disk cache lookup (text + voice) -> 0 usage
+        cache_key = hashlib.sha256(f"{self.voice}:{clean_text}".encode("utf-8")).hexdigest()
+        cache_file = self.cache_dir / f"{cache_key}.npz"
+        if cache_file.is_file():
+            try:
+                with np.load(cache_file) as npz:
+                    return npz["audio"].astype(np.float32), int(npz["sample_rate"])
+            except Exception as e:
+                log.warning("EdgeTTS: Failed loading cached audio for %r: %s", clean_text, e)
+
+        # 2. Check UsageGuard before making cloud call
+        if self.usage_guard:
+            allowed, reason = self.usage_guard.check_allowed("edge_tts", est_chars=len(clean_text))
+            if not allowed:
+                log.warning("EdgeTTS: Denied by UsageGuard (%s); falling back to PiperTTS", reason)
+                return await self.fallback_engine.synth(text)
+
+        # 3. Cloud edge-tts call
         try:
             import edge_tts
-        except ImportError:
-            raise RuntimeError("edge-tts is not installed. Install via: pip install edge-tts")
+            communicate = edge_tts.Communicate(clean_text, self.voice)
+            audio_bytes = bytearray()
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_bytes.extend(chunk["data"])
 
-        communicate = edge_tts.Communicate(text, self.voice)
-        audio_bytes = bytearray()
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_bytes.extend(chunk["data"])
+            if not audio_bytes:
+                raise RuntimeError("Empty audio received from edge-tts")
 
-        # Decode MP3 bytes into PCM float32 array
-        import soundfile as sf
-        with io.BytesIO(audio_bytes) as bio:
-            data, sample_rate = sf.read(bio, dtype="float32")
-        return data, sample_rate
+            import soundfile as sf
+            with io.BytesIO(audio_bytes) as bio:
+                data, sample_rate = sf.read(bio, dtype="float32")
+
+            # 4. Record successful usage
+            if self.usage_guard:
+                self.usage_guard.record_usage("edge_tts", requests=1, characters=len(clean_text), status_code=200)
+
+            # 5. Save to disk cache for future reuse
+            try:
+                np.savez_compressed(cache_file, audio=data, sample_rate=sample_rate)
+            except Exception as e:
+                log.warning("EdgeTTS: Failed caching synthesized audio: %s", e)
+
+            return data, sample_rate
+
+        except Exception as e:
+            err_msg = str(e).lower()
+            if self.usage_guard and ("429" in err_msg or "rate limit" in err_msg or "too many" in err_msg):
+                self.usage_guard.record_usage("edge_tts", status_code=429)
+            log.warning("EdgeTTS synthesis failed (%s); falling back to PiperTTS", e)
+            return await self.fallback_engine.synth(text)
 
     async def warmup(self) -> None:
         try:
@@ -181,7 +231,7 @@ class EdgeTTS:
             log.warning("EdgeTTS warmup warning: %s", e)
 
 
-def create_tts_engine(config: TTSConfig) -> TTSProvider:
+def create_tts_engine(config: TTSConfig, usage_guard: Optional[Any] = None) -> TTSProvider:
     """Factory creating the configured TTS engine."""
     engine_name = (config.engine or "piper").lower()
     if engine_name == "piper":
@@ -189,7 +239,9 @@ def create_tts_engine(config: TTSConfig) -> TTSProvider:
     elif engine_name == "kokoro":
         return KokoroTTS(voice=config.voice)
     elif engine_name == "edge":
-        return EdgeTTS(voice=config.voice)
+        fallback = PiperTTS(voice_name="en_GB-alan-medium")
+        return EdgeTTS(voice=config.voice, usage_guard=usage_guard, fallback_engine=fallback)
     else:
         log.warning("Unknown TTS engine '%s'; falling back to PiperTTS", config.engine)
         return PiperTTS(voice_name=config.voice)
+

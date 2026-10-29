@@ -269,6 +269,13 @@
     settingMinGapS: document.getElementById('setting-min-gap-s'),
     btnSaveSettings: document.getElementById('btn-save-settings'),
     settingsFeedbackMsg: document.getElementById('settings-feedback-msg'),
+
+    // Usage Guard
+    tabBtnUsage: document.getElementById('tab-btn-usage'),
+    viewUsage: document.getElementById('view-usage'),
+    btnRefreshUsage: document.getElementById('btn-refresh-usage'),
+    usageLastProviderBadge: document.getElementById('usage-last-provider-badge'),
+    usageCardsContainer: document.getElementById('usage-cards-container'),
   };
 
   // --- Track Map & G-Force State ---
@@ -1064,30 +1071,19 @@
   function initTabs() {
     if (!el.tabBtnLive || !el.tabBtnLaps) return;
 
+    function switchTab(activeBtn, activeView) {
+      const tabs = [el.tabBtnLive, el.tabBtnLaps, el.tabBtnSetups, el.tabBtnTracks, el.tabBtnUsage, el.tabBtnSettings];
+      const views = [el.viewLive, el.viewLaps, el.viewSetups, el.viewTracks, el.viewUsage, el.viewSettings];
+      tabs.forEach(t => { if (t) t.classList.toggle('active', t === activeBtn); });
+      views.forEach(v => { if (v) v.classList.toggle('hidden', v !== activeView); });
+    }
+
     el.tabBtnLive.addEventListener('click', () => {
-      el.tabBtnLive.classList.add('active');
-      if (el.tabBtnLaps) el.tabBtnLaps.classList.remove('active');
-      if (el.tabBtnSetups) el.tabBtnSetups.classList.remove('active');
-      if (el.tabBtnTracks) el.tabBtnTracks.classList.remove('active');
-      if (el.tabBtnSettings) el.tabBtnSettings.classList.remove('active');
-      if (el.viewLive) el.viewLive.classList.remove('hidden');
-      if (el.viewLaps) el.viewLaps.classList.add('hidden');
-      if (el.viewSetups) el.viewSetups.classList.add('hidden');
-      if (el.viewTracks) el.viewTracks.classList.add('hidden');
-      if (el.viewSettings) el.viewSettings.classList.add('hidden');
+      switchTab(el.tabBtnLive, el.viewLive);
     });
 
     el.tabBtnLaps.addEventListener('click', () => {
-      el.tabBtnLaps.classList.add('active');
-      if (el.tabBtnLive) el.tabBtnLive.classList.remove('active');
-      if (el.tabBtnSetups) el.tabBtnSetups.classList.remove('active');
-      if (el.tabBtnTracks) el.tabBtnTracks.classList.remove('active');
-      if (el.tabBtnSettings) el.tabBtnSettings.classList.remove('active');
-      if (el.viewLaps) el.viewLaps.classList.remove('hidden');
-      if (el.viewLive) el.viewLive.classList.add('hidden');
-      if (el.viewSetups) el.viewSetups.classList.add('hidden');
-      if (el.viewTracks) el.viewTracks.classList.add('hidden');
-      if (el.viewSettings) el.viewSettings.classList.add('hidden');
+      switchTab(el.tabBtnLaps, el.viewLaps);
       if (loadedSessions.length === 0) {
         fetchSessions();
       }
@@ -1095,16 +1091,7 @@
 
     if (el.tabBtnSetups) {
       el.tabBtnSetups.addEventListener('click', () => {
-        el.tabBtnSetups.classList.add('active');
-        if (el.tabBtnLive) el.tabBtnLive.classList.remove('active');
-        if (el.tabBtnLaps) el.tabBtnLaps.classList.remove('active');
-        if (el.tabBtnTracks) el.tabBtnTracks.classList.remove('active');
-        if (el.tabBtnSettings) el.tabBtnSettings.classList.remove('active');
-        if (el.viewSetups) el.viewSetups.classList.remove('hidden');
-        if (el.viewLive) el.viewLive.classList.add('hidden');
-        if (el.viewLaps) el.viewLaps.classList.add('hidden');
-        if (el.viewTracks) el.viewTracks.classList.add('hidden');
-        if (el.viewSettings) el.viewSettings.classList.add('hidden');
+        switchTab(el.tabBtnSetups, el.viewSetups);
         fetchSetups();
         fetchCurrentSetup();
       });
@@ -1112,33 +1099,28 @@
 
     if (el.tabBtnTracks) {
       el.tabBtnTracks.addEventListener('click', () => {
-        el.tabBtnTracks.classList.add('active');
-        if (el.tabBtnLive) el.tabBtnLive.classList.remove('active');
-        if (el.tabBtnLaps) el.tabBtnLaps.classList.remove('active');
-        if (el.tabBtnSetups) el.tabBtnSetups.classList.remove('active');
-        if (el.tabBtnSettings) el.tabBtnSettings.classList.remove('active');
-        if (el.viewTracks) el.viewTracks.classList.remove('hidden');
-        if (el.viewLive) el.viewLive.classList.add('hidden');
-        if (el.viewLaps) el.viewLaps.classList.add('hidden');
-        if (el.viewSetups) el.viewSetups.classList.add('hidden');
-        if (el.viewSettings) el.viewSettings.classList.add('hidden');
+        switchTab(el.tabBtnTracks, el.viewTracks);
         fetchTracksList();
+      });
+    }
+
+    if (el.tabBtnUsage) {
+      el.tabBtnUsage.addEventListener('click', () => {
+        switchTab(el.tabBtnUsage, el.viewUsage);
+        fetchUsageStatus();
       });
     }
 
     if (el.tabBtnSettings) {
       el.tabBtnSettings.addEventListener('click', () => {
-        el.tabBtnSettings.classList.add('active');
-        if (el.tabBtnLive) el.tabBtnLive.classList.remove('active');
-        if (el.tabBtnLaps) el.tabBtnLaps.classList.remove('active');
-        if (el.tabBtnSetups) el.tabBtnSetups.classList.remove('active');
-        if (el.tabBtnTracks) el.tabBtnTracks.classList.remove('active');
-        if (el.viewSettings) el.viewSettings.classList.remove('hidden');
-        if (el.viewLive) el.viewLive.classList.add('hidden');
-        if (el.viewLaps) el.viewLaps.classList.add('hidden');
-        if (el.viewSetups) el.viewSetups.classList.add('hidden');
-        if (el.viewTracks) el.viewTracks.classList.add('hidden');
+        switchTab(el.tabBtnSettings, el.viewSettings);
         fetchPersonaSettings();
+      });
+    }
+
+    if (el.btnRefreshUsage) {
+      el.btnRefreshUsage.addEventListener('click', () => {
+        fetchUsageStatus();
       });
     }
 
@@ -3430,6 +3412,110 @@
     }
   }
 
+  // --- AI Usage Guard Status ---
+  async function fetchUsageStatus() {
+    try {
+      const token = getToken();
+      const url = token ? `/api/usage?token=${encodeURIComponent(token)}` : '/api/usage';
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (el.usageLastProviderBadge) {
+        el.usageLastProviderBadge.textContent = (data.last_provider || 'NONE').toUpperCase();
+      }
+
+      if (!el.usageCardsContainer) return;
+      el.usageCardsContainer.innerHTML = '';
+
+      const services = data.services || {};
+      for (const [name, s] of Object.entries(services)) {
+        const card = document.createElement('div');
+        card.className = 'usage-card';
+
+        const stateClass = (s.state || 'ok').replace(/\s+/g, '-');
+        const stateText = (s.state || 'ok').toUpperCase();
+
+        let pauseHtml = '';
+        if (s.paused_remaining_s > 0) {
+          pauseHtml = `
+            <div class="usage-pause-alert">
+              <span>⚠️ Paused for ${s.paused_remaining_s}s: ${s.pause_reason || 'Rate limited'}</span>
+            </div>
+          `;
+        }
+
+        function renderBar(label, current, limit, unit, pct) {
+          if (!limit || limit <= 0) return '';
+          const p = Math.min(100, Math.max(0, pct || 0));
+          const fillClass = p >= 80 ? 'fill-red' : (p >= 50 ? 'fill-yellow' : 'fill-green');
+          return `
+            <div class="usage-metric-item">
+              <div class="usage-metric-header">
+                <span>${label}</span>
+                <span class="usage-metric-val">${Number(current).toLocaleString()} / ${Number(limit).toLocaleString()} ${unit} (${p.toFixed(1)}%)</span>
+              </div>
+              <div class="usage-progress-track">
+                <div class="usage-progress-fill ${fillClass}" style="width: ${p}%"></div>
+              </div>
+            </div>
+          `;
+        }
+
+        let metricsHtml = '<div class="usage-metrics-group">';
+        if (s.minute && s.daily) {
+          metricsHtml += renderBar('Minute Requests (RPM)', s.minute.requests, s.minute.requests_limit, 'RPM', s.minute.requests_pct);
+          metricsHtml += renderBar('Today Requests (RPD)', s.daily.requests, s.daily.requests_limit, 'RPD', s.daily.requests_pct);
+
+          if (s.minute.tokens_limit > 0 || s.daily.tokens_limit > 0) {
+            metricsHtml += renderBar('Minute Tokens (TPM)', s.minute.tokens, s.minute.tokens_limit, 'TPM', s.minute.tokens_pct);
+            metricsHtml += renderBar('Today Tokens (TPD)', s.daily.tokens, s.daily.tokens_limit, 'TPD', s.daily.tokens_pct);
+          }
+
+          if (s.daily.audio_limit > 0) {
+            metricsHtml += renderBar('Today Audio Seconds (ASD)', s.daily.audio_seconds, s.daily.audio_limit, 's', s.daily.audio_pct);
+          }
+
+          if (s.daily.characters_limit > 0) {
+            metricsHtml += renderBar('Minute Characters', s.minute.characters, s.minute.characters_limit, 'chars', (s.minute.characters / s.minute.characters_limit) * 100);
+            metricsHtml += renderBar('Today Characters', s.daily.characters, s.daily.characters_limit, 'chars', s.daily.characters_pct);
+          }
+        }
+        metricsHtml += '</div>';
+
+        let headerBox = '';
+        if (s.header && (s.header.remaining_requests !== undefined || s.header.remaining_tokens !== undefined)) {
+          headerBox = '<div class="usage-headers-box"><strong>Live Headers:</strong>';
+          if (s.header.remaining_requests !== undefined) {
+            const resetReq = s.header.reset_requests_s ? s.header.reset_requests_s.toFixed(1) + 's' : '--';
+            headerBox += `<div>Remaining Requests: ${s.header.remaining_requests} (reset: ${resetReq})</div>`;
+          }
+          if (s.header.remaining_tokens !== undefined) {
+            const resetTok = s.header.reset_tokens_s ? s.header.reset_tokens_s.toFixed(1) + 's' : '--';
+            headerBox += `<div>Remaining Tokens: ${Number(s.header.remaining_tokens).toLocaleString()} (reset: ${resetTok})</div>`;
+          }
+          headerBox += '</div>';
+        }
+
+        card.innerHTML = `
+          <div class="usage-card-header">
+            <div class="usage-service-title">
+              <span>${name.toUpperCase()}</span>
+            </div>
+            <span class="usage-state-pill ${stateClass}">${stateText}</span>
+          </div>
+          ${pauseHtml}
+          ${metricsHtml}
+          ${headerBox}
+        `;
+
+        el.usageCardsContainer.appendChild(card);
+      }
+    } catch (e) {
+      console.warn("Could not fetch usage status:", e);
+    }
+  }
+
   // --- Init on DOM Load ---
   window.addEventListener('DOMContentLoaded', () => {
     initTheme();
@@ -3437,6 +3523,7 @@
     initSetupsTab();
     initTracksTab();
     fetchPersonaSettings();
+    fetchUsageStatus();
     if (el.btnRebuildMap) {
       el.btnRebuildMap.addEventListener('click', rebuildTrackMap);
     }

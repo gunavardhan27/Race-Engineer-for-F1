@@ -45,6 +45,7 @@ from tts import TTSProvider, create_tts_engine
 from storage import SessionStorage, LapTraceCollector
 from analysis import get_lap_comparison_summary, compute_lap_debrief
 from setups import SetupsStorage, import_from_json, import_from_csv, export_as_sheet, export_as_json, validate_setup_params
+from usage import UsageGuard
 
 log = logging.getLogger("engineer")
 FRAME = struct.Struct("<dI")   # recording: seconds since start, payload length
@@ -80,8 +81,10 @@ class Engineer:
         storage: SessionStorage | None = None,
         setups_storage: SetupsStorage | None = None,
         personality: PersonalityEngine | None = None,
+        usage_guard: UsageGuard | None = None,
     ):
         self.config = config or AppConfig()
+        self.usage_guard = usage_guard
         self.state = RaceState(ptt_action=ptt_action)
         self.callouts = Callouts(debrief_config=self.config.debrief)
         self.spotter = Spotter(self.config.spotter)
@@ -637,12 +640,14 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
         audio_capture = None
 
 
+    usage_guard = UsageGuard(config=cfg.usage)
+
     # HOOK 2: initialize LLM client with warmup
-    llm_client = LLMClient(config=cfg.llm)
+    llm_client = LLMClient(config=cfg.llm, usage_guard=usage_guard)
     await llm_client.warmup()
 
     # HOOK 3: initialize TTS engine with warmup and persistent audio player
-    tts_engine = create_tts_engine(cfg.tts)
+    tts_engine = create_tts_engine(cfg.tts, usage_guard=usage_guard)
     await tts_engine.warmup()
     player = AudioPlayer(device=cfg.audio.output_device, start_stream=not args.selftest)
 
@@ -659,6 +664,7 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
         player=player,
         knowledge=knowledge,
         loop=loop,
+        usage_guard=usage_guard,
     )
     if audio_capture:
         audio_capture.on_audio_recorded = engineer.on_audio_recorded
@@ -688,6 +694,7 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
             llm_client=llm_client,
             knowledge=engineer.knowledge,
             engineer=engineer,
+            usage_guard=usage_guard,
         )
         server_task, bcast_task = dashboard_server.start(loop=loop)
         tasks.extend([server_task, bcast_task])
@@ -766,11 +773,18 @@ def parse_args(argv=None):
     p.add_argument("--import-setup", help="import setup from JSON or CSV file path and save to library")
     p.add_argument("--export-setup", help="export setup by ID or fingerprint (prints sheet or JSON)")
     p.add_argument("--export-format", choices=["sheet", "json"], default="sheet", help="format for --export-setup (default: sheet)")
+    p.add_argument("--usage", action="store_true", help="print today's cloud AI usage and limits and exit")
     return p.parse_args(argv)
 
 
 def main(argv=None):
     args = parse_args(argv)
+    if args.usage:
+        cfg = load_config(args.config)
+        guard = UsageGuard(config=cfg.usage)
+        guard.print_usage_summary()
+        sys.exit(0)
+
     if args.list_devices:
         print_audio_devices()
         sys.exit(0)

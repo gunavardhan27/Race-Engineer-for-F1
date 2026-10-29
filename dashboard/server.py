@@ -321,6 +321,7 @@ def create_app(
     knowledge: KnowledgeBase | None = None,
     config: AppConfig | None = None,
     engineer: Any | None = None,
+    usage_guard: Any | None = None,
 ) -> FastAPI:
     """Creates the FastAPI app instance."""
     app = FastAPI(title="Race Engineer Live Dashboard", docs_url=None, redoc_url=None)
@@ -1034,6 +1035,26 @@ def create_app(
             "min_gap_s": config.persona.min_gap_s if (config and config.persona) else gap,
         }
 
+    @app.get("/api/usage")
+    async def get_usage_status(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        guard = usage_guard or (getattr(engineer, "usage_guard", None) if engineer else None)
+        if guard:
+            return guard.get_status()
+        return {
+            "date": "",
+            "allow_paid": False,
+            "max_fraction": 0.8,
+            "last_provider": "none",
+            "services": {},
+        }
+
     @app.websocket("/ws/live")
     async def ws_live(websocket: WebSocket, token_param: str | None = Query(None, alias="token")):
         if not verify_token(token_param, token):
@@ -1067,10 +1088,12 @@ class DashboardServer:
         llm_client: Any | None = None,
         knowledge: KnowledgeBase | None = None,
         engineer: Any | None = None,
+        usage_guard: Any | None = None,
     ):
         self.state = state
         self.config = config
         self.engineer = engineer
+        self.usage_guard = usage_guard
         self.token = ensure_token(config, config_path)
         self.broadcaster = Broadcaster()
         self.track_map = track_map or TrackMapManager()
@@ -1089,6 +1112,7 @@ class DashboardServer:
             knowledge=self.knowledge,
             config=self.config,
             engineer=self.engineer,
+            usage_guard=self.usage_guard,
         )
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None

@@ -86,3 +86,36 @@ persona:
 logging:
   level: "INFO"
   format: "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+usage:
+  allow_paid: false                                   # Never exceed free tier limits or incur charges
+  max_fraction: 0.8                                   # Safety margin: stop at 80% of any limit (minute or day)
+  # Checked: 2026-10-29 from console.groq.com/docs/rate-limits
+  groq_models:
+    llama-3.1-8b-instant:
+      rpm: 30
+      rpd: 14400
+      tpm: 6000
+      tpd: 500000
+    llama-3.3-70b-versatile:
+      rpm: 30
+      rpd: 1000
+      tpm: 12000
+      tpd: 100000
+    whisper-large-v3:
+      rpm: 20
+      rpd: 2000
+      ash: 7200                                       # Audio seconds per hour
+      asd: 28800                                      # Audio seconds per day
+    whisper-large-v3-turbo:
+      rpm: 20
+      rpd: 2000
+      ash: 7200
+      asd: 28800
+  edge_tts:
+    # Note: edge-tts has no published quota; these are our own conservative self-imposed limits, not an official quota
+    rpm: 20
+    rpd: 2000
+    chars_per_min: 10000
+    chars_per_day: 200000
+

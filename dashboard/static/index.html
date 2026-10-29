@@ -39,6 +39,7 @@
       <button id="tab-btn-laps" class="nav-tab">LAPS & ANALYSIS</button>
       <button id="tab-btn-setups" class="nav-tab">SETUPS</button>
       <button id="tab-btn-tracks" class="nav-tab">TRACKS</button>
+      <button id="tab-btn-usage" class="nav-tab">USAGE</button>
       <button id="tab-btn-settings" class="nav-tab">SETTINGS</button>
     </nav>
   </header>
@@ -919,6 +920,33 @@
         </section>
       </div>
     </div> <!-- /#view-settings -->
+
+    <!-- VIEW 6: USAGE GUARD & RATE LIMITS -->
+    <div id="view-usage" class="view-panel hidden">
+      <div class="usage-container">
+        <!-- Summary Strip -->
+        <section class="usage-summary-card">
+          <div class="usage-summary-left">
+            <h2 class="usage-title">AI USAGE &amp; RATE LIMIT GUARD</h2>
+            <div class="usage-badges-wrap">
+              <span id="usage-paid-mode" class="usage-badge protected">FREE TIER ENFORCED</span>
+              <span id="usage-safety-margin" class="usage-badge">SAFETY MARGIN: 80%</span>
+              <span class="usage-badge provider">LAST PROVIDER: <strong id="usage-last-provider-badge">NONE</strong></span>
+            </div>
+          </div>
+          <div>
+            <button type="button" id="btn-refresh-usage" class="btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+              REFRESH STATS
+            </button>
+          </div>
+        </section>
+
+        <!-- Dynamic Service Usage Cards Grid -->
+        <div id="usage-cards-container" class="usage-grid">
+          <!-- Populated dynamically via fetchUsageStatus() in app.js -->
+        </div>
+      </div>
+    </div> <!-- /#view-usage -->
 
     <!-- Setup Details Modal -->
     <div id="setup-details-modal" class="modal-backdrop hidden">

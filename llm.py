@@ -37,11 +37,17 @@ class LLMProvider(Protocol):
 
 
 class GroqProvider:
-    def __init__(self, model: str = "llama-3.1-8b-instant", api_key: Optional[str] = None):
+    def __init__(
+        self,
+        model: str = "llama-3.1-8b-instant",
+        api_key: Optional[str] = None,
+        usage_guard: Optional[Any] = None,
+    ):
         self.model = model
         self.api_key = api_key or os.getenv("GROQ_API_KEY", "")
         self.base_url = "https://api.groq.com/openai/v1"
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=10.0)
+        self.usage_guard = usage_guard
 
     async def warmup(self) -> None:
         if not self.api_key:
@@ -59,6 +65,13 @@ class GroqProvider:
         if not self.api_key:
             raise RuntimeError("GROQ_API_KEY environment variable is not set")
 
+        if self.usage_guard:
+            est_tokens = self.usage_guard.estimate_tokens(system + user, max_tokens)
+            allowed, reason = self.usage_guard.check_allowed("groq", est_tokens=est_tokens, model=self.model)
+            if not allowed:
+                log.warning("GroqProvider request denied by UsageGuard: %s", reason)
+                raise RuntimeError(f"UsageGuard denied Groq request: {reason}")
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -72,14 +85,27 @@ class GroqProvider:
             "max_tokens": max_tokens,
             "temperature": 0.3,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
 
         req = self.client.build_request("POST", "/chat/completions", headers=headers, json=payload, timeout=timeout_s)
         resp = await self.client.send(req, stream=True)
+        if resp.status_code == 429:
+            resp_headers = dict(resp.headers)
+            body = await resp.aread()
+            await resp.aclose()
+            if self.usage_guard:
+                self.usage_guard.record_usage("groq", status_code=429, headers=resp_headers, model=self.model)
+            raise RuntimeError(f"Groq API error 429: {body.decode(errors='replace')}")
+
         if resp.status_code != 200:
             body = await resp.aread()
             await resp.aclose()
             raise RuntimeError(f"Groq API error {resp.status_code}: {body.decode(errors='replace')}")
+
+        resp_headers = dict(resp.headers)
+        reported_usage_tokens: Optional[int] = None
+        generated_count = 0
 
         try:
             async for line in resp.aiter_lines():
@@ -91,16 +117,32 @@ class GroqProvider:
                     break
                 try:
                     chunk = json.loads(data_str)
+                    usage_data = chunk.get("usage")
+                    if usage_data and "total_tokens" in usage_data:
+                        reported_usage_tokens = int(usage_data["total_tokens"])
+
                     choices = chunk.get("choices", [])
                     if choices:
                         delta = choices[0].get("delta", {})
                         content = delta.get("content")
                         if content:
+                            generated_count += 1
                             yield content
                 except json.JSONDecodeError:
                     continue
         finally:
             await resp.aclose()
+            if self.usage_guard:
+                prompt_toks = self.usage_guard.estimate_tokens(system + user, 0)
+                actual_toks = reported_usage_tokens if reported_usage_tokens is not None else (prompt_toks + generated_count)
+                self.usage_guard.record_usage(
+                    "groq",
+                    requests=1,
+                    tokens=actual_toks,
+                    headers=resp_headers,
+                    status_code=200,
+                    model=self.model,
+                )
 
     async def aclose(self) -> None:
         await self.client.aclose()
@@ -231,11 +273,11 @@ class OpenAICompatibleProvider:
         await self.client.aclose()
 
 
-def create_provider(name: str, config: LLMConfig) -> Optional[LLMProvider]:
+def create_provider(name: str, config: LLMConfig, usage_guard: Optional[Any] = None) -> Optional[LLMProvider]:
     """Factory creating an LLMProvider by name."""
     name = (name or "").lower()
     if name == "groq":
-        return GroqProvider(model=config.groq.model)
+        return GroqProvider(model=config.groq.model, usage_guard=usage_guard)
     elif name == "ollama":
         return OllamaProvider(base_url=config.ollama.base_url, model=config.ollama.model, num_gpu=config.ollama.num_gpu)
     elif name == "openai_compatible":
@@ -246,12 +288,14 @@ def create_provider(name: str, config: LLMConfig) -> Optional[LLMProvider]:
 class LLMClient:
     """Coordinates primary provider with automatic fallback and warmup."""
 
-    def __init__(self, config: LLMConfig):
+    def __init__(self, config: LLMConfig, usage_guard: Optional[Any] = None):
         self.config = config
+        self.usage_guard = usage_guard
         self.primary_name = config.primary
         self.fallback_name = config.fallback
-        self.primary = create_provider(self.primary_name, config)
-        self.fallback = create_provider(self.fallback_name, config) if self.fallback_name else None
+        self.primary = create_provider(self.primary_name, config, usage_guard=self.usage_guard)
+        self.fallback = create_provider(self.fallback_name, config, usage_guard=self.usage_guard) if self.fallback_name else None
+        self.last_provider_used: str = "none"
 
     async def warmup(self) -> None:
         """Warms up both primary and fallback providers."""
@@ -260,16 +304,19 @@ class LLMClient:
         if self.fallback:
             await self.fallback.warmup()
 
-    async def stream(self, system: str, user: str) -> AsyncIterator[str]:
+    async def stream(self, system: str, user: str, max_tokens: Optional[int] = None, timeout_s: Optional[float] = None) -> AsyncIterator[str]:
         """Streams tokens from primary; if primary errors or fails to yield first token within timeout_s, retries on fallback."""
-        timeout_s = self.config.timeout_s
-        max_tokens = self.config.max_tokens
+        timeout_s = timeout_s or self.config.timeout_s
+        max_tokens = max_tokens or self.config.max_tokens
 
         # Try primary provider
         if self.primary:
             try:
                 gen = self.primary.stream(system, user, max_tokens, timeout_s)
                 first_token = await asyncio.wait_for(gen.__anext__(), timeout=timeout_s)
+                self.last_provider_used = self.primary_name
+                if self.usage_guard:
+                    self.usage_guard.last_provider_used = self.primary_name
                 yield first_token
                 async for tok in gen:
                     yield tok
@@ -283,6 +330,9 @@ class LLMClient:
             try:
                 gen = self.fallback.stream(system, user, max_tokens, timeout_s)
                 first_token = await asyncio.wait_for(gen.__anext__(), timeout=timeout_s)
+                self.last_provider_used = self.fallback_name or "fallback"
+                if self.usage_guard:
+                    self.usage_guard.last_provider_used = self.last_provider_used
                 yield first_token
                 async for tok in gen:
                     yield tok
