@@ -23,10 +23,28 @@ class TelemetryConfig:
 
 
 @dataclass
+class VolumesConfig:
+    engineer: float = 1.0        # Volume for engineer voice (0.0 to 1.0)
+    spotter: float = 1.0         # Volume for spotter callouts (0.0 to 1.0)
+    menu_beeps: float = 1.0      # Volume for menu and button beeps (0.0 to 1.0)
+
+
+@dataclass
+class RadioCheckConfig:
+    on_session_start: bool = True # Automatic check 3s after session start
+
+
+@dataclass
+class SoundTestConfig:
+    on_app_start: bool = True     # Play "Engineer online." on app launch
+
+
+@dataclass
 class AudioConfig:
     input_device: str | int | None = None
     output_device: str | int | None = None
     sample_rate: int = 16000
+    volumes: VolumesConfig = field(default_factory=VolumesConfig)
 
 
 @dataclass
@@ -201,6 +219,9 @@ class AppConfig:
     persona: PersonaConfig = field(default_factory=PersonaConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     usage: UsageConfig = field(default_factory=UsageConfig)
+    radio_check: RadioCheckConfig = field(default_factory=RadioCheckConfig)
+    sound_test: SoundTestConfig = field(default_factory=SoundTestConfig)
+    volumes: VolumesConfig = field(default_factory=VolumesConfig)
 
 
 def _load_dataclass(cls: type, data: Any, prefix: str = "") -> Any:

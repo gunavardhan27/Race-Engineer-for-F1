@@ -115,9 +115,27 @@ class TrackSaveRequest(BaseModel):
 
 
 
+class SpeakerTestRequest(BaseModel):
+    with_radio_fx: bool = True
+    volume: float = 1.0
+
+
+class AudioDevicesUpdateRequest(BaseModel):
+    input_device: str | int | None = None
+    output_device: str | int | None = None
+
+
+class VolumesUpdateRequest(BaseModel):
+    engineer: float | None = None
+    spotter: float | None = None
+    menu_beeps: float | None = None
+
+
 def build_live_payload(state: RaceState, track_map: TrackMapManager | None = None) -> dict[str, Any]:
     """Combines snapshot(), timing_tower(), motion/car positions, and telemetry extras."""
     payload = state.snapshot()
+    is_live = (state.last_packet_time > 0 and (time.monotonic() - state.last_packet_time) < 4.0 and state.session is not None)
+    payload["session_live"] = is_live
     payload["timing_tower"] = state.timing_tower()
 
     # Extra telemetry fields (speed, gear, rpm, drs) for HUD gauges
@@ -1085,6 +1103,161 @@ def create_app(
                 "services": [],
             },
         }
+
+    @app.post("/api/sound_test/speaker")
+    async def post_sound_test_speaker(
+        req: SpeakerTestRequest,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        st_mgr = getattr(engineer, "sound_test", None)
+        if st_mgr:
+            res = await st_mgr.play_speaker_test(with_radio_fx=req.with_radio_fx, volume=req.volume)
+            if res.get("status") == "blocked":
+                raise HTTPException(status_code=409, detail=res.get("message", "Use radio check in game instead"))
+            return res
+        return {"status": "error", "message": "Sound test manager not initialized"}
+
+    @app.post("/api/sound_test/mic/start")
+    async def post_sound_test_mic_start(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        st_mgr = getattr(engineer, "sound_test", None)
+        if st_mgr:
+            res = st_mgr.start_mic_test()
+            if res.get("status") == "blocked":
+                raise HTTPException(status_code=409, detail=res.get("message", "Use radio check in game instead"))
+            return res
+        return {"status": "error", "message": "Sound test manager not initialized"}
+
+    @app.post("/api/sound_test/mic/stop")
+    async def post_sound_test_mic_stop(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        st_mgr = getattr(engineer, "sound_test", None)
+        if st_mgr:
+            return await st_mgr.stop_mic_test_and_evaluate(play_back=True)
+        return {"status": "error", "message": "Sound test manager not initialized"}
+
+    @app.get("/api/sound_test/mic/level")
+    async def get_sound_test_mic_level(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        st_mgr = getattr(engineer, "sound_test", None)
+        if st_mgr and st_mgr.capture and hasattr(st_mgr.capture, "get_live_level"):
+            return st_mgr.capture.get_live_level()
+        return {"peak": 0.0, "rms": 0.0, "peak_db": -100.0, "clipping": False, "is_recording": False}
+
+    @app.get("/api/audio/devices")
+    async def get_audio_devices_endpoint(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        st_mgr = getattr(engineer, "sound_test", None)
+        if st_mgr:
+            return st_mgr.get_devices()
+        from audio_devices import get_audio_devices
+        data = get_audio_devices()
+        data["current_input"] = config.audio.input_device if config else None
+        data["current_output"] = config.audio.output_device if config else None
+        return data
+
+    @app.post("/api/audio/devices")
+    async def post_audio_devices_endpoint(
+        req: AudioDevicesUpdateRequest,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        st_mgr = getattr(engineer, "sound_test", None)
+        if st_mgr:
+            return st_mgr.change_devices(input_device=req.input_device, output_device=req.output_device)
+        return {"status": "error", "message": "Sound test manager not initialized"}
+
+    @app.get("/api/settings/volumes")
+    async def get_volumes_endpoint(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        if config and hasattr(config, "volumes"):
+            return {
+                "engineer": config.volumes.engineer,
+                "spotter": config.volumes.spotter,
+                "menu_beeps": config.volumes.menu_beeps,
+            }
+        return {"engineer": 1.0, "spotter": 1.0, "menu_beeps": 1.0}
+
+    @app.post("/api/settings/volumes")
+    async def post_volumes_endpoint(
+        req: VolumesUpdateRequest,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        st_mgr = getattr(engineer, "sound_test", None)
+        if st_mgr:
+            return st_mgr.update_volumes(engineer=req.engineer, spotter=req.spotter, menu_beeps=req.menu_beeps)
+        if config and hasattr(config, "volumes"):
+            if req.engineer is not None:
+                config.volumes.engineer = req.engineer
+            if req.spotter is not None:
+                config.volumes.spotter = req.spotter
+            if req.menu_beeps is not None:
+                config.volumes.menu_beeps = req.menu_beeps
+            return {
+                "status": "ok",
+                "engineer": config.volumes.engineer,
+                "spotter": config.volumes.spotter,
+                "menu_beeps": config.volumes.menu_beeps,
+            }
+        return {"status": "error", "message": "Volumes config unavailable"}
+
+    @app.post("/api/radio_check")
+    async def post_in_game_radio_check(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        if engineer and hasattr(engineer, "start_two_way_radio_check"):
+            msg = engineer.start_two_way_radio_check()
+            return {"status": "ok", "message": msg}
+        return {"status": "error", "message": "Engineer unavailable for radio check"}
 
     @app.websocket("/ws/live")
     async def ws_live(websocket: WebSocket, token_param: str | None = Query(None, alias="token")):

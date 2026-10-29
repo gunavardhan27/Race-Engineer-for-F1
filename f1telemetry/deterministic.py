@@ -32,6 +32,7 @@ _INTENTS = [(name, re.compile(p, re.I)) for name, p in [
     ("gap_ahead", r"\b(ahead|in front|gap)\b"),
     ("delta_best", r"\b(where am i losing time|where am i slow|losing time|how was my (last )?lap|pace vs best|delta to best)\b"),
     ("setup", r"\b(what('s| is)? (my )?setup|what setup am i (on|running)|current setup|best setup( here)?|setup info)\b"),
+    ("radio_check", r"\b(radio check|comms check|can you hear me|do you copy)\b"),
 ]]
 
 NO_DATA = "No data on that yet."
@@ -176,9 +177,17 @@ def _setup(st: RaceState, text: str = "") -> str:
     return "No setup data on the car yet."
 
 
+def _radio_check(st: RaceState, text: str = "") -> str:
+    is_live = (st.last_packet_time > 0 and (time.monotonic() - st.last_packet_time) < 4.0)
+    if is_live:
+        return "Loud and clear. Telemetry's live."
+    return "Loud and clear. No telemetry yet."
+
+
 ANSWERS = {"gap_ahead": _gap_ahead, "gap_behind": _gap_behind, "fuel": _fuel, "tyres": _tyres,
            "damage": _damage, "weather": _weather, "position": _position, "laps": _laps,
-           "pit_window": _pit_window, "delta_best": _delta_best, "setup": _setup}
+           "pit_window": _pit_window, "delta_best": _delta_best, "setup": _setup,
+           "radio_check": _radio_check}
 
 
 @dataclass(slots=True)

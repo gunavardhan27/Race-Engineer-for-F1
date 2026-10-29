@@ -1,0 +1,8 @@
+# Commands configuration for steering wheel buttons, radio menu, and touch MFD
+commands:
+  radio_check:
+    name: "Radio Check"
+    description: "Two-way in-game radio and microphone transcription test"
+    enabled: true
+    timeout_s: 8.0
+    joystick_button: null

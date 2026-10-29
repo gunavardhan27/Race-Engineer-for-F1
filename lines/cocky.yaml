@@ -131,3 +131,13 @@ retirement:
   - text: "That's it, we're out. Bring it back to the garage."
   - text: "Race over. Shit happens. We go again."
     level: strong
+
+radio_check:
+  - text: "Quit messing with the radio and drive."
+  - text: "Five by five. Now focus on the track."
+  - text: "Hearing you loud and clear. Stop playing with the buttons."
+    level: mild
+  - text: "Five by five, bloody crystal clear."
+    level: mild
+  - text: "Yeah I hear you loud and clear, now shut up and drive."
+    level: strong

@@ -119,3 +119,15 @@ usage:
     chars_per_min: 10000
     chars_per_day: 200000
 
+radio_check:
+  on_session_start: true                              # Automatic radio check 3s after session starts
+
+sound_test:
+  on_app_start: true                                  # Startup chime/speech: "Engineer online." on app open
+
+volumes:
+  engineer: 1.0                                       # Volume factor for engineer voice (0.0 to 1.0)
+  spotter: 1.0                                        # Volume factor for spotter calls (0.0 to 1.0)
+  menu_beeps: 1.0                                     # Volume factor for radio beeps / clicks (0.0 to 1.0)
+
+

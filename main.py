@@ -34,12 +34,14 @@ from config import AppConfig, load_config
 from f1telemetry import packets
 from f1telemetry.deterministic import Callout, Callouts, RadioQueue, route
 from f1telemetry.spotter import Spotter, SPOTTER_PHRASES, SpotterState
-from f1telemetry.state import RaceState
+from f1telemetry.state import RaceState, TRACKS
 from knowledge import KnowledgeBase
 from latency import LatencyTracker
 from llm import LLMClient
 from personality import PersonalityEngine
+from radio_check import RadioCheckManager
 from radio_fx import apply_radio_fx
+from sound_test import SoundTestManager
 from stt import SpeechToText, build_initial_prompt
 from tts import TTSProvider, create_tts_engine
 from storage import SessionStorage, LapTraceCollector
@@ -82,8 +84,10 @@ class Engineer:
         setups_storage: SetupsStorage | None = None,
         personality: PersonalityEngine | None = None,
         usage_guard: UsageGuard | None = None,
+        config_path: str = "config.yaml",
     ):
         self.config = config or AppConfig()
+        self.config_path = config_path
         self.usage_guard = usage_guard
         self.state = RaceState(ptt_action=ptt_action)
         self.callouts = Callouts(debrief_config=self.config.debrief)
@@ -107,12 +111,36 @@ class Engineer:
         self._agent_task: asyncio.Task | None = None
         self._joystick_thread = None
 
+        self.radio_check = RadioCheckManager(config=self.config.radio_check)
+        self.quiet_mode: bool = False
+        self.sound_test = SoundTestManager(
+            tts=self.tts,
+            player=self.player,
+            capture=self.audio_capture,
+            stt=self.stt,
+            config=self.config,
+            is_session_live_fn=self.is_session_live,
+            config_path=self.config_path,
+        )
+
         if self.config.stt.ptt_source == "joystick":
             self._joystick_thread = start_joystick_listener(
                 self.on_ptt,
                 joystick_index=self.config.stt.joystick_index,
                 button_index=self.config.stt.joystick_button,
             )
+
+    def is_session_live(self) -> bool:
+        """Returns True if telemetry packets from an active session are arriving."""
+        return bool(
+            self.state.last_packet_time > 0
+            and (time.monotonic() - self.state.last_packet_time) < 4.0
+            and self.state.session is not None
+        )
+
+    def start_two_way_radio_check(self) -> str:
+        """Initiates two-way in-game radio check."""
+        return self.radio_check.start_two_way_check(say_fn=self.say)
 
     async def prerender_spotter(self):
         """Pre-renders spotter audio clips to bypass TTS latency during wheel-to-wheel battles."""
@@ -167,6 +195,9 @@ class Engineer:
             self.broadcaster.broadcast_radio("engineer", phrase)
         if phrase in self.spotter_audio and self.player:
             audio, sr = self.spotter_audio[phrase]
+            eff_vol = getattr(self.config.volumes, "spotter", 1.0)
+            if eff_vol != 1.0:
+                audio = audio * eff_vol
             threading.Thread(target=self.player.play_direct, args=(audio, sr), daemon=True).start()
         elif self.player:
             self.radio.push(Callout(0, time.monotonic(), phrase, ttl=self.config.spotter.ttl_s))
@@ -361,6 +392,24 @@ class Engineer:
                 if self.state.my_setup and not self.state.current_setup_id:
                     self._on_setup_change(self.state.my_setup, self.state.current_setup_fingerprint)
 
+            # Session start radio check: 3s after first packets of a new session
+            if self.state.session_uid:
+                t_name = ""
+                if self.state.session:
+                    t_name = TRACKS.get(self.state.session.track_id, f"track {self.state.session.track_id}")
+                start_msg = self.radio_check.on_session_packet(
+                    self.state.session_uid,
+                    track_name=t_name,
+                    quiet_mode=self.quiet_mode,
+                )
+                if start_msg:
+                    self.say(start_msg)
+
+            # Two-way check timeout evaluation
+            to_msg = self.radio_check.check_timeout()
+            if to_msg:
+                self.say(to_msg)
+
             if self.trace_collector:
                 self.trace_collector.on_tick(self.state)
         except Exception:
@@ -405,6 +454,8 @@ class Engineer:
 
     def on_ptt(self, down: bool):
         self.radio.ptt_down = down
+        if hasattr(self, "radio_check"):
+            self.radio_check.on_ptt(down)
         if down:
             # PTT pressed -> cancel any in-flight AI agent generation task
             if self._agent_task and not self._agent_task.done():
@@ -433,6 +484,14 @@ class Engineer:
                 asyncio.run(self._process_driver_audio(audio))
 
     async def _process_driver_audio(self, audio: np.ndarray):
+        # 1. If two-way radio check is waiting for driver response
+        if hasattr(self, "radio_check") and (self.radio_check.state.value == "waiting_for_driver" or self.radio_check.driver_speaking):
+            transcribe_fn = self.stt.transcribe if self.stt else (lambda a: "")
+            result_msg = await asyncio.to_thread(self.radio_check.on_audio, audio, transcribe_fn)
+            if result_msg:
+                self.say(result_msg)
+            return
+
         if self.stt is None:
             return
         prompt = build_initial_prompt(names=self.state.names, corner_names=self.get_corner_names())
@@ -459,7 +518,19 @@ class Engineer:
         reply = route(text, self.state)
         self.latency.record("route_done")
         if reply.kind == "answer":
-            self.say(reply.text)
+            if reply.intent == "radio_check":
+                reply_text = RadioCheckManager.build_voice_reply(self.state, self.personality)
+                stt_dur = 0.0
+                curr = getattr(self.latency, "_current", None)
+                if curr and "ptt_up" in curr.timestamps and "stt_done" in curr.timestamps:
+                    stt_dur = (curr.timestamps["stt_done"] - curr.timestamps["ptt_up"]) * 1000.0
+                log.info(
+                    "[RADIO CHECK] Driver: %r -> Reply: %r | PTT up -> STT: %.1fms",
+                    text, reply_text, stt_dur
+                )
+                self.say(reply_text)
+            else:
+                self.say(reply.text)
         else:
             # HOOK 2: send text + state snapshot + knowledge to the AI agent
             log.info("-> AI agent: %r", text)
@@ -504,6 +575,10 @@ class Engineer:
                             audio, sr = await self.tts.synth(c.text)
                             if self.config.tts.radio_fx:
                                 audio = apply_radio_fx(audio, sr, enable_clicks=True)
+
+                        eff_vol = getattr(self.config.volumes, "engineer", 1.0)
+                        if eff_vol != 1.0:
+                            audio = audio * eff_vol
 
                         if c.priority == -1:
                             self.latency.record("tts_first_audio")
@@ -651,7 +726,11 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
     # HOOK 3: initialize TTS engine with warmup and persistent audio player
     tts_engine = create_tts_engine(cfg.tts, usage_guard=usage_guard)
     await tts_engine.warmup()
-    player = AudioPlayer(device=cfg.audio.output_device, start_stream=not args.selftest)
+    player = AudioPlayer(
+        device=cfg.audio.output_device,
+        start_stream=not args.selftest,
+        volume=cfg.volumes.engineer,
+    )
 
     knowledge = KnowledgeBase(config=cfg.knowledge)
 
@@ -667,6 +746,7 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
         knowledge=knowledge,
         loop=loop,
         usage_guard=usage_guard,
+        config_path=args.config,
     )
     if audio_capture:
         audio_capture.on_audio_recorded = engineer.on_audio_recorded
@@ -724,6 +804,11 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
         tasks.append(asyncio.create_task(publish(engineer, redis_url, redis_hz)))
     if not args.no_console:
         start_console(engineer, loop)
+
+    # Play startup sound if enabled and session is not already live
+    if engineer.sound_test and not engineer.is_session_live() and not args.selftest and not args.replay:
+        await engineer.sound_test.play_startup_sound()
+
     try:
         if args.replay:
             await replay(args.replay, engineer, args.speed)
@@ -776,11 +861,22 @@ def parse_args(argv=None):
     p.add_argument("--export-setup", help="export setup by ID or fingerprint (prints sheet or JSON)")
     p.add_argument("--export-format", choices=["sheet", "json"], default="sheet", help="format for --export-setup (default: sheet)")
     p.add_argument("--usage", action="store_true", help="print today's cloud AI usage and limits and exit")
+    p.add_argument("--sound-test", action="store_true", help="run offline speaker sound test and exit")
     return p.parse_args(argv)
 
 
 def main(argv=None):
     args = parse_args(argv)
+    if args.sound_test:
+        cfg = load_config(args.config)
+        tts = create_tts_engine(cfg.tts)
+        player = AudioPlayer(device=cfg.audio.output_device, volume=cfg.volumes.engineer)
+        st_mgr = SoundTestManager(tts=tts, player=player, config=cfg)
+        print("Running Speaker Sound Test...")
+        res = asyncio.run(st_mgr.play_speaker_test(with_radio_fx=True))
+        print("Result:", res)
+        sys.exit(0)
+
     if args.usage:
         cfg = load_config(args.config)
         guard = UsageGuard(config=cfg.usage)

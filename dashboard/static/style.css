@@ -3227,6 +3227,33 @@ body {
   border-radius: 3px;
 }
 
+/* --- Sound Test & Audio Hardware Styles --- */
+.sound-test-panel {
+  position: relative;
+}
 
+.sound-test-panel.disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
 
+.sound-test-blocked-banner {
+  animation: pulse-border 2s infinite ease-in-out;
+}
 
+@keyframes pulse-border {
+  0%, 100% { border-color: rgba(239, 68, 68, 0.4); }
+  50% { border-color: rgba(239, 68, 68, 0.9); }
+}
+
+.btn-mic-recording {
+  background: #ef4444 !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.5) !important;
+  animation: mic-pulse 1s infinite alternate ease-in-out;
+}
+
+@keyframes mic-pulse {
+  from { transform: scale(1); }
+  to { transform: scale(1.02); }
+}

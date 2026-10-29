@@ -42,9 +42,23 @@ class AudioCapture:
         self._recording_chunks: list[np.ndarray] = []
         self._recording_sample_count = 0
 
+        # Live audio meter metrics
+        self.latest_peak: float = 0.0
+        self.latest_rms: float = 0.0
+        self.clipping_detected: bool = False
+
         self._stream = None
         if start_stream:
             self.start()
+
+    def set_device(self, device: str | int | None) -> tuple[bool, Optional[str]]:
+        """Changes audio input capture device immediately. Falls back to default if unavailable."""
+        from audio_devices import resolve_device
+        resolved, warn = resolve_device(device, kind="input")
+        self.device = resolved
+        self.stop()
+        self.start()
+        return (resolved is not None or device is None), warn
 
     def start(self) -> None:
         """Opens and starts the persistent sounddevice.InputStream."""
@@ -60,7 +74,10 @@ class AudioCapture:
             self._stream.start()
             log.info("Audio capture opened (16 kHz mono float32, device=%s)", self.device)
         except Exception as e:
-            log.warning("Could not open audio input stream: %s", e)
+            log.warning("Could not open audio input stream on device %s: %s; trying default", self.device, e)
+            if self.device is not None:
+                self.device = None
+                self.start()
 
     def stop(self) -> None:
         """Stops and closes the InputStream."""
@@ -81,6 +98,14 @@ class AudioCapture:
 
     def feed_audio(self, chunk: np.ndarray) -> None:
         """Feeds an incoming audio chunk (1D float32 array) into the buffer."""
+        if len(chunk) > 0:
+            peak = float(np.max(np.abs(chunk)))
+            rms = float(np.sqrt(np.mean(chunk**2)))
+            self.latest_peak = peak
+            self.latest_rms = rms
+            if peak >= 0.98:
+                self.clipping_detected = True
+
         with self._lock:
             # Maintain pre-roll ring buffer
             self._ring_buffer.append(chunk)
@@ -148,6 +173,23 @@ class AudioCapture:
                 self.on_audio_recorded(audio)
             except Exception:
                 log.exception("Error in on_audio_recorded callback")
+
+    def get_live_level(self) -> dict[str, Any]:
+        """Returns peak and RMS levels and clipping flag for live level meters."""
+        peak = self.latest_peak
+        rms = self.latest_rms
+        peak_db = 20.0 * np.log10(peak) if peak > 1e-5 else -100.0
+        return {
+            "peak": round(peak, 4),
+            "rms": round(rms, 4),
+            "peak_db": round(peak_db, 1),
+            "clipping": self.clipping_detected,
+            "is_recording": self._is_recording,
+        }
+
+    def reset_clipping(self) -> None:
+        """Resets the clipping flag."""
+        self.clipping_detected = False
 
 
 def start_joystick_listener(

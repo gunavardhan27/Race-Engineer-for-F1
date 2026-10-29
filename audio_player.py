@@ -14,14 +14,34 @@ log = logging.getLogger("engineer.player")
 class AudioPlayer:
     """Manages playback through sounddevice.OutputStream and allows immediate PTT interruption."""
 
-    def __init__(self, device: str | int | None = None, sample_rate: int = 22050, start_stream: bool = True):
+    def __init__(
+        self,
+        device: str | int | None = None,
+        sample_rate: int = 22050,
+        start_stream: bool = True,
+        volume: float = 1.0,
+    ):
         self.device = device
         self.sample_rate = sample_rate
+        self.volume = max(0.0, min(1.0, float(volume)))
         self._stream = None
         self._lock = threading.Lock()
         self._interrupt_flag = False
         if start_stream:
             self.start(sample_rate)
+
+    def set_volume(self, volume: float) -> None:
+        """Sets output playback volume (0.0 to 1.0)."""
+        self.volume = max(0.0, min(1.0, float(volume)))
+        log.info("AudioPlayer volume set to %.2f", self.volume)
+
+    def set_device(self, device: str | int | None) -> tuple[bool, Optional[str]]:
+        """Changes playback output device immediately. Falls back to default if unavailable."""
+        from audio_devices import resolve_device
+        resolved, warn = resolve_device(device, kind="output")
+        self.device = resolved
+        self.start(self.sample_rate)
+        return (resolved is not None or device is None), warn
 
     def interrupt(self) -> None:
         """Signals any active play() call to terminate immediately."""
@@ -49,7 +69,10 @@ class AudioPlayer:
                 self._stream.start()
                 log.info("Audio output opened (%d Hz mono float32, device=%s)", self.sample_rate, self.device)
         except Exception as e:
-            log.warning("Could not open audio output stream: %s", e)
+            log.warning("Could not open audio output stream on device %s: %s; trying default", self.device, e)
+            if self.device is not None:
+                self.device = None
+                self.start(sample_rate)
 
     def play(self, audio: np.ndarray, sample_rate: int, is_interrupted: Optional[Callable[[], bool]] = None) -> bool:
         """Plays audio in short blocks.
@@ -63,6 +86,9 @@ class AudioPlayer:
 
         if audio.dtype != np.float32:
             audio = audio.astype(np.float32)
+
+        if self.volume != 1.0:
+            audio = audio * self.volume
 
         if self._stream is None or self.sample_rate != sample_rate:
             self.start(sample_rate)

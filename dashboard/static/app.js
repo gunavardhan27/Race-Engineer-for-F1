@@ -270,6 +270,31 @@
     btnSaveSettings: document.getElementById('btn-save-settings'),
     settingsFeedbackMsg: document.getElementById('settings-feedback-msg'),
 
+    // App Sound Test & Audio Hardware
+    soundTestStatusBadge: document.getElementById('sound-test-status-badge'),
+    soundTestSessionBanner: document.getElementById('sound-test-session-banner'),
+    soundTestControlsContainer: document.getElementById('sound-test-controls-container'),
+    selectAudioInput: document.getElementById('select-audio-input'),
+    selectAudioOutput: document.getElementById('select-audio-output'),
+    btnRefreshAudioDevices: document.getElementById('btn-refresh-audio-devices'),
+    soundTestDeviceWarning: document.getElementById('sound-test-device-warning'),
+    sliderVolEngineer: document.getElementById('slider-vol-engineer'),
+    labelVolEngineer: document.getElementById('label-vol-engineer'),
+    sliderVolSpotter: document.getElementById('slider-vol-spotter'),
+    labelVolSpotter: document.getElementById('label-vol-spotter'),
+    sliderVolBeeps: document.getElementById('slider-vol-beeps'),
+    labelVolBeeps: document.getElementById('label-vol-beeps'),
+    toggleSpeakerFx: document.getElementById('toggle-speaker-fx'),
+    btnSpeakerTest: document.getElementById('btn-speaker-test'),
+    speakerTestStatus: document.getElementById('speaker-test-status'),
+    btnMicTest: document.getElementById('btn-mic-test'),
+    micClippingBadge: document.getElementById('mic-clipping-badge'),
+    micMeterFill: document.getElementById('mic-meter-fill'),
+    micMeterDb: document.getElementById('mic-meter-db'),
+    micMetricsLabel: document.getElementById('mic-metrics-label'),
+    micTranscriptResult: document.getElementById('mic-transcript-result'),
+    btnTriggerRadioCheck: document.getElementById('btn-trigger-radio-check'),
+
     // Usage Guard
     tabBtnUsage: document.getElementById('tab-btn-usage'),
     viewUsage: document.getElementById('view-usage'),
@@ -396,6 +421,11 @@
     // Cloud AI Quota Top-Bar Pill
     if (data.cloud_quota) {
       updateCloudQuotaPill(data.cloud_quota);
+    }
+
+    // App Sound Test Session State (blocked during live session)
+    if (data.session_live !== undefined) {
+      updateSoundTestSessionState(data.session_live);
     }
 
     // 1. Session & Track
@@ -1156,6 +1186,8 @@
       el.tabBtnSettings.addEventListener('click', () => {
         switchTab(el.tabBtnSettings, el.viewSettings);
         fetchPersonaSettings();
+        fetchAudioDevices();
+        fetchVolumes();
       });
     }
 
@@ -1186,6 +1218,54 @@
     }
     if (el.settingMinGapS) {
       el.settingMinGapS.addEventListener('change', savePersonaSettings);
+    }
+
+    // Sound Test & Audio Hardware Event Listeners
+    if (el.btnRefreshAudioDevices) {
+      el.btnRefreshAudioDevices.addEventListener('click', fetchAudioDevices);
+    }
+    if (el.selectAudioInput) {
+      el.selectAudioInput.addEventListener('change', saveAudioDevices);
+    }
+    if (el.selectAudioOutput) {
+      el.selectAudioOutput.addEventListener('change', saveAudioDevices);
+    }
+    if (el.sliderVolEngineer) {
+      el.sliderVolEngineer.addEventListener('input', () => {
+        if (el.labelVolEngineer) el.labelVolEngineer.textContent = el.sliderVolEngineer.value + '%';
+      });
+      el.sliderVolEngineer.addEventListener('change', saveVolumes);
+    }
+    if (el.sliderVolSpotter) {
+      el.sliderVolSpotter.addEventListener('input', () => {
+        if (el.labelVolSpotter) el.labelVolSpotter.textContent = el.sliderVolSpotter.value + '%';
+      });
+      el.sliderVolSpotter.addEventListener('change', saveVolumes);
+    }
+    if (el.sliderVolBeeps) {
+      el.sliderVolBeeps.addEventListener('input', () => {
+        if (el.labelVolBeeps) el.labelVolBeeps.textContent = el.sliderVolBeeps.value + '%';
+      });
+      el.sliderVolBeeps.addEventListener('change', saveVolumes);
+    }
+    if (el.btnSpeakerTest) {
+      el.btnSpeakerTest.addEventListener('click', runSpeakerTest);
+    }
+    if (el.btnMicTest) {
+      el.btnMicTest.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        startMicRecording();
+      });
+      el.btnMicTest.addEventListener('pointerup', (e) => {
+        e.preventDefault();
+        stopMicRecording();
+      });
+      el.btnMicTest.addEventListener('mouseleave', () => {
+        if (isMicRecording) stopMicRecording();
+      });
+    }
+    if (el.btnTriggerRadioCheck) {
+      el.btnTriggerRadioCheck.addEventListener('click', triggerInGameRadioCheck);
     }
 
     if (el.filterTrack) {

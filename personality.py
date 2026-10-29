@@ -50,6 +50,7 @@ BASE_COOLDOWNS = {
     "escalation": 30.0,
     "clean_stint": 120.0,
     "retirement": 0.0,
+    "radio_check": 10.0,
 }
 
 FREQ_MULTIPLIERS = {
@@ -322,6 +323,27 @@ class PersonalityEngine:
         # Priority 1 for big moments, priority 2 for regular reactions; TTL 5.0 s
         prio = 1 if event_name in BIG_MOMENTS else 2
         return Callout(prio, now, line, ttl=5.0)
+
+    def get_reaction_text(
+        self,
+        event_name: str,
+        extra_context: Optional[Dict[str, Any]] = None,
+        check_cooldown: bool = False,
+        now: Optional[float] = None,
+    ) -> Optional[str]:
+        """Returns next formatted reaction line respecting profanity filter, optionally checking cooldowns."""
+        if self.config.name == "professional" or not self.lines:
+            return None
+        if now is None:
+            now = time.monotonic()
+        if check_cooldown and self._is_on_cooldown(event_name, now):
+            return None
+        ctx = extra_context.copy() if extra_context else {}
+        line = self._get_next_line(event_name, ctx)
+        if line:
+            self.last_reaction_time = now
+            self.last_fired_per_event[event_name] = now
+        return line
 
     # ---- Signal Evaluator for Main Loop ----
 
