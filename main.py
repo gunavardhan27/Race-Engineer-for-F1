@@ -815,8 +815,19 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
             await asyncio.sleep(1)
             print(json.dumps(engineer.state.snapshot(), indent=2))
         else:
-            transport, _ = await loop.create_datagram_endpoint(
-                lambda: Listener(engineer.on_packet), local_addr=(host, port))
+            try:
+                transport, _ = await loop.create_datagram_endpoint(
+                    lambda: Listener(engineer.on_packet), local_addr=(host, port))
+            except OSError as e:
+                if e.errno == 48 or "Address already in use" in str(e):
+                    log.error("UDP port %d is already in use by another process.", port)
+                    print(f"\n❌ Port Conflict: UDP port {port} is already in use by another process.")
+                    print(f"   Another instance of Race Engineer (or another telemetry app) is running.")
+                    print(f"   To fix this:")
+                    print(f"     • Kill the existing process: kill $(lsof -t -i UDP:{port})")
+                    print(f"     • Or start with a different port: python main.py --port {port + 1} (or --ask-port)\n")
+                    return
+                raise
             log.info("listening on %s:%d (PTT = UDP Action %d)", host, port, ptt_action)
             try:
                 await asyncio.Event().wait()
