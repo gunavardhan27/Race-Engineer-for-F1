@@ -272,28 +272,28 @@
     // Settings
     tabBtnSettings: document.getElementById('tab-btn-settings'),
     viewSettings: document.getElementById('view-settings'),
-    settingPersonaName: document.getElementById('setting-persona-name'),
-    settingProfanity: document.getElementById('setting-profanity'),
-    settingReactionFreq: document.getElementById('setting-reaction-frequency'),
-    settingMinGapS: document.getElementById('setting-min-gap-s'),
-    btnSaveSettings: document.getElementById('btn-save-settings'),
+    settingPersonaName: document.getElementById('setting-persona-name') || document.getElementById('st-persona'),
+    settingProfanity: document.getElementById('setting-profanity') || document.getElementById('st-prof'),
+    settingReactionFreq: document.getElementById('setting-reaction-frequency') || document.getElementById('st-freq'),
+    settingMinGapS: document.getElementById('setting-min-gap-s') || document.getElementById('st-gap'),
+    btnSaveSettings: document.getElementById('btn-save-settings') || document.getElementById('btn-save-engineer'),
     settingsFeedbackMsg: document.getElementById('settings-feedback-msg'),
 
     // App Sound Test & Audio Hardware
     soundTestStatusBadge: document.getElementById('sound-test-status-badge'),
     soundTestSessionBanner: document.getElementById('sound-test-session-banner'),
     soundTestControlsContainer: document.getElementById('sound-test-controls-container'),
-    selectAudioInput: document.getElementById('select-audio-input'),
-    selectAudioOutput: document.getElementById('select-audio-output'),
-    btnRefreshAudioDevices: document.getElementById('btn-refresh-audio-devices'),
+    selectAudioInput: document.getElementById('select-audio-input') || document.getElementById('st-in'),
+    selectAudioOutput: document.getElementById('select-audio-output') || document.getElementById('st-out'),
+    btnRefreshAudioDevices: document.getElementById('btn-refresh-audio-devices') || document.getElementById('btn-refresh-audio'),
     soundTestDeviceWarning: document.getElementById('sound-test-device-warning'),
-    sliderVolEngineer: document.getElementById('slider-vol-engineer'),
-    labelVolEngineer: document.getElementById('label-vol-engineer'),
-    sliderVolSpotter: document.getElementById('slider-vol-spotter'),
-    labelVolSpotter: document.getElementById('label-vol-spotter'),
-    sliderVolBeeps: document.getElementById('slider-vol-beeps'),
-    labelVolBeeps: document.getElementById('label-vol-beeps'),
-    toggleSpeakerFx: document.getElementById('toggle-speaker-fx'),
+    sliderVolEngineer: document.getElementById('slider-vol-engineer') || document.getElementById('v-eng'),
+    labelVolEngineer: document.getElementById('label-vol-engineer') || document.getElementById('v-eng-out'),
+    sliderVolSpotter: document.getElementById('slider-vol-spotter') || document.getElementById('v-spot'),
+    labelVolSpotter: document.getElementById('label-vol-spotter') || document.getElementById('v-spot-out'),
+    sliderVolBeeps: document.getElementById('slider-vol-beeps') || document.getElementById('v-beep'),
+    labelVolBeeps: document.getElementById('label-vol-beeps') || document.getElementById('v-beep-out'),
+    toggleSpeakerFx: document.getElementById('toggle-speaker-fx') || document.getElementById('chk-radio-fx'),
     btnSpeakerTest: document.getElementById('btn-speaker-test'),
     speakerTestStatus: document.getElementById('speaker-test-status'),
     btnMicTest: document.getElementById('btn-mic-test'),
@@ -302,12 +302,12 @@
     micMeterDb: document.getElementById('mic-meter-db'),
     micMetricsLabel: document.getElementById('mic-metrics-label'),
     micTranscriptResult: document.getElementById('mic-transcript-result'),
-    btnTriggerRadioCheck: document.getElementById('btn-trigger-radio-check'),
+    btnTriggerRadioCheck: document.getElementById('btn-trigger-radio-check') || document.getElementById('btn-radio-check'),
 
     // Network & Ports
-    settingTelemetryPort: document.getElementById('setting-telemetry-port'),
-    settingDashboardPort: document.getElementById('setting-dashboard-port'),
-    settingAskPort: document.getElementById('setting-ask-port'),
+    settingTelemetryPort: document.getElementById('setting-telemetry-port') || document.getElementById('st-udp'),
+    settingDashboardPort: document.getElementById('setting-dashboard-port') || document.getElementById('st-web'),
+    settingAskPort: document.getElementById('setting-ask-port') || document.getElementById('st-ask-ports'),
     btnSavePorts: document.getElementById('btn-save-ports'),
     portsFeedbackMsg: document.getElementById('ports-feedback-msg'),
 
@@ -317,14 +317,14 @@
     btnRefreshUsage: document.getElementById('btn-refresh-usage'),
     usageLastProviderBadge: document.getElementById('usage-last-provider-badge'),
     usageCardsContainer: document.getElementById('usage-cards-container'),
-    cloudQuotaPill: document.getElementById('cloud-quota-pill'),
-    cloudQuotaText: document.getElementById('cloud-quota-text'),
+    cloudQuotaPill: document.getElementById('cloud-quota-pill') || document.getElementById('ai-chip'),
+    cloudQuotaText: document.getElementById('cloud-quota-text') || document.getElementById('ai-chip-text'),
     usageResetCountdown: document.getElementById('usage-reset-countdown'),
     usagePreflightBanner: document.getElementById('usage-preflight-banner'),
     usagePreflightBadge: document.getElementById('usage-preflight-badge'),
     usagePreflightMsg: document.getElementById('usage-preflight-msg'),
-    usageHistoryRange: document.getElementById('usage-history-range'),
-    usageHistoryTbody: document.getElementById('usage-history-tbody'),
+    usageHistoryRange: document.getElementById('usage-history-range') || document.getElementById('usage-timeframe'),
+    usageHistoryTbody: document.getElementById('usage-history-tbody') || document.getElementById('history'),
   };
 
   // --- Track Map & G-Force State ---
@@ -372,27 +372,36 @@
 
   // --- Theme Toggle Logic ---
   function initTheme() {
-    const saved = localStorage.getItem('race_engineer_theme');
+    const root = document.documentElement;
+    const saved = localStorage.getItem('race_engineer_theme') || localStorage.getItem('re-theme');
     if (saved === 'light') {
       document.body.classList.replace('dark-theme', 'light-theme');
-      el.themeIcon.textContent = '🌙';
+      root.dataset.theme = 'light';
+      if (el.themeIcon) el.themeIcon.textContent = '🌙';
     } else {
       document.body.classList.replace('light-theme', 'dark-theme');
-      el.themeIcon.textContent = '☀️';
+      root.dataset.theme = 'dark';
+      if (el.themeIcon) el.themeIcon.textContent = '☀️';
     }
 
-    el.themeToggle.addEventListener('click', () => {
-      const isDark = document.body.classList.contains('dark-theme');
-      if (isDark) {
-        document.body.classList.replace('dark-theme', 'light-theme');
-        el.themeIcon.textContent = '🌙';
-        localStorage.setItem('race_engineer_theme', 'light');
-      } else {
+    function toggleTheme() {
+      const isLight = document.body.classList.contains('light-theme') || root.dataset.theme === 'light';
+      if (isLight) {
         document.body.classList.replace('light-theme', 'dark-theme');
-        el.themeIcon.textContent = '☀️';
-        localStorage.setItem('race_engineer_theme', 'dark');
+        root.dataset.theme = 'dark';
+        if (el.themeIcon) el.themeIcon.textContent = '☀️';
+        try { localStorage.setItem('race_engineer_theme', 'dark'); localStorage.setItem('re-theme', 'dark'); } catch (e) {}
+      } else {
+        document.body.classList.replace('dark-theme', 'light-theme');
+        root.dataset.theme = 'light';
+        if (el.themeIcon) el.themeIcon.textContent = '🌙';
+        try { localStorage.setItem('race_engineer_theme', 'light'); localStorage.setItem('re-theme', 'light'); } catch (e) {}
       }
-    });
+    }
+
+    if (el.themeToggle) el.themeToggle.addEventListener('click', toggleTheme);
+    const themeBtn = document.getElementById('theme');
+    if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
   }
 
   // --- Telemetry Watchdog Timer ---
@@ -680,6 +689,236 @@
     // 11. G-Force Friction Circle
     if (data.g_force) {
       renderGForce(data.g_force);
+    }
+
+    // --- Modern Pit Wall Dashboard Sync ---
+    const linkText = document.getElementById('link-text');
+    const linkChip = document.getElementById('link-chip');
+    if (linkText && linkChip) {
+      if (isLive || (lastPacketTime > 0 && (Date.now() - lastPacketTime) < 3500)) {
+        linkText.textContent = 'Live · 20 Hz';
+        linkChip.className = 'chip ok';
+      } else {
+        linkText.textContent = 'Waiting for game';
+        linkChip.className = 'chip wait';
+      }
+    }
+    const ppsEl = document.getElementById('pps');
+    if (ppsEl) ppsEl.textContent = isLive ? '20' : '0';
+    const lastPktEl = document.getElementById('last-packet');
+    if (lastPktEl) lastPktEl.textContent = lastPacketTime > 0 ? 'just now' : 'never';
+
+    // Hero Strip
+    const hPos = document.getElementById('h-pos');
+    if (hPos) hPos.textContent = data.position !== null ? `P${data.position}` : 'P--';
+    const hPosS = document.getElementById('h-pos-s');
+    if (hPosS && data.grid_position !== undefined && data.position !== null) {
+      const diff = data.grid_position - data.position;
+      hPosS.innerHTML = diff > 0 ? `<span class="up">▲ ${diff}</span> from grid` : diff < 0 ? `<span class="warn">▼ ${Math.abs(diff)}</span> from grid` : `<span>▬ 0</span> from grid`;
+    }
+    const hLap = document.getElementById('h-lap');
+    if (hLap) {
+      hLap.innerHTML = `${data.lap !== null ? data.lap : '--'}<small> / ${data.total_laps !== null ? data.total_laps : '--'}</small>`;
+    }
+    const hLapBar = document.getElementById('h-lap-bar');
+    if (hLapBar && data.lap && data.total_laps) {
+      hLapBar.style.width = `${Math.min(100, Math.round((data.lap / data.total_laps) * 100))}%`;
+    }
+    const hLast = document.getElementById('h-last');
+    if (hLast) hLast.textContent = formatLapTime(data.last_lap_s);
+    const hAhead = document.getElementById('h-ahead');
+    if (hAhead) {
+      hAhead.textContent = data.car_ahead && data.car_ahead.gap_s !== null ? `+${data.car_ahead.gap_s.toFixed(2)}s` : (data.position === 1 ? 'LEADER' : '--');
+    }
+    const hAheadS = document.getElementById('h-ahead-s');
+    if (hAheadS) {
+      hAheadS.textContent = data.car_ahead ? (data.car_ahead.name || 'Ahead') : '--';
+    }
+    const hBehind = document.getElementById('h-behind');
+    if (hBehind) {
+      hBehind.textContent = data.car_behind && data.car_behind.gap_s !== null ? `+${data.car_behind.gap_s.toFixed(2)}s` : '--';
+    }
+    const hBehindS = document.getElementById('h-behind-s');
+    if (hBehindS) {
+      hBehindS.textContent = data.car_behind ? (data.car_behind.name || 'Behind') : '--';
+    }
+
+    // Glance HUD
+    const gPos = document.getElementById('g-pos');
+    if (gPos) gPos.textContent = data.position !== null ? `P${data.position}` : 'P--';
+    const gAhead = document.getElementById('g-ahead');
+    if (gAhead) gAhead.textContent = data.car_ahead && data.car_ahead.gap_s !== null ? `+${data.car_ahead.gap_s.toFixed(2)}s` : (data.position === 1 ? 'P1' : '--');
+    const gBehind = document.getElementById('g-behind');
+    if (gBehind) gBehind.textContent = data.car_behind && data.car_behind.gap_s !== null ? `+${data.car_behind.gap_s.toFixed(2)}s` : '--';
+    const gLast = document.getElementById('g-last');
+    if (gLast) gLast.textContent = formatLapTime(data.last_lap_s);
+    const gFuel = document.getElementById('g-fuel');
+    if (gFuel && data.fuel && data.fuel.laps_delta !== null) {
+      gFuel.textContent = `${data.fuel.laps_delta >= 0 ? '+' : ''}${data.fuel.laps_delta.toFixed(1)}`;
+      gFuel.className = `big ${data.fuel.laps_delta >= 0 ? 'up' : 'warn'}`;
+    }
+
+    // Modern Tyres
+    if (data.tyres) {
+      const t = data.tyres;
+      const wear = t.wear_pct || {};
+      const temps = t.surface_temp_c || {};
+
+      const flW = wear['front left'] || 0;
+      const frW = wear['front right'] || 0;
+      const rlW = wear['rear left'] || 0;
+      const rrW = wear['rear right'] || 0;
+
+      const setTile = (prefix, w, temp) => {
+        const wEl = document.getElementById(`${prefix}-wear`);
+        const bEl = document.getElementById(`${prefix}-bar`);
+        const tEl = document.getElementById(`${prefix}-temp`);
+        if (wEl) wEl.textContent = `${Math.round(w)}%`;
+        if (bEl) {
+          bEl.style.width = `${Math.min(100, Math.round(w))}%`;
+          bEl.style.background = w > 50 ? 'var(--red)' : w > 35 ? 'var(--yellow)' : 'var(--green)';
+        }
+        if (tEl && temp) {
+          const st = temp > 115 ? 'hot' : temp < 85 ? 'cold' : 'ok';
+          tEl.className = `t ${st}`;
+          tEl.innerHTML = `<i></i><span>${Math.round(temp)}°C${st === 'hot' ? ' · hot' : ''}</span>`;
+        }
+      };
+
+      setTile('fl', flW, temps['front left']);
+      setTile('fr', frW, temps['front right']);
+      setTile('rl', rlW, temps['rear left']);
+      setTile('rr', rrW, temps['rear right']);
+
+      const gTyre = document.getElementById('g-tyre');
+      if (gTyre) {
+        const worst = Math.round(Math.max(flW, frW, rlW, rrW));
+        gTyre.textContent = `${worst}%`;
+      }
+
+      const wearChip = document.getElementById('wear-chip');
+      if (wearChip) wearChip.textContent = t.wear_pct_per_lap ? `${t.wear_pct_per_lap}% / lap` : '-- / lap';
+
+      const tyreChipText = document.getElementById('tyre-chip-text');
+      const tyreChipBadge = document.getElementById('tyre-chip-badge');
+      if (tyreChipText) {
+        tyreChipText.textContent = `${t.compound || 'Medium'} · ${t.age_laps || 0} laps`;
+      }
+      if (tyreChipBadge && t.compound) {
+        const cCode = t.compound[0].toUpperCase();
+        tyreChipBadge.className = `tyre ${cCode}`;
+      }
+    }
+
+    // Modern Fuel & ERS
+    if (data.fuel) {
+      const fTank = document.getElementById('f-tank');
+      if (fTank) fTank.textContent = `${data.fuel.kg} kg`;
+      const fMargin = document.getElementById('f-margin');
+      if (fMargin && data.fuel.laps_delta !== null) {
+        fMargin.textContent = `${data.fuel.laps_delta >= 0 ? '+' : ''}${data.fuel.laps_delta.toFixed(2)} laps`;
+        fMargin.className = `v ${data.fuel.laps_delta >= 0 ? 'up' : 'down'}`;
+      }
+      const fBurn = document.getElementById('f-burn');
+      if (fBurn) fBurn.textContent = data.fuel.kg_per_lap ? `${data.fuel.kg_per_lap}` : '--';
+    }
+    if (data.ers_pct !== null && data.ers_pct !== undefined) {
+      const ersBar = document.getElementById('ers-bar');
+      const ersV = document.getElementById('ers-v');
+      if (ersBar) ersBar.style.width = `${Math.min(100, Math.max(0, data.ers_pct))}%`;
+      if (ersV) ersV.textContent = `${data.ers_pct}%`;
+    }
+
+    // Modern Damage
+    const flwVal = dmg['front left wing'] || 0;
+    const frwVal = dmg['front right wing'] || 0;
+    const flrVal = dmg['floor'] || 0;
+    const difVal = dmg['diffuser'] || 0;
+    const sdpVal = dmg['sidepod'] || 0;
+    const gbxVal = dmg['gearbox'] || 0;
+    const engVal = dmg['engine'] || 0;
+
+    const setDmgEl = (id, val) => {
+      const elDmg = document.getElementById(id);
+      if (elDmg) {
+        elDmg.textContent = `${val}%`;
+        elDmg.className = val >= 10 ? 'bad' : val > 0 ? 'warn' : '';
+      }
+    };
+    setDmgEl('dmg-flw', flwVal);
+    setDmgEl('dmg-frw', frwVal);
+    setDmgEl('dmg-floor', Math.max(flrVal, difVal));
+    setDmgEl('dmg-side', sdpVal);
+    setDmgEl('dmg-gear', gbxVal);
+    setDmgEl('dmg-eng', engVal);
+
+    const dmgChip = document.getElementById('dmg-chip');
+    if (dmgChip) {
+      dmgChip.textContent = hasDamage ? 'Damage detected' : 'No damage';
+      dmgChip.className = `chip ${hasDamage ? 'warn' : 'ok'}`;
+    }
+
+    // Modern Strategy & Weather
+    if (data.weather) {
+      const valWeather = document.getElementById('val-weather');
+      if (valWeather) valWeather.textContent = (data.weather.now || 'Clear').toUpperCase();
+      const valTrackTemp = document.getElementById('val-track-temp');
+      if (valTrackTemp) valTrackTemp.textContent = `Track ${data.weather.track_c || '--'}°C · Air ${data.weather.air_c || '--'}°C`;
+      const valRainProb = document.getElementById('val-rain-prob');
+      const valRainForecast = document.getElementById('val-rain-forecast');
+      if (data.weather.next_rain) {
+        if (valRainProb) valRainProb.textContent = `Rain in ${data.weather.next_rain.in_min}m`;
+        if (valRainForecast) valRainForecast.textContent = `${data.weather.next_rain.pct}% probability`;
+      } else {
+        if (valRainProb) valRainProb.textContent = 'None expected';
+        if (valRainForecast) valRainForecast.textContent = 'Clear skies';
+      }
+    }
+    if (data.pit_window) {
+      const valPitWindow = document.getElementById('val-pit-window');
+      if (valPitWindow) valPitWindow.textContent = `Laps ${data.pit_window.ideal_lap}–${data.pit_window.latest_lap}`;
+    }
+
+    // Modern Center Gauges
+    const cSpeed = document.getElementById('c-speed');
+    if (cSpeed && data.speed_kph !== undefined && data.speed_kph !== null) {
+      cSpeed.textContent = Math.round(data.speed_kph);
+    }
+    const cGear = document.getElementById('c-gear');
+    if (cGear && data.gear !== undefined && data.gear !== null) {
+      cGear.textContent = data.gear === 0 ? 'N' : data.gear === -1 ? 'R' : data.gear;
+    }
+    const cDrs = document.getElementById('c-drs');
+    if (cDrs) {
+      cDrs.textContent = data.drs ? 'DRS open' : 'DRS';
+      cDrs.className = `chip ${data.drs ? 'ok' : ''}`;
+    }
+    if (data.throttle !== undefined) {
+      const thrPct = Math.round(data.throttle * 100);
+      const cThr = document.getElementById('c-thr');
+      const cThrV = document.getElementById('c-thr-v');
+      if (cThr) cThr.style.width = `${thrPct}%`;
+      if (cThrV) cThrV.textContent = thrPct;
+    }
+    if (data.brake !== undefined) {
+      const brkPct = Math.round(data.brake * 100);
+      const cBrk = document.getElementById('c-brk');
+      const cBrkV = document.getElementById('c-brk-v');
+      if (cBrk) cBrk.style.width = `${brkPct}%`;
+      if (cBrkV) cBrkV.textContent = brkPct;
+    }
+    if (data.g_force) {
+      const lat = data.g_force.lat || 0;
+      const lon = data.g_force.lon || 0;
+      const ggDot = document.getElementById('gg-dot');
+      if (ggDot) {
+        ggDot.setAttribute('cx', (lat / 5 * 46).toFixed(1));
+        ggDot.setAttribute('cy', (-lon / 5 * 46).toFixed(1));
+      }
+      const gLat = document.getElementById('g-lat');
+      const gLon = document.getElementById('g-lon');
+      if (gLat) gLat.textContent = `${Math.abs(lat).toFixed(1)} g`;
+      if (gLon) gLon.textContent = `${(lon < 0 ? '−' : '')}${Math.abs(lon).toFixed(1)} g`;
     }
   }
 
@@ -1042,61 +1281,115 @@
 
   // --- UI Update: Render Timing Tower Table ---
   function renderTimingTower(cars) {
-    el.towerCount.textContent = `${cars.length} CARS`;
+    if (el.towerCount) el.towerCount.textContent = `${cars.length} CARS`;
+    const modernTower = document.getElementById('tower');
+    const carsChip = document.getElementById('cars-chip');
+    if (carsChip) carsChip.textContent = `${cars.length} cars`;
+
     if (!cars.length) {
-      el.towerTbody.innerHTML = '<tr class="empty-row"><td colspan="9">No active cars in session</td></tr>';
+      if (el.towerTbody) el.towerTbody.innerHTML = '<tr class="empty-row"><td colspan="9">No active cars in session</td></tr>';
+      if (modernTower) {
+        modernTower.innerHTML = '<tr><td colspan="8"><div class="empty"><strong>No cars in session</strong><span class="help">The order appears when the session starts.</span></div></td></tr>';
+      }
       return;
     }
 
-    const rows = cars.map(c => {
-      const isPlayer = c.is_player ? 'player-row' : '';
-      const compoundCode = (c.tyre_compound || 'm')[0].toLowerCase();
-      const badgeClass = `badge-${compoundCode}`;
-      const gapAhead = c.position === 1 ? 'LEADER' : c.gap_ahead !== null ? `+${c.gap_ahead}s` : '--';
-      const gapLeader = c.position === 1 ? '--' : c.gap_leader !== null ? `+${c.gap_leader}s` : '--';
-      const pen = c.penalties > 0 ? `<span style="color: var(--color-red)">+${c.penalties}s</span>` : '0';
+    if (el.towerTbody) {
+      const rows = cars.map(c => {
+        const isPlayer = c.is_player ? 'player-row' : '';
+        const compoundCode = (c.tyre_compound || 'm')[0].toLowerCase();
+        const badgeClass = `badge-${compoundCode}`;
+        const gapAhead = c.position === 1 ? 'LEADER' : c.gap_ahead !== null ? `+${c.gap_ahead}s` : '--';
+        const gapLeader = c.position === 1 ? '--' : c.gap_leader !== null ? `+${c.gap_leader}s` : '--';
+        const pen = c.penalties > 0 ? `<span style="color: var(--color-red)">+${c.penalties}s</span>` : '0';
 
-      return `
-        <tr class="${isPlayer}">
-          <td class="td-pos mono">P${c.position}</td>
-          <td class="td-driver">${c.name || 'Car ' + c.car_idx}</td>
-          <td class="mono">${gapAhead}</td>
-          <td class="mono">${gapLeader}</td>
-          <td class="mono">${formatLapTime(c.last_lap)}</td>
-          <td><span class="${badgeClass}">${(c.tyre_compound || '?').toUpperCase()}</span></td>
-          <td class="mono">${c.tyre_age !== null ? c.tyre_age : '--'}</td>
-          <td class="mono">${c.pit_stops !== null ? c.pit_stops : 0}</td>
-          <td class="mono">${pen}</td>
-        </tr>
-      `;
-    }).join('');
+        return `
+          <tr class="${isPlayer}">
+            <td class="td-pos mono">P${c.position}</td>
+            <td class="td-driver">${c.name || 'Car ' + c.car_idx}</td>
+            <td class="mono">${gapAhead}</td>
+            <td class="mono">${gapLeader}</td>
+            <td class="mono">${formatLapTime(c.last_lap)}</td>
+            <td><span class="${badgeClass}">${(c.tyre_compound || '?').toUpperCase()}</span></td>
+            <td class="mono">${c.tyre_age !== null ? c.tyre_age : '--'}</td>
+            <td class="mono">${c.pit_stops !== null ? c.pit_stops : 0}</td>
+            <td class="mono">${pen}</td>
+          </tr>
+        `;
+      }).join('');
+      el.towerTbody.innerHTML = rows;
+    }
 
-    el.towerTbody.innerHTML = rows;
+    if (modernTower) {
+      let prev = 0;
+      modernTower.innerHTML = cars.map((c, i) => {
+        const isPlayer = !!c.is_player;
+        const gap = c.gap_leader !== null ? c.gap_leader : 0;
+        const interval = i === 0 ? 'Leader' : c.is_in_pit ? '—' : '+' + (c.gap_ahead !== null ? c.gap_ahead : (gap - prev).toFixed(3));
+        const lead = i === 0 ? '—' : c.is_in_pit ? 'In pit' : '+' + (c.gap_leader !== null ? c.gap_leader : gap.toFixed(3));
+        if (!c.is_in_pit) prev = gap;
+        const cmp = (c.tyre_compound || 'M')[0].toUpperCase();
+        const age = c.tyre_age !== null ? c.tyre_age : 0;
+        const pen = c.penalties > 0 ? `+${c.penalties}s` : '';
+        return `<tr class="${isPlayer ? 'me' : ''}">
+          <td class="r"><b>${c.position}</b></td>
+          <td><b>${c.name || (isPlayer ? 'You' : 'Car ' + c.car_idx)}</b> <span class="dim">${c.team || (isPlayer ? 'Player' : '')}</span></td>
+          <td class="r">${interval}</td>
+          <td class="r muted">${lead}</td>
+          <td class="r">${formatLapTime(c.last_lap)}</td>
+          <td><span class="tyre ${cmp}" aria-label="${cmp}">${cmp}</span> <span class="muted">${age}</span></td>
+          <td class="r">${c.pit_stops !== null ? c.pit_stops : 0}</td>
+          <td class="r ${pen ? 'warn' : 'dim'}">${pen || '—'}</td>
+        </tr>`;
+      }).join('');
+    }
   }
 
   // --- UI Update: Radio Message Bubble ---
   function addRadioMessage(msg) {
-    const isDriver = msg.sender.toLowerCase() === 'driver';
-    const bubble = document.createElement('div');
-    bubble.className = `radio-bubble ${isDriver ? 'driver' : 'engineer'}`;
-
+    const isDriver = (msg.sender || '').toLowerCase() === 'driver';
+    const isSpotter = (msg.sender || '').toLowerCase() === 'spotter';
     const timeStr = new Date(msg.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const latencyBadge = msg.latency_ms ? `<span class="latency-badge mono">${Math.round(msg.latency_ms)}ms</span>` : '';
+    const metaText = msg.latency_ms ? `AI · ${(msg.latency_ms / 1000).toFixed(1)}s` : '';
 
-    bubble.innerHTML = `
-      <div class="radio-meta">
-        <span class="${isDriver ? 'sender-driver' : 'sender-engineer'}">[${msg.sender.toUpperCase()}]</span>
-        <div>${latencyBadge} <span class="mono">${timeStr}</span></div>
-      </div>
-      <div class="radio-text">"${msg.text}"</div>
-    `;
+    if (el.radioLog) {
+      const bubble = document.createElement('div');
+      bubble.className = `radio-bubble ${isDriver ? 'driver' : 'engineer'}`;
+      bubble.innerHTML = `
+        <div class="radio-meta">
+          <span class="${isDriver ? 'sender-driver' : 'sender-engineer'}">[${(msg.sender || '').toUpperCase()}]</span>
+          <div>${latencyBadge} <span class="mono">${timeStr}</span></div>
+        </div>
+        <div class="radio-text">"${msg.text}"</div>
+      `;
+      const welcome = el.radioLog.querySelector('.radio-welcome-notice');
+      if (welcome) welcome.remove();
+      el.radioLog.appendChild(bubble);
+      el.radioLog.scrollTop = el.radioLog.scrollHeight;
+    }
 
-    // Remove welcome notice if first message
-    const welcome = el.radioLog.querySelector('.radio-welcome-notice');
-    if (welcome) welcome.remove();
+    const modernFeed = document.getElementById('feed');
+    if (modernFeed) {
+      const roleClass = isDriver ? 'you' : isSpotter ? 'spot' : 'eng';
+      const senderName = isDriver ? 'You' : isSpotter ? 'Spotter' : 'Engineer';
+      const wrap = document.createElement('div');
+      wrap.className = `msg ${roleClass} enter`;
+      wrap.innerHTML = `
+        <div class="who"><b>${senderName}</b><time>${timeStr}</time></div>
+        <p>${msg.text}</p>
+        ${metaText ? `<span class="meta">${metaText}</span>` : ''}
+      `;
+      const empty = modernFeed.querySelector('.empty');
+      if (empty) empty.remove();
+      modernFeed.appendChild(wrap);
+      if (modernFeed.children.length > 40) modernFeed.firstChild.remove();
+      requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add('in')));
+      modernFeed.scrollTop = modernFeed.scrollHeight;
+    }
 
-    el.radioLog.appendChild(bubble);
-    el.radioLog.scrollTop = el.radioLog.scrollHeight;
+    const gRadio = document.getElementById('g-radio');
+    if (gRadio) gRadio.textContent = msg.text;
   }
 
   // --- WebSocket Connection with Exponential Backoff ---
@@ -1207,8 +1500,154 @@
     function switchTab(activeBtn, activeView) {
       const tabs = [el.tabBtnLive, el.tabBtnLaps, el.tabBtnSetups, el.tabBtnTracks, el.tabBtnUsage, el.tabBtnSettings];
       const views = [el.viewLive, el.viewLaps, el.viewSetups, el.viewTracks, el.viewUsage, el.viewSettings];
-      tabs.forEach(t => { if (t) t.classList.toggle('active', t === activeBtn); });
-      views.forEach(v => { if (v) v.classList.toggle('hidden', v !== activeView); });
+      tabs.forEach(t => { 
+        if (t) {
+          t.classList.toggle('active', t === activeBtn);
+          if (t === activeBtn) t.setAttribute('aria-current', 'page');
+          else t.removeAttribute('aria-current');
+        }
+      });
+      views.forEach(v => { 
+        if (v) {
+          v.classList.toggle('active', v === activeView);
+          v.classList.toggle('hidden', v !== activeView);
+        }
+      });
+    }
+
+    function activateSettingsSubnav(secKey) {
+      document.querySelectorAll('.subnav a').forEach(a => {
+        const href = a.getAttribute('href') || '';
+        a.classList.toggle('active', href.includes(secKey));
+      });
+      const sec = document.getElementById(`sec-${secKey}`);
+      if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    document.querySelectorAll('.subnav a').forEach(a => {
+      a.addEventListener('click', () => {
+        const href = a.getAttribute('href') || '';
+        const key = href.replace('#settings-', '').replace('#sec-', '');
+        activateSettingsSubnav(key);
+      });
+    });
+
+    function handleHashRoute() {
+      const raw = (window.location.hash || '#live').slice(1).toLowerCase();
+      const parts = raw.split(':');
+      const clean = parts[0];
+      let viewKey = 'live';
+      let subSec = null;
+
+      if (clean.startsWith('settings')) {
+        viewKey = 'settings';
+        if (clean.includes('-')) {
+          subSec = clean.split('-')[1];
+        }
+      } else if (clean === 'laps') {
+        viewKey = 'laps';
+      } else if (clean === 'setups') {
+        viewKey = 'setups';
+      } else if (clean === 'tracks') {
+        viewKey = 'tracks';
+      } else if (clean === 'usage') {
+        viewKey = 'usage';
+      } else {
+        viewKey = 'live';
+      }
+
+      const map = {
+        live: { btn: el.tabBtnLive, view: el.viewLive },
+        laps: { btn: el.tabBtnLaps, view: el.viewLaps },
+        setups: { btn: el.tabBtnSetups, view: el.viewSetups },
+        tracks: { btn: el.tabBtnTracks, view: el.viewTracks },
+        usage: { btn: el.tabBtnUsage, view: el.viewUsage },
+        settings: { btn: el.tabBtnSettings, view: el.viewSettings },
+      };
+
+      const target = map[viewKey];
+      if (target && target.btn && target.view) {
+        switchTab(target.btn, target.view);
+        if (viewKey === 'laps') {
+          initMockCharts();
+          if (loadedSessions.length === 0) fetchSessions();
+        } else if (viewKey === 'setups') {
+          fetchSetups();
+          fetchCurrentSetup();
+        } else if (viewKey === 'tracks') {
+          fetchTracksList();
+        } else if (viewKey === 'usage') {
+          fetchUsageStatus();
+          fetchUsageHistory();
+        } else if (viewKey === 'settings') {
+          fetchPersonaSettings();
+          fetchAudioDevices();
+          fetchVolumes();
+          fetchPortSettings();
+          if (subSec) {
+            setTimeout(() => activateSettingsSubnav(subSec), 100);
+          }
+        }
+      }
+    }
+
+    window.addEventListener('hashchange', handleHashRoute);
+
+    // Popover handler
+    const linkChip = document.getElementById('link-chip');
+    const linkPop = document.getElementById('link-pop');
+    if (linkChip && linkPop) {
+      function setPop(open) {
+        linkPop.classList.toggle('open', open);
+        linkChip.setAttribute('aria-expanded', open ? 'true' : 'false');
+      }
+      linkChip.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setPop(!linkPop.classList.contains('open'));
+      });
+      document.addEventListener('click', (e) => {
+        if (!linkPop.contains(e.target) && e.target !== linkChip) setPop(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && linkPop.classList.contains('open')) {
+          setPop(false);
+          linkChip.focus();
+        }
+      });
+    }
+
+    // Layout Switcher (Full vs Glance)
+    const btnFull = document.getElementById('btn-layout-full');
+    const btnGlance = document.getElementById('btn-layout-glance');
+    const viewLive = document.getElementById('view-live');
+    if (btnFull && btnGlance && viewLive) {
+      btnFull.addEventListener('click', () => {
+        btnFull.setAttribute('aria-pressed', 'true');
+        btnGlance.setAttribute('aria-pressed', 'false');
+        viewLive.classList.remove('is-glance');
+      });
+      btnGlance.addEventListener('click', () => {
+        btnFull.setAttribute('aria-pressed', 'false');
+        btnGlance.setAttribute('aria-pressed', 'true');
+        viewLive.classList.add('is-glance');
+      });
+    }
+
+    // Volume Sliders Live Readout
+    ['v-eng', 'v-spot', 'v-beep'].forEach(id => {
+      const slider = document.getElementById(id);
+      const out = document.getElementById(`${id}-out`);
+      if (slider && out) {
+        slider.addEventListener('input', () => {
+          out.textContent = slider.value + '%';
+        });
+      }
+    });
+
+    // 24-Bar VU Meter Initialization
+    const levelEl = document.getElementById('level');
+    if (levelEl && levelEl.children.length === 0) {
+      levelEl.innerHTML = Array.from({ length: 24 }, (_, i) => `<i class="${i > 18 ? 'hi' : ''}"></i>`).join('');
     }
 
     el.tabBtnLive.addEventListener('click', () => {
@@ -1217,6 +1656,7 @@
 
     el.tabBtnLaps.addEventListener('click', () => {
       switchTab(el.tabBtnLaps, el.viewLaps);
+      initMockCharts();
       if (loadedSessions.length === 0) {
         fetchSessions();
       }
@@ -1279,6 +1719,11 @@
     if (el.btnSaveSettings) {
       el.btnSaveSettings.addEventListener('click', savePersonaSettings);
     }
+    const btnDiscardEng = document.getElementById('btn-discard-engineer');
+    if (btnDiscardEng) {
+      btnDiscardEng.addEventListener('click', fetchPersonaSettings);
+    }
+
     if (el.settingPersonaName) {
       el.settingPersonaName.addEventListener('change', savePersonaSettings);
     }
@@ -1295,6 +1740,15 @@
     // Sound Test & Audio Hardware Event Listeners
     if (el.btnRefreshAudioDevices) {
       el.btnRefreshAudioDevices.addEventListener('click', fetchAudioDevices);
+    }
+    const btnSaveAud = document.getElementById('btn-save-audio');
+    if (btnSaveAud) {
+      btnSaveAud.addEventListener('click', async () => {
+        await saveAudioDevices();
+        await saveVolumes();
+        btnSaveAud.textContent = 'Saved ✓';
+        setTimeout(() => { if (btnSaveAud) btnSaveAud.textContent = 'Save Audio Settings'; }, 2000);
+      });
     }
     if (el.selectAudioInput) {
       el.selectAudioInput.addEventListener('change', saveAudioDevices);
@@ -1339,6 +1793,19 @@
     if (el.btnTriggerRadioCheck) {
       el.btnTriggerRadioCheck.addEventListener('click', triggerInGameRadioCheck);
     }
+    const btnRadCheckWait = document.getElementById('btn-radio-check-wait');
+    if (btnRadCheckWait) {
+      btnRadCheckWait.addEventListener('click', triggerInGameRadioCheck);
+    }
+    const btnSaveWhl = document.getElementById('btn-save-wheel');
+    if (btnSaveWhl) {
+      btnSaveWhl.addEventListener('click', () => {
+        const val = document.getElementById('st-ptt-action')?.value || '1';
+        try { localStorage.setItem('re_wheel_ptt_action', val); } catch (e) {}
+        btnSaveWhl.textContent = 'Saved ✓';
+        setTimeout(() => { if (btnSaveWhl) btnSaveWhl.textContent = 'Save Wheel Settings'; }, 2000);
+      });
+    }
     if (el.btnSavePorts) {
       el.btnSavePorts.addEventListener('click', savePortSettings);
     }
@@ -1379,6 +1846,131 @@
         const stintId = parseInt(e.target.value, 10);
         renderSelectedStint(stintId);
       });
+    }
+
+    const btnRebOutline = document.getElementById('btn-rebuild-outline');
+    if (btnRebOutline) {
+      btnRebOutline.addEventListener('click', rebuildTrackMap);
+    }
+
+    handleHashRoute();
+  }
+
+  function initMockCharts() {
+    const chartSpeedBody = document.getElementById('chart-speed-body');
+    const chartInputsBody = document.getElementById('chart-inputs-body');
+    const chartDeltaBody = document.getElementById('chart-delta-body');
+    if (!chartSpeedBody || !chartInputsBody || !chartDeltaBody) return;
+    if (chartSpeedBody.children.length > 0) return;
+
+    const LAP_LEN = 5891;
+    const CORNERS = [
+      ['Abbey',1,300,288],['Farm',2,560,262],['Village',3,820,124],['The Loop',4,1010,84],['Aintree',5,1170,158],
+      ['Brooklands',6,1760,118],['Luffield',7,1960,94],['Woodcote',8,2250,232],['Copse',9,2960,254],['Maggotts',10,3480,268],
+      ['Becketts',11,3700,186],['Chapel',13,3900,218],['Stowe',15,4720,176],['Vale',16,5210,108],['Club',17,5470,138],
+    ];
+    const ADJ_A = { Stowe: -6, Luffield: -3, Club: -4, Village: 1, Copse: 2 };
+
+    function speedAt(d, adj = {}) {
+      let v = 326;
+      for (const [name, , cd, vmin] of CORNERS) {
+        const m = vmin + (adj[name] || 0);
+        for (const off of [0, LAP_LEN, -LAP_LEN]) {
+          const c = cd + off;
+          const x = d - c;
+          v = Math.min(v, Math.sqrt(m * m + (x < 0 ? 1040 * -x : 210 * x)));
+        }
+      }
+      return v;
+    }
+
+    const N = 600;
+    const xs = [...Array(N)].map((_, i) => i * LAP_LEN / (N - 1));
+    const vA = xs.map(d => speedAt(d, ADJ_A));
+    const vB = xs.map(d => speedAt(d));
+    const delta = [];
+    let ta = 0, tb = 0;
+    for (let i = 0; i < N; i++) {
+      if (i) {
+        const ds = xs[i] - xs[i - 1];
+        ta += ds / (vA[i] / 3.6);
+        tb += ds / (vB[i] / 3.6);
+      }
+      delta.push(ta - tb);
+    }
+    const thr = vA.map((v, i) => { const s = i ? v - vA[i - 1] : 0; return s < -0.3 ? 0 : s > 0.15 || v > 324 ? 100 : 45; });
+    const brk = vA.map((v, i) => { const s = i ? v - vA[i - 1] : 0; return s < -0.3 ? Math.min(100, 35 + -s * 6) : 0; });
+
+    const W = 1000;
+    const X = d => d / LAP_LEN * W;
+    function lineSvg(arr, lo, hi, H) {
+      return arr.map((v, i) => `${i ? 'L' : 'M'}${X(xs[i]).toFixed(1)},${(H - (v - lo) / (hi - lo) * H).toFixed(1)}`).join('');
+    }
+    function chartSVG(H, inner, grid) {
+      return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:${H}px"><g class="grid">${grid}</g>${inner}<line class="xh" x1="-10" x2="-10" y1="0" y2="${H}"/></svg>`;
+    }
+
+    const cg = H => CORNERS.map(c => `<line x1="${X(c[2])}" x2="${X(c[2])}" y1="0" y2="${H}"/>`).join('');
+    chartSpeedBody.innerHTML = chartSVG(170,
+      `<path class="series" stroke="var(--text-3)" d="${lineSvg(vB, 60, 340, 170)}"/><path class="series" stroke="var(--accent)" d="${lineSvg(vA, 60, 340, 170)}"/>`, cg(170));
+    chartInputsBody.innerHTML = chartSVG(90,
+      `<path class="series" stroke="var(--green)" d="${lineSvg(thr, 0, 105, 90)}"/><path class="series" stroke="var(--red)" d="${lineSvg(brk, 0, 105, 90)}"/>`, cg(90));
+    const dmax = Math.max(...delta.map(Math.abs)) * 1.2 || 1;
+    chartDeltaBody.innerHTML = chartSVG(90,
+      `<path class="series" stroke="var(--yellow)" d="${lineSvg(delta, -dmax, dmax, 90)}"/>`, cg(90) + `<line x1="0" x2="${W}" y1="45" y2="45" style="stroke:var(--line-strong)"/>`);
+
+    const ticksEl = document.getElementById('ticks');
+    if (ticksEl) {
+      ticksEl.innerHTML = CORNERS.map(c => `<span style="left:${c[2] / LAP_LEN * 100}%">${c[1]}</span>`).join('');
+    }
+
+    const box = document.getElementById('charts');
+    const ro = document.getElementById('readout');
+    if (box && ro) {
+      box.querySelectorAll('.chart svg').forEach(svg => {
+        svg.addEventListener('pointermove', e => {
+          const r = svg.getBoundingClientRect();
+          const fx = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+          const i = Math.round(fx * (N - 1));
+          box.querySelectorAll('.chart .xh').forEach(l => {
+            l.setAttribute('x1', fx * W);
+            l.setAttribute('x2', fx * W);
+          });
+          const br = box.getBoundingClientRect();
+          ro.innerHTML = `${Math.round(xs[i])} m · <span style="color:var(--accent)">${Math.round(vA[i])}</span> vs ${Math.round(vB[i])} km/h · <span class="${delta[i] > 0 ? 'warn' : 'up'}">${delta[i] > 0 ? '+' : '−'}${Math.abs(delta[i]).toFixed(3)} s</span>`;
+          ro.style.left = Math.min(br.width - ro.offsetWidth - 16, e.clientX - br.left + 12) + 'px';
+          ro.classList.add('on');
+        });
+        svg.addEventListener('pointerleave', () => {
+          ro.classList.remove('on');
+          box.querySelectorAll('.chart .xh').forEach(l => {
+            l.setAttribute('x1', -10);
+            l.setAttribute('x2', -10);
+          });
+        });
+      });
+    }
+
+    // Delta Map
+    const deltaMap = document.getElementById('delta-map');
+    const path = document.getElementById('track-path');
+    if (deltaMap && path && path.getTotalLength) {
+      const TL = path.getTotalLength();
+      const pt = f => path.getPointAtLength(((f % 1) + 1) % 1 * TL);
+      const segs = 160;
+      let out = `<use href="#track-path" class="outline" style="stroke-width:16"/>`;
+      for (let s = 0; s < segs; s++) {
+        const a = pt(s / segs), b = pt((s + 1) / segs);
+        const i0 = Math.floor(s / segs * (N - 1)), i1 = Math.floor((s + 1) / segs * (N - 1));
+        const dd = delta[i1] - delta[i0];
+        const col = Math.abs(dd) < 0.0015 ? 'var(--line-strong)' : dd > 0 ? 'var(--red)' : 'var(--green)';
+        out += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${col}" stroke-width="6" stroke-linecap="round"/>`;
+      }
+      CORNERS.forEach(c => {
+        const p = pt(c[2] / LAP_LEN);
+        out += `<text x="${p.x + 9}" y="${p.y + 4}" font-size="11" fill="var(--text-3)">${c[1]}</text>`;
+      });
+      deltaMap.innerHTML = out;
     }
   }
 

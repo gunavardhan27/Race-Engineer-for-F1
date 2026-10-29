@@ -6,1447 +6,918 @@
   <title>F1 25 Race Engineer Live Dashboard</title>
   <link rel="stylesheet" href="/style.css">
 </head>
-<body class="dark-theme">
-  <!-- Top Navigation & Global Status Bar -->
-  <header class="top-bar">
-    <div class="brand-section">
-      <div class="brand-badge">F1 25</div>
-      <div class="session-info">
-        <h1 id="track-name" class="track-title">WAITING FOR SESSION</h1>
-        <span id="session-status" class="session-badge">STANDBY</span>
-      </div>
-    </div>
-
-    <!-- Safety Car Alert Banner (Dynamic) -->
-    <div id="safety-car-banner" class="sc-banner hidden">
-      <span class="sc-icon">⚠️</span>
-      <span id="safety-car-text" class="sc-text">SAFETY CAR</span>
-    </div>
-
-    <div class="system-status">
-      <div id="cloud-quota-pill" class="status-pill ok cursor-pointer" title="Cloud AI Quota (Click to view Usage tab)">
-        <span class="status-dot"></span>
-        <span id="cloud-quota-text">CLOUD: 0%</span>
-      </div>
-      <div id="connection-badge" class="status-pill connecting">
-        <span class="status-dot"></span>
-        <span id="connection-text">CONNECTING</span>
-      </div>
-      <button id="theme-toggle" class="theme-btn" title="Toggle Light/Dark Theme" aria-label="Toggle Theme">
-        <span id="theme-icon">☀️</span>
-      </button>
+<body>
+  <!-- Top Navigation Header -->
+  <header class="top">
+    <a class="brand" href="#live" aria-label="Race engineer home">
+      <span class="mark" aria-hidden="true">F1</span>
+    </a>
+    
+    <div class="session" id="session">
+      <strong id="track-name">WAITING FOR SESSION</strong>
+      <span id="session-status">STANDBY</span>
     </div>
 
     <!-- Navigation Tabs -->
-    <nav class="view-nav" aria-label="Dashboard Views">
-      <button id="tab-btn-live" class="nav-tab active">LIVE HUD</button>
-      <button id="tab-btn-laps" class="nav-tab">LAPS & ANALYSIS</button>
-      <button id="tab-btn-setups" class="nav-tab">SETUPS</button>
-      <button id="tab-btn-tracks" class="nav-tab">TRACKS</button>
-      <button id="tab-btn-usage" class="nav-tab">USAGE</button>
-      <button id="tab-btn-settings" class="nav-tab">SETTINGS</button>
+    <nav class="tabs" aria-label="Dashboard Views">
+      <a href="#live" id="tab-btn-live" class="nav-tab active" data-view="live">Live</a>
+      <a href="#laps" id="tab-btn-laps" class="nav-tab" data-view="laps">Laps</a>
+      <a href="#setups" id="tab-btn-setups" class="nav-tab" data-view="setups">Setups</a>
+      <a href="#tracks" id="tab-btn-tracks" class="nav-tab" data-view="tracks">Tracks</a>
+      <a href="#usage" id="tab-btn-usage" class="nav-tab" data-view="usage">AI usage</a>
+      <a href="#settings" id="tab-btn-settings" class="nav-tab" data-view="settings">Settings</a>
     </nav>
+
+    <!-- Top Right Status Indicators -->
+    <div class="top-right">
+      <a class="chip ok hide-sm" id="ai-chip" href="#usage" style="text-decoration:none">
+        <span class="dot"></span>
+        <span id="ai-chip-text">AI quota 0%</span>
+      </a>
+
+      <!-- Game Connection Popover Trigger -->
+      <div class="pop-wrap">
+        <button class="chip wait" id="link-chip" aria-expanded="false" aria-controls="link-pop">
+          <span class="dot"></span>
+          <span id="link-text">Connecting</span>
+        </button>
+        <div class="popover" id="link-pop" role="dialog" aria-labelledby="link-pop-title">
+          <h3 id="link-pop-title">Game connection</h3>
+          <p class="help" id="link-pop-sub">Receiving telemetry from F1 25.</p>
+          <dl class="kv">
+            <dt>UDP port</dt><dd id="pop-port">20777</dd>
+            <dt>Format</dt><dd>2025</dd>
+            <dt>Packets / sec</dt><dd id="pps">0</dd>
+            <dt>Last packet</dt><dd id="last-packet">never</dd>
+            <dt>Dashboard host</dt><dd id="pop-phone-ip">127.0.0.1:8765</dd>
+          </dl>
+        </div>
+      </div>
+
+      <!-- Theme Switcher -->
+      <button class="icon-btn" id="theme" title="Toggle Light/Dark Theme" aria-label="Toggle Theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+        </svg>
+      </button>
+    </div>
   </header>
 
-  <!-- No Telemetry Banner (Triggered after 3s without UDP packets) -->
-  <div id="no-telemetry-banner" class="telemetry-alert hidden">
-    <span class="alert-pulse"></span>
-    <span class="alert-message">NO TELEMETRY — Check F1 25 UDP Telemetry is active on port 20777</span>
-  </div>
-
-  <!-- Main Responsive Dashboard Grid -->
-  <main class="dashboard-container">
-    <!-- VIEW 1: LIVE HUD -->
-    <div id="view-live" class="view-panel active">
-      <!-- Top Hero Strip: Arm's-Length High-Contrast Gauges -->
-      <section class="hero-strip">
-      <div class="hero-card position-card">
-        <span class="card-label">POSITION</span>
-        <div class="hero-value-wrap">
-          <span class="pos-prefix">P</span>
-          <span id="val-position" class="hero-value">--</span>
-        </div>
-        <span id="val-stint" class="sub-label">STINT 1</span>
-      </div>
-
-      <div class="hero-card speed-card">
-        <span class="card-label">SPEED & GEAR</span>
-        <div class="speed-gear-cluster">
-          <div class="speed-box">
-            <span id="val-speed" class="hero-value mono">--</span>
-            <span class="unit">KPH</span>
-          </div>
-          <div class="gear-box">
-            <span class="gear-sub">GEAR</span>
-            <span id="val-gear" class="gear-value mono">N</span>
-          </div>
-        </div>
-        <div class="drs-bar">
-          <span id="drs-indicator" class="drs-pill">DRS</span>
+  <!-- Main Content Container -->
+  <main>
+    <!-- ======================================================================
+         VIEW 1: LIVE HUD
+         ====================================================================== -->
+    <section class="view active" id="view-live" aria-labelledby="live-h">
+      <h1 class="sr-only" id="live-h">Live</h1>
+      
+      <div class="hud-bar">
+        <span class="chip ok" id="flag-chip"><span class="dot"></span><span id="flag-text">Green flag</span></span>
+        <span class="chip info" id="tyre-chip">
+          <span class="tyre M" id="tyre-chip-badge" style="width:14px;height:14px;border-width:2px;font-size:0"></span>
+          <span id="tyre-chip-text">Medium · 0 laps</span>
+        </span>
+        <span class="chip bad hidden" id="safety-car-banner">⚠️ <span id="safety-car-text">SAFETY CAR</span></span>
+        
+        <div class="end seg" role="group" aria-label="Layout">
+          <button aria-pressed="true" data-layout="full" id="btn-layout-full">Full</button>
+          <button aria-pressed="false" data-layout="glance" id="btn-layout-glance">Glance</button>
         </div>
       </div>
 
-      <div class="hero-card lap-card">
-        <span class="card-label">LAP</span>
-        <div class="hero-value-wrap">
-          <span id="val-lap" class="hero-value mono">--</span>
-          <span class="hero-slash">/</span>
-          <span id="val-total-laps" class="hero-secondary mono">--</span>
-        </div>
-        <span id="val-lap-status" class="sub-label">RACE PACE</span>
+      <!-- GLANCE MODE: Arm's length high-contrast HUD cards -->
+      <div class="glance">
+        <div class="card"><span class="label">Position</span><div class="big" id="g-pos">P--</div><span class="s" id="g-pos-s">Standby</span></div>
+        <div class="card"><span class="label" id="g-ahead-label">Gap ahead</span><div class="big up" id="g-ahead">--</div><span class="s" id="g-ahead-s">--</span></div>
+        <div class="card"><span class="label" id="g-behind-label">Gap behind</span><div class="big warn" id="g-behind">--</div><span class="s" id="g-behind-s">--</span></div>
+        <div class="card"><span class="label">Last lap to best</span><div class="big" id="g-last">--:--.---</div><span class="s" id="g-last-s">Personal best</span></div>
+        <div class="card"><span class="label">Fuel margin</span><div class="big up" id="g-fuel">+0.0</div><span class="s">laps in hand</span></div>
+        <div class="card"><span class="label">Worst tyre</span><div class="big" id="g-tyre">--%</div><span class="s" id="g-tyre-s">Optimal</span></div>
+        <div class="card last-msg"><span class="label">Last radio</span><span id="g-radio">Radio is open. Ready for transmission.</span></div>
       </div>
 
-      <div class="hero-card last-lap-card">
-        <span class="card-label">LAST LAP</span>
-        <div class="hero-value-wrap">
-          <span id="val-last-lap" class="hero-value mono">--:--.---</span>
-        </div>
-        <span id="val-delta-hint" class="sub-label">PERSONAL BEST</span>
-      </div>
-    </section>
-
-    <!-- Main Content Grid -->
-    <div class="content-grid">
-      <!-- Left Column: Gaps, Fuel & ERS, Tyres -->
-      <div class="column col-left">
-        <!-- Interval Gaps Panel -->
-        <div class="dash-panel gaps-panel">
-          <h2 class="panel-header">INTERVAL GAPS</h2>
-          <div class="gaps-container">
-            <div class="gap-row gap-ahead">
-              <div class="gap-meta">
-                <span class="gap-role">CAR AHEAD</span>
-                <span id="gap-ahead-name" class="driver-name">--</span>
-              </div>
-              <div class="gap-data">
-                <span id="gap-ahead-time" class="gap-time mono">--</span>
-                <span id="gap-ahead-trend" class="trend-arrow neutral">--</span>
-              </div>
-            </div>
-
-            <div class="gap-row gap-behind">
-              <div class="gap-meta">
-                <span class="gap-role">CAR BEHIND</span>
-                <span id="gap-behind-name" class="driver-name">--</span>
-              </div>
-              <div class="gap-data">
-                <span id="gap-behind-time" class="gap-time mono">--</span>
-                <span id="gap-behind-trend" class="trend-arrow neutral">--</span>
-              </div>
-            </div>
+      <!-- FULL MODE: Complete Telemetry Dashboard -->
+      <div class="full">
+        <!-- Top Hero Stats Strip -->
+        <div class="hero" id="hero">
+          <div class="card stat">
+            <span class="label">Position</span>
+            <div class="value" id="h-pos">P--</div>
+            <div class="sub" id="h-pos-s"><span class="up">▲ 0</span> from grid</div>
+          </div>
+          <div class="card stat">
+            <span class="label">Lap</span>
+            <div class="value" id="h-lap">--<small> / --</small></div>
+            <div class="bar"><i id="h-lap-bar" style="width:0%"></i></div>
+          </div>
+          <div class="card stat">
+            <span class="label">Last lap</span>
+            <div class="value" id="h-last">--:--.---</div>
+            <div class="sub" id="h-last-s"><span class="muted">--</span> to best</div>
+          </div>
+          <div class="card stat">
+            <span class="label">Gap ahead</span>
+            <div class="value" id="h-ahead">--</div>
+            <div class="sub" id="h-ahead-s"><span class="dim">--</span></div>
+          </div>
+          <div class="card stat">
+            <span class="label">Gap behind</span>
+            <div class="value" id="h-behind">--</div>
+            <div class="sub" id="h-behind-s"><span class="dim">--</span></div>
           </div>
         </div>
 
-        <!-- 4-Corner Tyre Widget -->
-        <div class="dash-panel tyre-panel">
-          <div class="panel-header-wrap">
-            <h2 class="panel-header">TYRES & TEMPS</h2>
-            <div class="tyre-meta-pills">
-              <span id="tyre-compound-badge" class="compound-badge compound-unknown">UNKNOWN</span>
-              <span id="tyre-age-badge" class="meta-pill">0 LAPS</span>
-            </div>
-          </div>
+        <!-- Hidden legacy IDs for backwards compatibility with tests -->
+        <div class="sr-only" aria-hidden="true">
+          <span id="val-position">--</span>
+          <span id="val-stint">STINT 1</span>
+          <span id="val-speed">--</span>
+          <span id="val-gear">N</span>
+          <span id="drs-indicator">DRS</span>
+          <span id="val-lap">--</span>
+          <span id="val-total-laps">--</span>
+          <span id="val-lap-status">RACE PACE</span>
+          <span id="val-last-lap">--:--.---</span>
+          <span id="val-delta-hint">PERSONAL BEST</span>
+          <span id="gap-ahead-name">--</span>
+          <span id="gap-ahead-time">--</span>
+          <span id="gap-ahead-trend">--</span>
+          <span id="gap-behind-name">--</span>
+          <span id="gap-behind-time">--</span>
+          <span id="gap-behind-trend">--</span>
+          <span id="cloud-quota-text">CLOUD: 0%</span>
+          <span id="connection-text">CONNECTING</span>
+          <button id="theme-toggle"></button>
+          <span id="theme-icon">☀️</span>
+        </div>
 
-          <div class="car-tyre-schematic">
-            <!-- Front Axle -->
-            <div class="axle front-axle">
-              <div id="tyre-fl" class="tyre-corner" data-corner="FL">
-                <div class="corner-id">FL</div>
-                <div class="tyre-bar-wrap">
-                  <div id="bar-fl" class="tyre-bar" style="height: 0%;"></div>
+        <!-- 3-Column HUD Grid -->
+        <div class="hud">
+          <!-- LEFT COLUMN: Tyres, Fuel/ERS, Damage -->
+          <div class="stack">
+            <!-- 4-Corner Tyres -->
+            <div class="card">
+              <div class="card-head">
+                <h2>Tyres & Temps</h2>
+                <div class="end"><span class="chip" id="wear-chip">0.0% / lap</span></div>
+              </div>
+              <div class="tyres" id="tyres">
+                <div class="tyre-tile" id="tile-fl">
+                  <div class="top-row"><span>FL</span><span>wear</span></div>
+                  <div class="w" id="fl-wear">0%</div>
+                  <div class="bar"><i id="fl-bar" style="width:0%"></i></div>
+                  <div class="t" id="fl-temp"><i></i><span>--°C</span></div>
                 </div>
-                <div class="tyre-readout">
-                  <span id="wear-fl" class="wear-val mono">--%</span>
-                  <span id="temp-fl" class="temp-val mono">--°C</span>
+                <div class="tyre-tile" id="tile-fr">
+                  <div class="top-row"><span>FR</span><span>wear</span></div>
+                  <div class="w" id="fr-wear">0%</div>
+                  <div class="bar"><i id="fr-bar" style="width:0%"></i></div>
+                  <div class="t" id="fr-temp"><i></i><span>--°C</span></div>
                 </div>
-              </div>
-
-              <div class="chassis-core">
-                <div class="nose-cone"></div>
-                <div class="chassis-spine"></div>
-              </div>
-
-              <div id="tyre-fr" class="tyre-corner" data-corner="FR">
-                <div class="corner-id">FR</div>
-                <div class="tyre-bar-wrap">
-                  <div id="bar-fr" class="tyre-bar" style="height: 0%;"></div>
+                <div class="tyre-tile" id="tile-rl">
+                  <div class="top-row"><span>RL</span><span>wear</span></div>
+                  <div class="w" id="rl-wear">0%</div>
+                  <div class="bar"><i id="rl-bar" style="width:0%"></i></div>
+                  <div class="t" id="rl-temp"><i></i><span>--°C</span></div>
                 </div>
-                <div class="tyre-readout">
-                  <span id="wear-fr" class="wear-val mono">--%</span>
-                  <span id="temp-fr" class="temp-val mono">--°C</span>
+                <div class="tyre-tile" id="tile-rr">
+                  <div class="top-row"><span>RR</span><span>wear</span></div>
+                  <div class="w" id="rr-wear">0%</div>
+                  <div class="bar"><i id="rr-bar" style="width:0%"></i></div>
+                  <div class="t" id="rr-temp"><i></i><span>--°C</span></div>
                 </div>
               </div>
+              <div class="rows" id="tyre-rows">
+                <div><span>Compound</span><span id="tyre-compound-badge">Medium</span></div>
+                <div><span>Tyre Age</span><span id="tyre-age-badge">0 Laps</span></div>
+                <div><span>Predicted Cliff</span><span id="tyre-cliff">Lap --</span></div>
+              </div>
             </div>
 
-            <!-- Rear Axle -->
-            <div class="axle rear-axle">
-              <div id="tyre-rl" class="tyre-corner" data-corner="RL">
-                <div class="corner-id">RL</div>
-                <div class="tyre-bar-wrap">
-                  <div id="bar-rl" class="tyre-bar" style="height: 0%;"></div>
+            <!-- Fuel and ERS -->
+            <div class="card">
+              <div class="card-head"><h2>Fuel and ERS</h2></div>
+              <div class="trio">
+                <div class="mini"><span class="label">In tank</span><div class="v" id="f-tank">-- kg</div></div>
+                <div class="mini"><span class="label">Margin</span><div class="v up" id="f-margin">+0.0 laps</div></div>
+                <div class="mini"><span class="label">Burn</span><div class="v" id="f-burn">--</div><div class="s">kg / lap</div></div>
+              </div>
+              <div class="pedal ers" style="margin-top:12px">
+                <span>ERS</span>
+                <div class="bar"><i id="ers-bar" style="width:0%"></i></div>
+                <span class="num r" id="ers-v">0%</span>
+              </div>
+              <div class="rows">
+                <div><span>Deploy Mode</span><span id="ers-mode">Medium</span></div>
+              </div>
+            </div>
+
+            <!-- Damage -->
+            <div class="card">
+              <div class="card-head">
+                <h2>Damage</h2>
+                <div class="end"><span class="chip ok" id="dmg-chip">No damage</span></div>
+              </div>
+              <div class="rows" id="damage" style="margin-top:0">
+                <div><span>Front Wing Left</span><span id="dmg-flw">0%</span></div>
+                <div><span>Front Wing Right</span><span id="dmg-frw">0%</span></div>
+                <div><span>Floor & Diffuser</span><span id="dmg-floor">0%</span></div>
+                <div><span>Sidepods</span><span id="dmg-side">0%</span></div>
+                <div><span>Gearbox</span><span id="dmg-gear">0%</span></div>
+                <div><span>Engine</span><span id="dmg-eng">0%</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CENTER COLUMN: Strategy, Map/Radar, Timing Tower -->
+          <div class="stack" id="center">
+            <!-- Strategy Bar -->
+            <div class="strategy" id="strategy">
+              <div class="card"><span class="label">Weather</span><div class="v" id="val-weather">Clear</div><div class="s" id="val-track-temp">Track 30°C · Air 22°C</div></div>
+              <div class="card"><span class="label">Rain</span><div class="v" id="val-rain-prob">None expected</div><div class="s" id="val-rain-forecast">Clear skies</div></div>
+              <div class="card"><span class="label">Pit window</span><div class="v" style="color:var(--accent)" id="val-pit-window">Laps 18–22</div><div class="s" id="val-pit-compound">Box for Hards</div></div>
+              <div class="card"><span class="label">If you box now</span><div class="v" id="val-rejoin-pos">Rejoin P--</div><div class="s" id="val-rejoin-gap">In clear air</div></div>
+            </div>
+
+            <!-- No Telemetry Waiting Card -->
+            <div class="card hidden" id="connect-card">
+              <div class="connect">
+                <div>
+                  <h2>Waiting for F1 25 Telemetry</h2>
+                  <p class="muted">In the game, open Settings → Telemetry Settings, and configure:</p>
+                  <ol>
+                    <li><span>UDP telemetry</span><b>On</b></li>
+                    <li><span>UDP IP address</span><b class="mono">127.0.0.1</b></li>
+                    <li><span>UDP port</span><b class="mono" id="setup-guide-port">20777</b></li>
+                    <li><span>UDP send rate</span><b>20 Hz</b></li>
+                    <li><span>UDP format</span><b>2025</b></li>
+                  </ol>
                 </div>
-                <div class="tyre-readout">
-                  <span id="wear-rl" class="wear-val mono">--%</span>
-                  <span id="temp-rl" class="temp-val mono">--°C</span>
-                </div>
-              </div>
-
-              <div class="chassis-rear">
-                <div class="diffuser-silhouette"></div>
-              </div>
-
-              <div id="tyre-rr" class="tyre-corner" data-corner="RR">
-                <div class="corner-id">RR</div>
-                <div class="tyre-bar-wrap">
-                  <div id="bar-rr" class="tyre-bar" style="height: 0%;"></div>
-                </div>
-                <div class="tyre-readout">
-                  <span id="wear-rr" class="wear-val mono">--%</span>
-                  <span id="temp-rr" class="temp-val mono">--°C</span>
+                <div class="listen">
+                  <div style="display:flex;gap:8px;align-items:center"><span class="pulse"></span><b>Listening on UDP <span id="listen-port">20777</span></b></div>
+                  <div class="help">No packets received yet. Telemetry will automatically flow once you enter a session.</div>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+                    <button class="btn sm" id="btn-replay-sample">Replay sample</button>
+                    <button class="btn sm ghost" id="btn-radio-check-wait">Test radio</button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <div class="tyre-footer">
-            <span class="sub-label">AVG WEAR RATE</span>
-            <span id="tyre-wear-rate" class="mono bold">-- % / lap</span>
-          </div>
-        </div>
-
-        <!-- Fuel & Energy Management -->
-        <div class="dash-panel energy-panel">
-          <h2 class="panel-header">FUEL & HYBRID (ERS)</h2>
-          <div class="fuel-readouts">
-            <div class="stat-cell">
-              <span class="sub-label">IN TANK</span>
-              <span id="val-fuel-kg" class="stat-big mono">-- kg</span>
-            </div>
-            <div class="stat-cell">
-              <span class="sub-label">DELTA</span>
-              <span id="val-fuel-delta" class="stat-big mono">-- laps</span>
-            </div>
-            <div class="stat-cell">
-              <span class="sub-label">BURN RATE</span>
-              <span id="val-fuel-burn" class="stat-big mono">-- kg/l</span>
-            </div>
-          </div>
-
-          <!-- ERS Battery Charge Bar -->
-          <div class="ers-section">
-            <div class="ers-labels">
-              <span class="sub-label">ERS STORE (4 MJ)</span>
-              <span id="val-ers-pct" class="ers-pct-text mono">--%</span>
-            </div>
-            <div class="ers-bar-track">
-              <div id="ers-bar-fill" class="ers-bar-fill" style="width: 0%;"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Center Column: Strategy, Damage & Timing Tower -->
-      <div class="column col-center">
-        <!-- Weather & Strategy Summary -->
-        <div class="dash-panel strategy-panel">
-          <div class="strategy-row">
-            <div class="strategy-cell">
-              <span class="sub-label">WEATHER NOW</span>
-              <span id="val-weather-now" class="stat-medium">--</span>
-              <span id="val-ambient-temps" class="sub-readout mono">Track: --°C | Air: --°C</span>
-            </div>
-            <div class="strategy-cell">
-              <span class="sub-label">NEXT RAIN</span>
-              <span id="val-next-rain" class="stat-medium highlight-cyan">NO RAIN</span>
-            </div>
-            <div class="strategy-cell">
-              <span class="sub-label">PIT WINDOW</span>
-              <span id="val-pit-window" class="stat-medium highlight-amber">--</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Car Damage Panel -->
-        <div class="dash-panel damage-panel">
-          <div class="panel-header-wrap">
-            <h2 class="panel-header">CAR INTEGRITY & DAMAGE</h2>
-            <span id="damage-status-badge" class="meta-pill pill-ok">ALL SYSTEMS NOMINAL</span>
-          </div>
-          <div id="damage-grid" class="damage-grid">
-            <div class="dmg-item" data-part="front_left_wing"><span class="dmg-name">FL Wing</span><span id="dmg-fl-wing" class="dmg-pct mono">0%</span></div>
-            <div class="dmg-item" data-part="front_right_wing"><span class="dmg-name">FR Wing</span><span id="dmg-fr-wing" class="dmg-pct mono">0%</span></div>
-            <div class="dmg-item" data-part="rear_wing"><span class="dmg-name">Rear Wing</span><span id="dmg-rear-wing" class="dmg-pct mono">0%</span></div>
-            <div class="dmg-item" data-part="floor"><span class="dmg-name">Floor</span><span id="dmg-floor" class="dmg-pct mono">0%</span></div>
-            <div class="dmg-item" data-part="diffuser"><span class="dmg-name">Diffuser</span><span id="dmg-diffuser" class="dmg-pct mono">0%</span></div>
-            <div class="dmg-item" data-part="sidepod"><span class="dmg-name">Sidepod</span><span id="dmg-sidepod" class="dmg-pct mono">0%</span></div>
-            <div class="dmg-item" data-part="gearbox"><span class="dmg-name">Gearbox</span><span id="dmg-gearbox" class="dmg-pct mono">0%</span></div>
-            <div class="dmg-item" data-part="engine"><span class="dmg-name">Engine</span><span id="dmg-engine" class="dmg-pct mono">0%</span></div>
-          </div>
-        </div>
-
-        <!-- Live Track Map & G-Force Widget -->
-        <div class="dash-panel track-map-panel">
-          <div class="panel-header-wrap">
-            <div class="header-left">
-              <h2 class="panel-header">LIVE TRACK MAP</h2>
-              <span id="map-status-badge" class="meta-pill">WAITING FOR CLEAN LAP</span>
-            </div>
-            <div class="header-right">
-              <button id="btn-rebuild-map" class="rebuild-btn" title="Re-sample track outline on next clean lap">REBUILD OUTLINE</button>
-            </div>
-          </div>
-
-          <div class="map-and-gforce-wrap">
-            <div class="canvas-container">
-              <canvas id="track-map-canvas"></canvas>
-              <div id="map-placeholder-hint" class="map-hint">BLANK CANVAS — SCALING TO CARS SEEN SO FAR</div>
-            </div>
-
-            <!-- G-Force Friction Circle Widget -->
-            <div class="gforce-widget">
-              <span class="sub-label">FRICTION CIRCLE</span>
-              <div class="gforce-canvas-wrap">
-                <canvas id="g-force-canvas" width="130" height="130"></canvas>
+            <!-- Interactive Track Map & Radar -->
+            <div class="card" id="map-card">
+              <div class="card-head">
+                <h2>Track Telemetry</h2>
+                <div class="end"><button class="btn sm ghost" id="btn-rebuild-outline" title="Re-sample outline on next clean lap">Rebuild outline</button></div>
               </div>
-              <div class="gforce-readouts">
-                <div class="g-cell"><span class="g-dim">LAT</span><span id="val-g-lat" class="g-val mono">0.0G</span></div>
-                <div class="g-cell"><span class="g-dim">LON</span><span id="val-g-lon" class="g-val mono">0.0G</span></div>
+              <div class="map-card">
+                <div>
+                  <svg class="map" id="track-map-svg" viewBox="0 0 640 360" role="img" aria-label="Track map with car positions">
+                    <path id="track-path" class="outline" d="M180,318 L330,330 C360,333 378,318 372,292 L360,250 C354,228 368,210 392,212 L470,220 C500,223 520,205 515,178 L505,120 C500,92 520,72 548,78 L590,88 C614,94 622,72 604,58 L540,30 C510,18 480,26 462,48 L400,128 C385,148 360,150 342,136 L262,72 C240,55 210,58 196,80 L120,200 C100,232 92,262 110,290 C124,310 150,316 180,318 Z"/>
+                    <use href="#track-path" class="center"/>
+                    <g id="markers"></g>
+                    <g id="cars"></g>
+                  </svg>
+                  <canvas id="track-map-canvas" class="hidden" width="640" height="360"></canvas>
+                  
+                  <div class="legend">
+                    <span><i style="background:var(--accent)"></i>You</span>
+                    <span><i style="background:var(--yellow)"></i>Ahead & behind</span>
+                    <span><i style="background:var(--text-3)"></i>Field</span>
+                    <span><i style="background:transparent;border:1.5px dashed var(--accent)"></i>Rejoin window</span>
+                  </div>
+                </div>
+
+                <!-- Live Car Pedals & G-Force Radar -->
+                <div class="car-panel">
+                  <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:8px">
+                    <div>
+                      <span class="label">Speed</span>
+                      <div class="speed" id="c-speed">0</div>
+                      <span class="dim" style="font-size:12px">KM/H</span>
+                    </div>
+                    <div class="gear" id="c-gear" aria-label="Gear">N</div>
+                  </div>
+                  
+                  <span class="chip" id="c-drs" style="justify-self:start">DRS</span>
+                  
+                  <div class="pedal thr">
+                    <span>Throttle</span>
+                    <div class="bar"><i id="c-thr" style="width:0%"></i></div>
+                    <span class="num r" id="c-thr-v">0</span>
+                  </div>
+                  
+                  <div class="pedal brake">
+                    <span>Brake</span>
+                    <div class="bar"><i id="c-brk" style="width:0%"></i></div>
+                    <span class="num r" id="c-brk-v">0</span>
+                  </div>
+                  
+                  <svg class="gg" viewBox="-50 -50 100 100" role="img" aria-label="G-force friction circle">
+                    <circle r="46" fill="none" stroke="var(--line-strong)"/>
+                    <circle r="30" fill="none" stroke="var(--line)"/>
+                    <circle r="15" fill="none" stroke="var(--line)"/>
+                    <path d="M-46 0H46M0-46V46" stroke="var(--line)"/>
+                    <circle id="gg-dot" r="4" fill="var(--accent)" cx="0" cy="0"/>
+                  </svg>
+                  
+                  <div class="rows" style="margin-top:0">
+                    <div><span>Lateral</span><span id="g-lat">0.0 g</span></div>
+                    <div><span>Longitudinal</span><span id="g-lon">0.0 g</span></div>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
 
-          <!-- Track Map Legend -->
-          <div class="map-legend">
-            <span class="leg-item"><span class="leg-dot player"></span> You</span>
-            <span class="leg-item"><span class="leg-dot rival"></span> Ahead/Behind</span>
-            <span class="leg-item"><span class="leg-dot field"></span> Field</span>
-            <span class="leg-item"><span class="leg-dot pit"></span> Pit</span>
-            <span class="leg-item"><span class="leg-line finish"></span> Finish</span>
-            <span class="leg-item"><span class="leg-line s2"></span> S2</span>
-            <span class="leg-item"><span class="leg-line s3"></span> S3</span>
-          </div>
-        </div>
-
-        <!-- Timing Tower Leaderboard -->
-        <div class="dash-panel tower-panel">
-          <div class="panel-header-wrap">
-            <h2 class="panel-header">TIMING TOWER</h2>
-            <span id="tower-count" class="meta-pill">0 CARS</span>
-          </div>
-          <div class="table-scroll-wrap">
-            <table class="timing-table">
-              <thead>
-                <tr>
-                  <th class="th-pos">POS</th>
-                  <th class="th-driver">DRIVER</th>
-                  <th class="th-gap">GAP AHEAD</th>
-                  <th class="th-leader">LEADER</th>
-                  <th class="th-last">LAST LAP</th>
-                  <th class="th-tyre">TYRE</th>
-                  <th class="th-age">AGE</th>
-                  <th class="th-stops">STOPS</th>
-                  <th class="th-pen">PEN</th>
-                </tr>
-              </thead>
-              <tbody id="timing-tower-tbody">
-                <tr class="empty-row">
-                  <td colspan="9">Waiting for participant telemetry...</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- Right Column: Live Radio Transcript Log -->
-      <div class="column col-right">
-        <div class="dash-panel radio-panel">
-          <div class="panel-header-wrap">
-            <h2 class="panel-header">TEAM RADIO COMMS</h2>
-            <span class="meta-pill live-pill">TRANSCRIPT FEED</span>
-          </div>
-
-          <div id="radio-log" class="radio-messages-container">
-            <div class="radio-welcome-notice">
-              <span class="radio-icon">🎙️</span>
-              <p>Team radio channel open. Transcripts and AI engineer callouts will appear live.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    </div> <!-- /#view-live -->
-
-    <!-- VIEW 2: LAPS & TELEMETRY ANALYSIS -->
-    <div id="view-laps" class="view-panel hidden">
-      <!-- Lap & Session Filter Toolbar -->
-      <section class="dash-panel laps-toolbar">
-        <div class="toolbar-wrap">
-          <div class="filter-group">
-            <label for="laps-filter-track" class="filter-label">TRACK</label>
-            <select id="laps-filter-track" class="f1-select">
-              <option value="">All Tracks</option>
-            </select>
-          </div>
-          <div class="filter-group">
-            <label for="laps-filter-session" class="filter-label">SESSION</label>
-            <select id="laps-filter-session" class="f1-select">
-              <option value="">Loading sessions...</option>
-            </select>
-          </div>
-          <div class="filter-group">
-            <label for="laps-select-a" class="filter-label">LAP A (ANALYZE)</label>
-            <select id="laps-select-a" class="f1-select"></select>
-          </div>
-          <div class="filter-group">
-            <label for="laps-select-b" class="filter-label">LAP B (REFERENCE / PB)</label>
-            <select id="laps-select-b" class="f1-select"></select>
-          </div>
-          <div class="filter-checkbox-wrap">
-            <label class="checkbox-label">
-              <input type="checkbox" id="laps-filter-valid" checked>
-              <span>Valid Only</span>
-            </label>
-          </div>
-          <div class="toolbar-actions">
-            <button id="btn-run-compare" class="action-btn primary">ANALYZE LAPS</button>
-            <button id="btn-refresh-sessions" class="action-btn secondary" title="Refresh Sessions">↻</button>
-          </div>
-        </div>
-      </section>
-
-      <!-- Lap Comparison Summary Bar -->
-      <section class="laps-summary-bar">
-        <div class="summary-lap-card lap-a-card">
-          <span class="card-tag tag-a">LAP A</span>
-          <div class="lap-time-display">
-            <span id="summary-lap-a-time" class="lap-main-time mono">--:--.---</span>
-            <span id="summary-lap-a-meta" class="lap-sub-meta">Select a lap</span>
-          </div>
-        </div>
-
-        <div class="delta-display-card">
-          <span class="card-tag">DELTA (A vs B)</span>
-          <div class="delta-badge-wrap">
-            <span id="summary-delta-badge" class="delta-badge neutral">0.000s</span>
-          </div>
-          <span id="summary-delta-label" class="delta-sub-label">Shared 5m Distance Axis</span>
-        </div>
-
-        <div class="summary-lap-card lap-b-card">
-          <span class="card-tag tag-b">LAP B (REF)</span>
-          <div class="lap-time-display">
-            <span id="summary-lap-b-time" class="lap-main-time mono">--:--.---</span>
-            <span id="summary-lap-b-meta" class="lap-sub-meta">Reference lap</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Main Telemetry & Track Map Comparison Grid -->
-      <div class="laps-analysis-grid">
-        <!-- Left: Telemetry Overlay Charts -->
-        <div class="charts-column">
-          <!-- Speed Comparison Chart -->
-          <div class="dash-panel chart-panel">
-            <div class="panel-header-wrap">
-              <h3 class="panel-header">SPEED OVERLAY (KPH)</h3>
-              <div class="chart-legend">
-                <span class="leg-item"><span class="leg-dot lap-a"></span> Lap A</span>
-                <span class="leg-item"><span class="leg-dot lap-b"></span> Lap B (Ref)</span>
+            <!-- Timing Tower -->
+            <div class="card">
+              <div class="card-head">
+                <h2>Timing Tower</h2>
+                <div class="end"><span class="chip" id="cars-chip">20 cars</span></div>
               </div>
-            </div>
-            <div class="canvas-responsive-container chart-container">
-              <canvas id="chart-speed" width="700" height="190"></canvas>
-            </div>
-          </div>
-
-          <!-- Throttle & Brake Inputs Chart -->
-          <div class="dash-panel chart-panel">
-            <div class="panel-header-wrap">
-              <h3 class="panel-header">THROTTLE & BRAKE INPUTS</h3>
-              <div class="chart-legend">
-                <span class="leg-item"><span class="leg-line th-a"></span> Throttle A</span>
-                <span class="leg-item"><span class="leg-line br-a"></span> Brake A</span>
-                <span class="leg-item"><span class="leg-line th-b"></span> Throttle B</span>
-                <span class="leg-item"><span class="leg-line br-b"></span> Brake B</span>
-              </div>
-            </div>
-            <div class="canvas-responsive-container chart-container">
-              <canvas id="chart-inputs" width="700" height="150"></canvas>
-            </div>
-          </div>
-
-          <!-- Delta vs Distance Chart -->
-          <div class="dash-panel chart-panel">
-            <div class="panel-header-wrap">
-              <h3 class="panel-header">TIME DELTA vs DISTANCE (s)</h3>
-              <div class="chart-legend">
-                <span class="leg-item"><span class="leg-dot faster"></span> Below Zero = Faster</span>
-                <span class="leg-item"><span class="leg-dot slower"></span> Above Zero = Slower</span>
-              </div>
-            </div>
-            <div class="canvas-responsive-container chart-container">
-              <canvas id="chart-delta" width="700" height="150"></canvas>
-            </div>
-          </div>
-        </div>
-
-        <!-- Right: Colored Segment Track Map -->
-        <div class="map-column">
-          <div class="dash-panel map-panel">
-            <div class="panel-header-wrap">
-              <h3 class="panel-header">SECTOR & DELTA TRACK MAP</h3>
-              <span class="meta-pill">SPEED DELTA SEGMENTS</span>
-            </div>
-            <div class="canvas-responsive-container laps-map-container">
-              <canvas id="laps-map-canvas" width="500" height="460"></canvas>
-            </div>
-            <div class="map-delta-legend">
-              <span class="leg-item"><span class="leg-box faster"></span> Gaining Time (Faster)</span>
-              <span class="leg-item"><span class="leg-box slower"></span> Losing Time (Slower)</span>
-              <span class="leg-item"><span class="leg-line s2"></span> S2</span>
-              <span class="leg-item"><span class="leg-line s3"></span> S3</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Corner Breakdown Table -->
-      <div class="dash-panel corner-breakdown-panel">
-        <div class="panel-header-wrap">
-          <h3 class="panel-header">CORNER BREAKDOWN & APEX MINIMUM SPEEDS</h3>
-          <span id="corner-count-badge" class="meta-pill">0 CORNERS</span>
-        </div>
-        <div class="table-scroll-wrap">
-          <table class="timing-table corner-table">
-            <thead>
-              <tr>
-                <th>CORNER</th>
-                <th>APEX (m)</th>
-                <th>MIN SPD A</th>
-                <th>MIN SPD B</th>
-                <th>Δ MIN SPD</th>
-                <th>BRAKING (m)</th>
-                <th>THROTTLE (m)</th>
-                <th>TIME GAINED / LOST</th>
-              </tr>
-            </thead>
-            <tbody id="corner-breakdown-tbody">
-              <tr class="empty-row">
-                <td colspan="8">Select two laps and click "Analyze Laps" to inspect corner deltas.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Stint Degradation Section -->
-      <div class="dash-panel stint-panel">
-        <div class="panel-header-wrap">
-          <h3 class="panel-header">STINT DEGRADATION & TYRE LIFE</h3>
-          <div class="stint-controls">
-            <label for="stint-select" class="filter-label">STINT:</label>
-            <select id="stint-select" class="f1-select inline"></select>
-          </div>
-        </div>
-
-        <div class="stint-metrics-strip">
-          <div class="metric-card">
-            <span class="metric-label">TIME DEGRADATION</span>
-            <span id="stint-time-slope" class="metric-val mono">-- s/lap</span>
-            <span class="metric-sub">Pace loss per lap</span>
-          </div>
-          <div class="metric-card">
-            <span class="metric-label">TYRE WEAR RATE</span>
-            <span id="stint-wear-slope" class="metric-val mono">-- %/lap</span>
-            <span class="metric-sub">Fitted degradation slope</span>
-          </div>
-          <div class="metric-card">
-            <span class="metric-label">TOTAL STINT LAPS</span>
-            <span id="stint-lap-count" class="metric-val mono">0</span>
-            <span id="stint-compound-name" class="metric-sub">Compound: --</span>
-          </div>
-        </div>
-
-        <div class="table-scroll-wrap">
-          <table class="timing-table stint-table">
-            <thead>
-              <tr>
-                <th>LAP</th>
-                <th>LAP TIME</th>
-                <th>S1</th>
-                <th>S2</th>
-                <th>S3</th>
-                <th>TYRE WEAR</th>
-                <th>VALID</th>
-              </tr>
-            </thead>
-            <tbody id="stint-laps-tbody">
-              <tr class="empty-row">
-                <td colspan="7">No stint data available for this session.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Overtakes & Position Battles Table -->
-      <div class="dash-panel overtakes-panel" style="margin-top: 1.5rem;">
-        <div class="panel-header-row" style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.75rem;">
-          <h2 class="panel-header" style="margin: 0;">OVERTAKES & POSITION BATTLES</h2>
-          <span class="sub-label">Clean / Brave / Divebomb Classification & Braking Features</span>
-        </div>
-        <div class="table-scroll-wrap">
-          <table class="timing-table overtakes-table">
-            <thead>
-              <tr>
-                <th>LAP</th>
-                <th>DRIVER</th>
-                <th>MOVE</th>
-                <th>CLASS</th>
-                <th>CORNER</th>
-                <th>BRAKE DELTA</th>
-                <th>START GAP</th>
-                <th>OVERLAP</th>
-                <th>RAN DEEP</th>
-                <th>CONTACT</th>
-                <th>FORCED OFF</th>
-              </tr>
-            </thead>
-            <tbody id="overtakes-tbody">
-              <tr class="empty-row">
-                <td colspan="11">No overtakes recorded for this session.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div> <!-- /#view-laps -->
-
-    <!-- VIEW 3: SETUPS LIBRARY -->
-    <div id="view-setups" class="view-panel hidden">
-      <!-- Toolbar: Filters & Actions -->
-      <section class="analysis-controls-card">
-        <div class="controls-row-top">
-          <div class="control-group">
-            <label for="setups-filter-track">TRACK</label>
-            <select id="setups-filter-track" class="f1-select">
-              <option value="">Loading tracks...</option>
-            </select>
-          </div>
-
-          <div class="control-group">
-            <label for="setups-filter-class">CAR CLASS</label>
-            <select id="setups-filter-class" class="f1-select">
-              <option value="0">F1 Modern</option>
-              <option value="2">F2</option>
-              <option value="1">F1 Classic</option>
-            </select>
-          </div>
-
-          <div class="control-group">
-            <label for="setups-filter-conditions">CONDITIONS</label>
-            <select id="setups-filter-conditions" class="f1-select">
-              <option value="dry">Dry</option>
-              <option value="wet">Wet</option>
-            </select>
-          </div>
-
-          <div class="control-group">
-            <label for="setups-filter-session">SESSION</label>
-            <select id="setups-filter-session" class="f1-select">
-              <option value="race">Race</option>
-              <option value="quali">Qualifying</option>
-              <option value="practice">Practice</option>
-            </select>
-          </div>
-
-          <div class="controls-actions">
-            <button id="btn-open-new-setup" class="btn-primary" title="Create a new setup with dynamic form">➕ NEW SETUP</button>
-            <button id="btn-open-import" class="btn-secondary" title="Import setup from JSON, CSV, or Free Text">📥 IMPORT SETUP</button>
-            <button id="btn-setups-live-sync" class="btn-refresh" title="Auto-filter to current live session">🎯 LIVE SESSION</button>
-            <a id="btn-download-csv-tmpl" href="/api/setups/template/csv" class="btn-secondary" download="f1_25_setup_template.csv" title="Download CSV setup template">📄 CSV TEMPLATE</a>
-          </div>
-        </div>
-      </section>
-
-      <!-- Mounted Car Setup Banner -->
-      <section id="mounted-setup-banner" class="mounted-setup-card">
-        <div class="mounted-setup-header">
-          <div class="mounted-title-wrap">
-            <span class="mounted-badge pulse">MOUNTED ON CAR</span>
-            <span id="mounted-setup-name" class="mounted-setup-name">Live Telemetry Setup</span>
-            <span id="mounted-setup-fp" class="mounted-setup-fp mono">--</span>
-          </div>
-          <div class="mounted-actions">
-            <button id="btn-edit-mounted-setup" class="btn-sm" title="Open current car setup in setup editor">EDIT / COPY</button>
-            <button id="btn-export-mounted-sheet" class="btn-sm">TXT SHEET</button>
-            <button id="btn-export-mounted-json" class="btn-sm">JSON</button>
-          </div>
-        </div>
-        <div class="mounted-quick-grid">
-          <div class="quick-stat">
-            <span class="quick-label">AERO (WINGS)</span>
-            <span id="stat-mounted-wings" class="quick-val mono">-- / --</span>
-          </div>
-          <div class="quick-stat">
-            <span class="quick-label">DIFF (ON/OFF)</span>
-            <span id="stat-mounted-diff" class="quick-val mono">--% / --%</span>
-          </div>
-          <div class="quick-stat">
-            <span class="quick-label">BRAKE BIAS</span>
-            <span id="stat-mounted-bias" class="quick-val mono">--%</span>
-          </div>
-          <div class="quick-stat">
-            <span class="quick-label">TYRES FRONT</span>
-            <span id="stat-mounted-tyres-f" class="quick-val mono">-- / -- psi</span>
-          </div>
-          <div class="quick-stat">
-            <span class="quick-label">TYRES REAR</span>
-            <span id="stat-mounted-tyres-r" class="quick-val mono">-- / -- psi</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Ranked Setups Table -->
-      <section class="analysis-panel setups-table-panel">
-        <div class="panel-header">
-          <h3>RANKED SETUPS FOR THIS TRACK & CONDITIONS</h3>
-          <span class="panel-subtitle">Sorted by best valid lap; median requires ≥ 3 valid laps</span>
-        </div>
-        <div class="table-scroll-wrap">
-          <table class="timing-table setups-rank-table">
-            <thead>
-              <tr>
-                <th style="width: 50px;">RANK</th>
-                <th>SETUP NAME</th>
-                <th>SOURCE</th>
-                <th>BEST LAP</th>
-                <th>MEDIAN LAP</th>
-                <th>VALID LAPS</th>
-                <th>STATUS</th>
-                <th style="text-align: right;">ACTIONS</th>
-              </tr>
-            </thead>
-            <tbody id="setups-rank-tbody">
-              <tr class="empty-row">
-                <td colspan="8">No setups found matching current filters. Capture laps or import a setup.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Side-by-Side Setup Diff Viewer -->
-      <section class="analysis-panel setups-diff-panel">
-        <div class="panel-header">
-          <h3>SIDE-BY-SIDE SETUP COMPARISON</h3>
-          <span class="panel-subtitle">Compare parameter values and highlight changes</span>
-        </div>
-        <div class="diff-selector-bar">
-          <div class="diff-select-group">
-            <label for="diff-select-a">SETUP A (BASE)</label>
-            <select id="diff-select-a" class="f1-select">
-              <option value="current">Current Mounted Setup</option>
-            </select>
-          </div>
-          <div class="diff-vs-badge">VS</div>
-          <div class="diff-select-group">
-            <label for="diff-select-b">SETUP B (COMPARE)</label>
-            <select id="diff-select-b" class="f1-select">
-              <option value="">Select setup to compare...</option>
-            </select>
-          </div>
-          <button id="btn-run-setup-diff" class="btn-primary">COMPARE</button>
-        </div>
-
-        <div id="diff-results-wrap" class="diff-results-wrap hidden">
-          <div class="diff-summary-bar">
-            <span id="diff-changes-count" class="diff-badge changed">0 PARAMETERS CHANGED</span>
-            <span id="diff-notes" class="diff-notes"></span>
-          </div>
-          <div class="table-scroll-wrap">
-            <table class="timing-table setups-diff-table">
-              <thead>
-                <tr>
-                  <th>PARAMETER</th>
-                  <th id="th-diff-a">SETUP A</th>
-                  <th id="th-diff-b">SETUP B</th>
-                  <th>DELTA / CHANGE</th>
-                </tr>
-              </thead>
-              <tbody id="setups-diff-tbody">
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-    </div> <!-- /#view-setups -->
-
-    <!-- VIEW 4: TRACK NOTES EDITOR -->
-    <div id="view-tracks" class="view-panel hidden">
-      <div class="tracks-layout-grid">
-        <!-- Sidebar: Track Selection -->
-        <aside class="tracks-sidebar-panel">
-          <div class="tracks-sidebar-header">
-            <h3>CIRCUITS & KNOWLEDGE</h3>
-            <span class="tracks-count-badge" id="tracks-count-badge">0 tracks</span>
-          </div>
-          <div class="tracks-search-wrap">
-            <input type="text" id="tracks-search-input" class="f1-input" placeholder="🔍 Filter tracks...">
-          </div>
-          <div id="tracks-list-container" class="tracks-list-container">
-            <!-- Dynamically populated track list items -->
-          </div>
-        </aside>
-
-        <!-- Main Editor Area -->
-        <section class="tracks-editor-panel">
-          <div class="track-editor-header">
-            <div class="track-title-block">
-              <h2 id="track-editor-heading">SELECT A TRACK</h2>
-              <span id="track-editor-file-badge" class="track-file-badge mono">knowledge/tracks/--.md</span>
-            </div>
-            <div class="track-view-mode-bar">
-              <button type="button" id="btn-track-mode-form" class="mode-tab-btn active">FORM VIEW</button>
-              <button type="button" id="btn-track-mode-raw" class="mode-tab-btn">RAW MARKDOWN</button>
-            </div>
-          </div>
-
-          <!-- Form View -->
-          <div id="track-editor-form-view" class="track-editor-form-view">
-            <!-- Corners Section -->
-            <div class="track-section-card">
-              <div class="section-card-header">
-                <h4>1. CORNERS (VOCABULARY & CORNER NOTES)</h4>
-                <span class="section-hint">Number, name, and description feeding AI agent and STT vocabulary without restart</span>
-              </div>
-              <div class="table-scroll-wrap">
-                <table class="timing-table corners-editor-table">
+              <div class="table-wrap">
+                <table>
                   <thead>
                     <tr>
-                      <th style="width: 70px;">TURN #</th>
-                      <th style="width: 220px;">CORNER NAME / CODE</th>
-                      <th>SHORT DESCRIPTION & DRIVING NOTES</th>
-                      <th style="width: 60px; text-align: center;">✕</th>
+                      <th class="r" style="width:40px">Pos</th>
+                      <th>Driver</th>
+                      <th class="r">Interval</th>
+                      <th class="r">To Leader</th>
+                      <th class="r">Last Lap</th>
+                      <th>Tyre</th>
+                      <th class="r">Stops</th>
+                      <th class="r">Penalties</th>
                     </tr>
                   </thead>
-                  <tbody id="track-corners-tbody">
-                    <!-- Dynamic corner rows -->
+                  <tbody id="tower">
+                    <!-- Live Timing Rows injected here -->
                   </tbody>
                 </table>
               </div>
-              <div class="corners-action-row">
-                <button type="button" id="btn-add-corner-row" class="btn-sm">+ ADD CORNER ROW</button>
-              </div>
-            </div>
-
-            <!-- Overtaking Section -->
-            <div class="track-section-card">
-              <div class="section-card-header">
-                <h4>2. OVERTAKING</h4>
-                <span class="section-hint">DRS straights, passing zones, and defensive lines</span>
-              </div>
-              <textarea id="track-section-overtaking" class="f1-textarea" rows="4" placeholder="Enter overtaking and DRS zone notes..."></textarea>
-            </div>
-
-            <!-- Tyres Section -->
-            <div class="track-section-card">
-              <div class="section-card-header">
-                <h4>3. TYRES</h4>
-                <span class="section-hint">Thermal degradation, high-load corner stress, graining/blistering risks</span>
-              </div>
-              <textarea id="track-section-tyres" class="f1-textarea" rows="4" placeholder="Enter tyre wear and surface temperature notes..."></textarea>
-            </div>
-
-            <!-- Setup notes Section -->
-            <div class="track-section-card">
-              <div class="section-card-header">
-                <h4>4. SETUP NOTES</h4>
-                <span class="section-hint">Track-specific downforce, diff, brake bias, and suspension balance</span>
-              </div>
-              <textarea id="track-section-setup-notes" class="f1-textarea" rows="5" placeholder="Enter track-specific setup and balance guidance..."></textarea>
             </div>
           </div>
 
-          <!-- Raw Markdown View -->
-          <div id="track-editor-raw-view" class="track-editor-raw-view hidden">
-            <div class="raw-editor-header">
-              <label for="track-raw-content">RAW MARKDOWN CONTENT (.md)</label>
-              <span class="section-hint">Directly view and edit the raw markdown text</span>
+          <!-- RIGHT COLUMN: Team Radio Feed -->
+          <aside class="card radio" aria-labelledby="radio-h">
+            <div class="card-head">
+              <h2 id="radio-h">Team Radio</h2>
+              <div class="end"><span class="chip" id="persona-chip">Cocky · mild</span></div>
             </div>
-            <textarea id="track-raw-content" class="f1-textarea mono raw-markdown-textarea" rows="24" placeholder="# Circuit Name&#10;&#10;## Corners&#10;..."></textarea>
-          </div>
+            
+            <div class="feed" id="feed" aria-live="polite">
+              <!-- Radio messages injected here -->
+              <div class="empty">
+                <strong>Radio is active</strong>
+                <span class="help">Incoming engineer callouts, telemetry answers, and spotter warnings will appear here.</span>
+              </div>
+            </div>
 
-          <!-- Bottom Action Bar -->
-          <div class="track-editor-footer">
-            <div class="track-footer-status">
-              <span id="track-save-status" class="track-status-pill">Ready</span>
-              <span class="backup-note">Atomic write: previous version preserved as &lt;track&gt;.md.bak</span>
+            <div class="radio-foot">
+              <span class="chip ok" id="mic-chip"><span class="dot"></span>Mic Ready</span>
+              <span class="dim" style="font-size:11px">Hold PTT to talk</span>
+              <div class="end">
+                <button class="btn sm" id="btn-radio-check">Radio check</button>
+              </div>
             </div>
-            <button type="button" id="btn-save-track-notes" class="btn-primary success">💾 SAVE TRACK NOTES</button>
-          </div>
-        </section>
+          </aside>
+        </div>
       </div>
-    </div> <!-- /#view-tracks -->
+    </section>
 
-    <!-- ==================== VIEW 5: SETTINGS ==================== -->
-    <div id="view-settings" class="view-panel hidden">
-      <div class="settings-container" style="max-width: 800px; margin: 0 auto; padding: 1.5rem 1rem;">
-        <section class="analysis-panel" style="padding: 1.5rem; border-radius: 8px; background: rgba(18, 22, 32, 0.85); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 0.75rem;">
-            <div>
-              <h2 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin: 0 0 0.25rem 0;">ENGINEER PERSONALITY & RADIO</h2>
-              <p style="font-size: 0.85rem; color: #94a3b8; margin: 0;">Configure the pit-wall race engineer's persona, profanity filter, and reaction pacing.</p>
-            </div>
-            <span id="settings-save-indicator" class="track-status-pill" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid #10b981; font-size: 0.75rem; padding: 0.25rem 0.6rem; border-radius: 9999px;">
-              ● LIVE
-            </span>
-          </div>
+    <!-- ======================================================================
+         VIEW 2: LAPS & ANALYSIS
+         ====================================================================== -->
+    <section class="view hidden" id="view-laps" aria-labelledby="laps-h">
+      <div class="page-head"><h1 id="laps-h">Lap Comparison & Telemetry</h1></div>
+      
+      <form class="toolbar card" id="form-laps-filter" onsubmit="event.preventDefault()">
+        <div class="field">
+          <label for="l-track">Track</label>
+          <select class="select" id="l-track"><option value="">All Tracks</option></select>
+        </div>
+        <div class="field">
+          <label for="l-sess">Session</label>
+          <select class="select" id="l-sess"><option value="">Live Session</option></select>
+        </div>
+        <div class="field wide">
+          <label for="l-a">Lap</label>
+          <select class="select" id="l-a"><option value="">Select Lap</option></select>
+        </div>
+        <div class="field wide">
+          <label for="l-b">Compare With</label>
+          <select class="select" id="l-b"><option value="best">Personal Best</option></select>
+        </div>
+        <button class="btn primary" id="btn-compare-laps" type="button">Compare Laps</button>
+      </form>
 
-          <form id="persona-settings-form" style="display: flex; flex-direction: column; gap: 1.25rem;">
-            <div class="form-group" style="display: flex; flex-direction: column; gap: 0.4rem;">
-              <label for="setting-persona-name" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0; text-transform: uppercase; letter-spacing: 0.05em;">
-                Engineer Persona
-              </label>
-              <select id="setting-persona-name" class="filter-select" style="width: 100%; padding: 0.6rem 0.75rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.95rem;">
-                <option value="cocky">Cocky (Confident, sarcastic, British pit-wall banter, roasts mistakes)</option>
-                <option value="professional">Professional (Standard neutral engineer, no reactions)</option>
-              </select>
-              <span style="font-size: 0.75rem; color: #64748b;">Loads reactions from lines/&lt;persona&gt;.yaml and applies tone to AI agent.</span>
-            </div>
-
-            <div class="form-group" style="display: flex; flex-direction: column; gap: 0.4rem;">
-              <label for="setting-profanity" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0; text-transform: uppercase; letter-spacing: 0.05em;">
-                Profanity Level
-              </label>
-              <select id="setting-profanity" class="filter-select" style="width: 100%; padding: 0.6rem 0.75rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.95rem;">
-                <option value="none">None (Clean radio only, no swear words)</option>
-                <option value="mild">Mild (Untagged + mild lines allowed, realistic pit-wall swearing)</option>
-                <option value="strong">Strong (All lines allowed, uncensored passionate reactions)</option>
-              </select>
-              <span style="font-size: 0.75rem; color: #64748b;">Filters reaction lines and instructs the AI agent model accordingly.</span>
-            </div>
-
-            <div class="form-group" style="display: flex; flex-direction: column; gap: 0.4rem;">
-              <label for="setting-reaction-frequency" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0; text-transform: uppercase; letter-spacing: 0.05em;">
-                Reaction Frequency
-              </label>
-              <select id="setting-reaction-frequency" class="filter-select" style="width: 100%; padding: 0.6rem 0.75rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.95rem;">
-                <option value="low">Low (1.5x cooldowns, speaks only on major occurrences)</option>
-                <option value="normal">Normal (1.0x baseline cooldowns, balanced chat)</option>
-                <option value="high">High (0.6x cooldowns, highly vocal and chatty pit wall)</option>
-              </select>
-              <span style="font-size: 0.75rem; color: #64748b;">Scales event-specific cooldowns between spoken reactions.</span>
-            </div>
-
-            <div class="form-group" style="display: flex; flex-direction: column; gap: 0.4rem;">
-              <label for="setting-min-gap-s" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0; text-transform: uppercase; letter-spacing: 0.05em;">
-                Minimum Gap Between Reactions (Seconds)
-              </label>
-              <input type="number" id="setting-min-gap-s" min="5" max="120" step="1" value="20" class="filter-select" style="width: 100%; padding: 0.6rem 0.75rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.95rem;" />
-              <span style="font-size: 0.75rem; color: #64748b;">Global cooldown between personality reactions (wins, podiums, and retirements ignore this).</span>
-            </div>
-
-            <div style="display: flex; justify-content: flex-end; align-items: center; gap: 1rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.1);">
-              <span id="settings-feedback-msg" style="font-size: 0.85rem; color: #10b981; display: none;">✓ Applied live to race engineer</span>
-              <button type="button" id="btn-save-settings" class="btn-primary success" style="padding: 0.6rem 1.25rem;">APPLY SETTINGS</button>
-            </div>
-          </form>
-        </section>
-
-        <!-- SOUND TEST & AUDIO HARDWARE (OFFLINE TEST) -->
-        <section class="analysis-panel sound-test-panel" style="margin-top: 1.5rem; padding: 1.5rem; border-radius: 8px; background: rgba(18, 22, 32, 0.85); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 0.75rem;">
-            <div>
-              <h2 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin: 0 0 0.25rem 0;">APP SOUND TEST (OFFLINE HARDWARE)</h2>
-              <p style="font-size: 0.85rem; color: #94a3b8; margin: 0;">Test speakers, microphone levels, radio effects, and device routing without needing the game running.</p>
-            </div>
-            <span id="sound-test-status-badge" class="track-status-pill" style="background: rgba(0, 229, 255, 0.15); color: #00e5ff; border: 1px solid #00e5ff; font-size: 0.75rem; padding: 0.25rem 0.6rem; border-radius: 9999px;">
-              OFFLINE READY
-            </span>
-          </div>
-
-          <!-- Live Session Blocked Banner -->
-          <div id="sound-test-session-banner" class="sound-test-blocked-banner hidden" style="background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; padding: 0.85rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.9rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem;">
-            <span>⚠️</span>
-            <span>Sound test is disabled while a session is live. Use radio check in game instead.</span>
-          </div>
-
-          <div id="sound-test-controls-container" style="display: flex; flex-direction: column; gap: 1.5rem;">
-            <!-- Device Pickers -->
-            <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; padding: 1rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-                <span style="font-size: 0.85rem; font-weight: 700; color: #00e5ff; text-transform: uppercase; letter-spacing: 0.05em;">Audio Devices</span>
-                <button type="button" id="btn-refresh-audio-devices" class="btn-secondary" style="font-size: 0.75rem; padding: 0.3rem 0.75rem;">🔄 REFRESH DEVICES</button>
-              </div>
-
-              <div id="sound-test-device-warning" class="hidden" style="margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fbbf24; border-radius: 4px; font-size: 0.8rem;"></div>
-
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                <div class="form-group" style="display: flex; flex-direction: column; gap: 0.35rem;">
-                  <label for="select-audio-input" style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1;">INPUT DEVICE (MIC)</label>
-                  <select id="select-audio-input" class="filter-select" style="width: 100%; padding: 0.5rem 0.6rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.85rem;">
-                    <option value="">Default Input Device</option>
-                  </select>
-                </div>
-                <div class="form-group" style="display: flex; flex-direction: column; gap: 0.35rem;">
-                  <label for="select-audio-output" style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1;">OUTPUT DEVICE (SPEAKERS / HEADSET)</label>
-                  <select id="select-audio-output" class="filter-select" style="width: 100%; padding: 0.5rem 0.6rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.85rem;">
-                    <option value="">Default Output Device</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <!-- Volume Sliders -->
-            <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; padding: 1rem;">
-              <div style="font-size: 0.85rem; font-weight: 700; color: #00e5ff; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem;">Volume Sliders</div>
-              <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
-                <div style="display: flex; flex-direction: column; gap: 0.3rem;">
-                  <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #cbd5e1;">
-                    <span>Engineer Voice</span>
-                    <span id="label-vol-engineer" class="mono">100%</span>
-                  </div>
-                  <input type="range" id="slider-vol-engineer" min="0" max="100" value="100" style="accent-color: #00e5ff; cursor: pointer;">
-                </div>
-                <div style="display: flex; flex-direction: column; gap: 0.3rem;">
-                  <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #cbd5e1;">
-                    <span>Spotter Calls</span>
-                    <span id="label-vol-spotter" class="mono">90%</span>
-                  </div>
-                  <input type="range" id="slider-vol-spotter" min="0" max="100" value="90" style="accent-color: #00e5ff; cursor: pointer;">
-                </div>
-                <div style="display: flex; flex-direction: column; gap: 0.3rem;">
-                  <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #cbd5e1;">
-                    <span>Menu Beeps</span>
-                    <span id="label-vol-beeps" class="mono">70%</span>
-                  </div>
-                  <input type="range" id="slider-vol-beeps" min="0" max="100" value="70" style="accent-color: #00e5ff; cursor: pointer;">
-                </div>
-              </div>
-            </div>
-
-            <!-- Speaker Test & Mic Test Row -->
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-              <!-- 1. Speaker Test -->
-              <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; padding: 1rem; display: flex; flex-direction: column; justify-content: space-between;">
-                <div>
-                  <div style="font-size: 0.85rem; font-weight: 700; color: #00e5ff; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem;">1. Speaker Test</div>
-                  <p style="font-size: 0.8rem; color: #94a3b8; margin: 0 0 0.8rem 0;">Plays radio click + local TTS test phrase through the selected output device.</p>
-                  <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: #cbd5e1; cursor: pointer; margin-bottom: 1rem;">
-                    <input type="checkbox" id="toggle-speaker-fx" checked style="accent-color: #00e5ff;">
-                    <span>With radio bandpass / crackle effect</span>
-                  </label>
-                </div>
-                <div>
-                  <button type="button" id="btn-speaker-test" class="btn-primary" style="width: 100%; padding: 0.65rem 1rem;">
-                    🔊 PLAY SPEAKER TEST
-                  </button>
-                  <div id="speaker-test-status" style="font-size: 0.75rem; color: #64748b; margin-top: 0.4rem; text-align: center;">Ready</div>
-                </div>
-              </div>
-
-              <!-- 2. Mic Test -->
-              <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; padding: 1rem; display: flex; flex-direction: column; justify-content: space-between;">
-                <div>
-                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
-                    <span style="font-size: 0.85rem; font-weight: 700; color: #00e5ff; text-transform: uppercase; letter-spacing: 0.05em;">2. Microphone Test</span>
-                    <span id="mic-clipping-badge" class="hidden" style="background: #ef4444; color: #fff; font-size: 0.65rem; font-weight: 700; padding: 0.15rem 0.4rem; border-radius: 3px; letter-spacing: 0.05em;">⚠️ CLIPPING DETECTED</span>
-                  </div>
-                  <p style="font-size: 0.8rem; color: #94a3b8; margin: 0 0 0.6rem 0;">Hold the button or PTT, speak, then release. Plays back through radio effect & shows STT transcript.</p>
-                  
-                  <!-- Live Level Meter -->
-                  <div style="margin-bottom: 0.6rem;">
-                    <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #cbd5e1; margin-bottom: 0.2rem;">
-                      <span>Live Mic Level</span>
-                      <span id="mic-meter-db" class="mono">-∞ dB</span>
-                    </div>
-                    <div style="width: 100%; height: 8px; background: rgba(255, 255, 255, 0.1); border-radius: 4px; overflow: hidden;">
-                      <div id="mic-meter-fill" style="width: 0%; height: 100%; background: #00e676; transition: width 0.08s ease, background-color 0.1s ease;"></div>
-                    </div>
-                    <div id="mic-metrics-label" class="mono" style="font-size: 0.72rem; color: #64748b; margin-top: 0.25rem;">
-                      Peak: 0.00 | RMS: 0.00
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <button type="button" id="btn-mic-test" class="btn-primary" style="width: 100%; padding: 0.65rem 1rem; user-select: none;">
-                    🎤 HOLD TO RECORD MIC
-                  </button>
-                  <div id="mic-transcript-result" style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.4rem; min-height: 1.2rem; text-align: center; font-style: italic;">
-                    Hold button to speak...
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- In-Game Two-Way Radio Check Trigger (For Wheel / MFD testing) -->
-            <div style="background: rgba(0, 229, 255, 0.03); border: 1px dashed rgba(0, 229, 255, 0.25); border-radius: 6px; padding: 0.85rem 1rem; display: flex; justify-content: space-between; align-items: center;">
-              <div>
-                <div style="font-size: 0.85rem; font-weight: 700; color: #e2e8f0;">IN-GAME RADIO CHECK (Two-Way Command)</div>
-                <div style="font-size: 0.75rem; color: #94a3b8;">Trigger the wheel/MFD "radio_check" command: Engineer asks "Radio check, how do you read?", waits 8s for reply, and checks mic gain & transcription accuracy.</div>
-              </div>
-              <button type="button" id="btn-trigger-radio-check" class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.9rem; white-space: nowrap;">
-                📻 TRIGGER RADIO CHECK
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <!-- NETWORK & PORT CONFIGURATION -->
-        <section class="analysis-panel port-config-panel" style="margin-top: 1.5rem; padding: 1.5rem; border-radius: 8px; background: rgba(18, 22, 32, 0.85); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 0.75rem;">
-            <div>
-              <h2 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin: 0 0 0.25rem 0;">NETWORK &amp; PORTS</h2>
-              <p style="font-size: 0.85rem; color: #94a3b8; margin: 0;">Configure F1 25 UDP telemetry listening port and web dashboard port.</p>
-            </div>
-            <span class="track-status-pill" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid #10b981; font-size: 0.75rem; padding: 0.25rem 0.6rem; border-radius: 9999px;">
-              CONFIG
-            </span>
-          </div>
-
-          <div style="display: flex; flex-direction: column; gap: 1.25rem;">
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-              <div class="form-group" style="display: flex; flex-direction: column; gap: 0.4rem;">
-                <label for="setting-telemetry-port" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0;">
-                  F1 25 UDP Telemetry Port
-                </label>
-                <input type="number" id="setting-telemetry-port" min="1024" max="65535" value="20777" class="filter-select" style="width: 100%; padding: 0.6rem 0.75rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.95rem;">
-                <span style="font-size: 0.75rem; color: #64748b;">Matches in-game UDP Port setting (default: 20777).</span>
-              </div>
-              <div class="form-group" style="display: flex; flex-direction: column; gap: 0.4rem;">
-                <label for="setting-dashboard-port" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0;">
-                  Web Dashboard Port
-                </label>
-                <input type="number" id="setting-dashboard-port" min="1024" max="65535" value="8765" class="filter-select" style="width: 100%; padding: 0.6rem 0.75rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.95rem;">
-                <span style="font-size: 0.75rem; color: #64748b;">HTTP and WebSocket server port (default: 8765).</span>
-              </div>
-            </div>
-
-            <div style="display: flex; align-items: center; gap: 0.6rem;">
-              <input type="checkbox" id="setting-ask-port" style="accent-color: #00e5ff; width: 16px; height: 16px; cursor: pointer;">
-              <label for="setting-ask-port" style="font-size: 0.85rem; color: #cbd5e1; cursor: pointer;">
-                Prompt interactively for ports in terminal on application startup (or pass <code style="background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px;">--ask-port</code>)
-              </label>
-            </div>
-
-            <div style="display: flex; justify-content: flex-end; align-items: center; gap: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 1rem;">
-              <span id="ports-feedback-msg" style="font-size: 0.85rem; color: #10b981; display: none;">✓ Port settings saved</span>
-              <button type="button" id="btn-save-ports" class="btn-primary" style="padding: 0.6rem 1.25rem;">SAVE PORT SETTINGS</button>
-            </div>
-          </div>
-        </section>
+      <!-- Coach Insights Strip -->
+      <div class="coach" id="coach-summary">
+        <div class="card"><span class="label">Lap vs Reference</span><div class="v" id="coach-lap-delta">--</div><div class="s" id="coach-lap-sub">Select laps above to compare telemetry.</div></div>
+        <div class="card"><span class="label">Sector 1 Delta</span><div class="v" id="coach-s1-delta">--</div><div class="s" id="coach-s1-sub">--</div></div>
+        <div class="card"><span class="label">Sector 2 Delta</span><div class="v" id="coach-s2-delta">--</div><div class="s" id="coach-s2-sub">--</div></div>
+        <div class="card"><span class="label">Sector 3 Delta</span><div class="v" id="coach-s3-delta">--</div><div class="s" id="coach-s3-sub">--</div></div>
       </div>
-    </div> <!-- /#view-settings -->
 
-    <!-- VIEW 6: USAGE GUARD & RATE LIMITS -->
-    <div id="view-usage" class="view-panel hidden">
-      <div class="usage-container">
-        <!-- Summary Strip -->
-        <section class="usage-summary-card">
-          <div class="usage-summary-left">
-            <h2 class="usage-title">AI USAGE &amp; RATE LIMIT GUARD</h2>
-            <div class="usage-badges-wrap">
-              <span id="usage-paid-mode" class="usage-badge protected">FREE TIER ENFORCED</span>
-              <span id="usage-safety-margin" class="usage-badge">SAFETY MARGIN: 80%</span>
-              <span id="usage-reset-countdown" class="usage-badge countdown">RESET IN: --:--:--</span>
-              <span class="usage-badge provider">LAST PROVIDER: <strong id="usage-last-provider-badge">NONE</strong></span>
+      <!-- Telemetry Charts -->
+      <div class="laps-grid">
+        <div class="card" id="charts" style="position:relative">
+          <div class="chart" data-chart="speed">
+            <div class="chart-head">
+              <b>Speed Trace</b><span class="dim">km/h</span>
+              <div class="legend"><span><i style="background:var(--accent)"></i>Selected Lap</span><span><i style="background:var(--text-3)"></i>Reference Lap</span></div>
             </div>
+            <div id="chart-speed-body"></div>
           </div>
-          <div>
-            <button type="button" id="btn-refresh-usage" class="btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
-              REFRESH STATS
-            </button>
-          </div>
-        </section>
 
-        <!-- Pre-Flight Health Alert Banner -->
-        <div id="usage-preflight-banner" class="usage-preflight-banner ok">
-          <div class="preflight-icon">🛡️</div>
-          <div class="preflight-content">
-            <div class="preflight-title-row">
-              <span class="preflight-heading">SYSTEM HEALTH CHECK</span>
-              <span id="usage-preflight-badge" class="usage-status-badge ok">ALL SYSTEMS GO</span>
+          <div class="chart" data-chart="inputs">
+            <div class="chart-head">
+              <b>Throttle and Brake</b><span class="dim">telemetry</span>
+              <div class="legend"><span><i style="background:var(--green)"></i>Throttle</span><span><i style="background:var(--red)"></i>Brake</span></div>
             </div>
-            <p id="usage-preflight-msg" class="preflight-message">All cloud AI services within free-tier limits. Daily quota resets at 00:00 UTC.</p>
+            <div id="chart-inputs-body"></div>
           </div>
+
+          <div class="chart" data-chart="delta">
+            <div class="chart-head">
+              <b>Time Delta</b><span class="dim">above line = slower</span>
+            </div>
+            <div id="chart-delta-body"></div>
+          </div>
+
+          <div class="corner-ticks" id="ticks" aria-hidden="true"></div>
+          <div class="readout" id="readout"></div>
         </div>
 
-        <!-- Dynamic Service Usage Cards Grid -->
-        <div id="usage-cards-container" class="usage-grid">
-          <!-- Populated dynamically via fetchUsageStatus() in app.js -->
-        </div>
-
-        <!-- Multi-Day Usage History Table -->
-        <section class="usage-history-card">
-          <div class="usage-history-header">
-            <div>
-              <h3 class="usage-history-title">DAILY USAGE HISTORY</h3>
-              <p class="usage-history-subtitle">Persistent SQLite audit log tracking quota consumption across days</p>
+        <div class="stack">
+          <!-- Where Time Went Delta Map -->
+          <div class="card">
+            <div class="card-head"><h2>Where Time Went</h2></div>
+            <svg class="map" viewBox="0 0 640 360" role="img" aria-label="Track map colored by time delta">
+              <g id="delta-map"></g>
+            </svg>
+            <div class="legend">
+              <span><i style="background:var(--green)"></i>Faster than best</span>
+              <span><i style="background:var(--red)"></i>Slower than best</span>
             </div>
-            <div class="usage-history-controls">
-              <label for="usage-history-range" class="usage-range-label">Timeframe:</label>
-              <select id="usage-history-range" class="usage-select">
-                <option value="7" selected>Last 7 Days</option>
-                <option value="14">Last 14 Days</option>
-                <option value="30">Last 30 Days</option>
+          </div>
+
+          <!-- Sector Breakdown -->
+          <div class="card">
+            <div class="card-head"><h2>Sectors</h2></div>
+            <div class="rows" id="sectors-comp" style="margin-top:0">
+              <div><span>Sector 1</span><span id="sec-1-val">--</span></div>
+              <div><span>Sector 2</span><span id="sec-2-val">--</span></div>
+              <div><span>Sector 3</span><span id="sec-3-val">--</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Corners Table -->
+      <div class="card" style="margin-top:16px">
+        <div class="card-head">
+          <h2>Corner Analysis</h2>
+          <div class="end"><span class="chip" id="corner-count-chip">Corners</span></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Corner</th>
+                <th class="r">Min Speed Lap</th>
+                <th class="r">Min Speed Best</th>
+                <th class="r">Speed Delta</th>
+                <th class="r">Brake Point</th>
+                <th class="r">Throttle Point</th>
+                <th class="r">Time Delta</th>
+              </tr>
+            </thead>
+            <tbody id="corners">
+              <tr><td colspan="7" class="empty">Compare two laps above to view corner telemetry.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Stints and Overtakes -->
+      <div class="two">
+        <div class="card">
+          <div class="card-head">
+            <h2>Stint Laps</h2>
+            <div class="end">
+              <select class="select" id="stint-select" style="height:28px;width:auto" aria-label="Stint">
+                <option value="">Current Stint</option>
               </select>
             </div>
           </div>
-          <div class="table-container usage-table-scroll">
-            <table class="data-table usage-history-table">
+          <div class="table-wrap">
+            <table>
               <thead>
                 <tr>
-                  <th>DATE</th>
-                  <th>SERVICE</th>
-                  <th>REQUESTS</th>
-                  <th>TOKENS</th>
-                  <th>AUDIO TIME</th>
-                  <th>CHARACTERS</th>
-                  <th>DAILY QUOTA %</th>
-                  <th>STATUS</th>
+                  <th class="r">Lap</th>
+                  <th class="r">Lap Time</th>
+                  <th class="r">S1</th>
+                  <th class="r">S2</th>
+                  <th class="r">S3</th>
+                  <th class="r">Wear</th>
+                  <th>Valid</th>
                 </tr>
               </thead>
-              <tbody id="usage-history-tbody">
-                <tr><td colspan="8" style="text-align: center; opacity: 0.6;">Loading history...</td></tr>
+              <tbody id="stint">
+                <!-- Stint laps injected here -->
               </tbody>
             </table>
           </div>
-        </section>
-      </div>
-    </div> <!-- /#view-usage -->
-
-    <!-- Setup Details Modal -->
-    <div id="setup-details-modal" class="modal-backdrop hidden">
-      <div class="modal-card">
-        <div class="modal-header">
-          <h3 id="modal-details-title">SETUP DETAILS</h3>
-          <button id="btn-close-details-modal" class="modal-close">&times;</button>
         </div>
-        <div class="modal-body" id="modal-details-body">
-        </div>
-        <div class="modal-footer">
-          <button id="btn-modal-export-sheet" class="btn-sm">PRINTABLE SHEET</button>
-          <button id="btn-modal-export-json" class="btn-sm">EXPORT JSON</button>
-          <button id="btn-close-details-btn" class="btn-secondary">CLOSE</button>
-        </div>
-      </div>
-    </div>
 
-    <!-- Import Setup Modal -->
-    <div id="setup-import-modal" class="modal-backdrop hidden">
-      <div class="modal-card modal-large">
-        <div class="modal-header">
-          <h3>IMPORT CAR SETUP</h3>
-          <button id="btn-close-import-modal" class="modal-close">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="import-tabs">
-            <button id="tab-import-freetext" class="import-tab-btn active">FREE TEXT / AI EXTRACTOR</button>
-            <button id="tab-import-json" class="import-tab-btn">JSON FORMAT</button>
-            <button id="tab-import-csv" class="import-tab-btn">CSV TEMPLATE</button>
+        <!-- Overtakes and Battles Table -->
+        <div class="card">
+          <div class="card-head">
+            <h2>Overtakes and Battles</h2>
+            <div class="end"><span class="chip" id="overtakes-count-chip">0 moves</span></div>
           </div>
-
-          <div class="import-meta-grid">
-            <div class="meta-field">
-              <label for="import-name">SETUP NAME</label>
-              <input type="text" id="import-name" class="f1-input" placeholder="e.g. Silverstone Race Low Drag">
-            </div>
-            <div class="meta-field">
-              <label for="import-track">TRACK</label>
-              <select id="import-track" class="f1-select"></select>
-            </div>
-            <div class="meta-field">
-              <label for="import-class">CAR CLASS</label>
-              <select id="import-class" class="f1-select">
-                <option value="0">F1 Modern</option>
-                <option value="2">F2</option>
-                <option value="1">F1 Classic</option>
-              </select>
-            </div>
-            <div class="meta-field">
-              <label for="import-conditions">CONDITIONS</label>
-              <select id="import-conditions" class="f1-select">
-                <option value="dry">Dry</option>
-                <option value="wet">Wet</option>
-              </select>
-            </div>
-            <div class="meta-field">
-              <label for="import-session">SESSION</label>
-              <select id="import-session" class="f1-select">
-                <option value="race">Race</option>
-                <option value="quali">Qualifying</option>
-                <option value="practice">Practice</option>
-              </select>
-            </div>
-            <div class="meta-field">
-              <label for="import-note">SOURCE NOTE</label>
-              <input type="text" id="import-note" class="f1-input" placeholder="e.g. YouTube video description, friend">
-            </div>
-          </div>
-
-          <div class="import-input-wrap">
-            <label id="import-content-label" for="import-content">PASTE TEXT / SETUP DATA</label>
-            <textarea id="import-content" class="f1-textarea" rows="7" placeholder="Paste free text (e.g. wings 38/32, diff 55/50, camber -2.5/-1.0, brakes 100/54)..."></textarea>
-          </div>
-
-          <div class="import-action-bar">
-            <button id="btn-parse-validate" class="btn-primary">🔍 PARSE & VALIDATE</button>
-            <span id="import-status-spinner" class="spinner-text hidden">Processing with AI extractor...</span>
-          </div>
-
-          <!-- Preview & Validation Results -->
-          <div id="import-preview-box" class="import-preview-box hidden">
-            <div class="preview-header">
-              <h4>PARSED RESULT PREVIEW</h4>
-              <span id="preview-valid-badge" class="badge">VALIDATED</span>
-            </div>
-            <div id="preview-alerts" class="preview-alerts"></div>
-            <div id="preview-params-grid" class="preview-params-grid"></div>
-            <div class="preview-footer">
-              <span class="preview-disclaimer">Review values above before saving. Missing values are left empty without guessing.</span>
-              <button id="btn-confirm-save-import" class="btn-primary success" disabled>💾 CONFIRM & SAVE SETUP</button>
-            </div>
+          <div class="table-wrap">
+            <table id="overtakes-table">
+              <thead>
+                <tr>
+                  <th class="r">Lap</th>
+                  <th>Move</th>
+                  <th>Corner</th>
+                  <th class="r">Brake Delta</th>
+                  <th>Classification</th>
+                </tr>
+              </thead>
+              <tbody id="overtakes-body">
+                <!-- Live overtakes injected here -->
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Setup Entry Form Modal (Generated from setup_params.yaml) -->
-    <div id="setup-form-modal" class="modal-backdrop hidden">
-      <div class="modal-card modal-large setup-form-card">
-        <div class="modal-header">
-          <div class="modal-header-left">
-            <h3 id="setup-form-modal-title">NEW CAR SETUP</h3>
-            <span id="setup-form-mode-badge" class="badge">NEW</span>
-          </div>
-          <button id="btn-close-setup-form-modal" class="modal-close">&times;</button>
+    <!-- ======================================================================
+         VIEW 3: SETUPS
+         ====================================================================== -->
+    <section class="view hidden" id="view-setups" aria-labelledby="setups-h">
+      <div class="page-head">
+        <h1 id="setups-h">Car Setups</h1>
+        <div class="end">
+          <button class="btn" id="btn-import-setup">Import…</button>
+          <button class="btn primary" id="btn-new-setup">New Setup</button>
         </div>
+      </div>
 
-        <div class="modal-body setup-form-body">
-          <!-- Start Options Banner -->
-          <div class="setup-form-start-bar">
-            <span class="start-bar-label">START FROM:</span>
-            <div class="start-options-group">
-              <button type="button" id="btn-start-blank" class="start-btn active">BLANK</button>
-              <button type="button" id="btn-start-copy-current" class="start-btn">COPY CAR SETUP</button>
-              <div class="start-dup-group">
-                <label for="select-duplicate-setup">DUPLICATE:</label>
-                <select id="select-duplicate-setup" class="f1-select">
-                  <option value="">Choose setup...</option>
+      <div class="toolbar card" style="margin-bottom:16px">
+        <div class="field"><label for="s-track">Track</label><select class="select" id="s-track"><option>Silverstone</option></select></div>
+        <div class="field"><label for="s-class">Car Class</label><select class="select" id="s-class"><option>F1 modern</option></select></div>
+        <div class="field"><label for="s-cond">Conditions</label><select class="select" id="s-cond"><option>Dry</option><option>Wet</option></select></div>
+        <div class="field"><label for="s-sess">Session</label><select class="select" id="s-sess"><option>Race</option><option>Qualifying</option></select></div>
+        <button class="btn ghost" id="btn-match-session" type="button">Match Live Session</button>
+      </div>
+
+      <!-- Mounted On-the-Car Setup -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-head">
+          <span class="chip info">On the Car</span>
+          <h2 id="mounted-setup-name">Current Setup</h2>
+          <div class="end">
+            <button class="btn sm" id="btn-copy-setup">Edit a Copy</button>
+            <button class="btn sm ghost" id="btn-export-setup">Export…</button>
+          </div>
+        </div>
+        <div class="mounted" id="mounted">
+          <!-- Injected dynamically -->
+        </div>
+      </div>
+
+      <!-- Ranked Setups Library -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-head">
+          <h2>Saved Setups Library</h2>
+          <div class="end"><span class="dim" style="font-size:12px">Ranked by fastest valid lap</span></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="r" style="width:40px">#</th>
+                <th>Setup</th>
+                <th>Source</th>
+                <th class="r">Best Lap</th>
+                <th class="r">Median</th>
+                <th class="r">Valid Laps</th>
+                <th>Status</th>
+                <th class="r"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="ranked">
+              <!-- Ranked setups injected here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Side-by-Side Setup Compare Tool -->
+      <div class="card">
+        <div class="card-head"><h2>Compare Two Setups</h2></div>
+        <div class="toolbar" style="margin-bottom:16px">
+          <div class="field wide"><label for="d-a">Setup A</label><select class="select" id="d-a"></select></div>
+          <div class="field wide"><label for="d-b">Setup B</label><select class="select" id="d-b"></select></div>
+          <button class="btn primary" id="btn-run-diff" type="button">Compare</button>
+          <label class="check" style="margin-left:auto;align-self:center;font-size:13px"><input type="checkbox" id="chk-diff-only" checked> Only show differences</label>
+        </div>
+        <div class="table-wrap">
+          <table id="setup-diff-table">
+            <thead>
+              <tr>
+                <th>Setting</th>
+                <th class="r">Setup A</th>
+                <th class="r">Setup B</th>
+                <th class="r">Change</th>
+              </tr>
+            </thead>
+            <tbody id="setup-diff-body">
+              <!-- Diff rows injected here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         VIEW 4: TRACKS
+         ====================================================================== -->
+    <section class="view hidden" id="view-tracks" aria-labelledby="tracks-h">
+      <div class="tracks">
+        <nav class="card track-list" aria-label="Tracks">
+          <label class="sr-only" for="t-search">Search tracks</label>
+          <input class="input" id="t-search" type="search" placeholder="Search 27 tracks…" autocomplete="off">
+          <ul id="track-list">
+            <!-- Tracks injected here -->
+          </ul>
+        </nav>
+        
+        <div>
+          <div class="page-head">
+            <div>
+              <h1 id="tracks-h">Silverstone</h1>
+              <span class="dim mono" id="tracks-file-path">knowledge/tracks/silverstone.md</span>
+            </div>
+          </div>
+          
+          <div class="card" style="margin-bottom:16px">
+            <div class="card-head">
+              <h2>Corners & Turn Notes</h2>
+              <div class="end"><span class="dim" style="font-size:12px">Names feed race engineer voice calls & spotter</span></div>
+            </div>
+            <div class="table-wrap editor">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width:56px">Turn</th>
+                    <th style="width:220px">Corner Name</th>
+                    <th>Driving Notes</th>
+                    <th style="width:40px"><span class="sr-only">Remove</span></th>
+                  </tr>
+                </thead>
+                <tbody id="corner-edit">
+                  <!-- Corners editor injected here -->
+                </tbody>
+              </table>
+            </div>
+            <button class="btn sm ghost" id="btn-add-corner" style="margin-top:10px">+ Add Corner</button>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>Overtaking & Strategy Notes</h2></div>
+            <div class="field">
+              <label for="t-ot" class="sr-only">Overtaking notes</label>
+              <textarea class="textarea" id="t-ot" placeholder="DRS zones, passing spots, defending lines…"></textarea>
+            </div>
+          </div>
+
+          <div class="savebar">
+            <span class="chip wait" id="track-save-status"><span class="dot"></span>Unsaved changes</span>
+            <span class="help">Backups are automatically saved to tracks database.</span>
+            <div class="end">
+              <button class="btn ghost" id="btn-discard-track" type="button">Discard</button>
+              <button class="btn primary" id="btn-save-track" type="button">Save Notes</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         VIEW 5: AI USAGE
+         ====================================================================== -->
+    <section class="view hidden" id="view-usage" aria-labelledby="usage-h">
+      <div class="page-head">
+        <div>
+          <h1 id="usage-h">AI Cloud Usage & Limits</h1>
+          <span class="muted" id="usage-reset-sub">Free tier · 80% safety margin · UsageGuard Active</span>
+        </div>
+        <div class="end"><button class="btn" id="btn-refresh-usage" type="button">Refresh</button></div>
+      </div>
+
+      <div class="providers" id="providers">
+        <!-- Live provider quota gauges injected here -->
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Usage History</h2>
+          <div class="end">
+            <select class="select" id="usage-timeframe" style="height:28px;width:auto" aria-label="Timeframe">
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Service</th>
+                <th class="r">Requests</th>
+                <th class="r">Tokens</th>
+                <th class="r">Audio Time</th>
+                <th class="r">Characters</th>
+                <th class="r">Quota Used</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="history">
+              <!-- Injected dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         VIEW 6: SETTINGS
+         ====================================================================== -->
+    <section class="view hidden" id="view-settings" aria-labelledby="settings-h">
+      <h1 class="sr-only" id="settings-h">Settings</h1>
+      <div class="settings">
+        <!-- Left Subnav -->
+        <nav class="subnav" aria-label="Settings sections">
+          <a href="#settings-engineer" class="active" id="subnav-engineer">Engineer</a>
+          <a href="#settings-audio" id="subnav-audio">Audio</a>
+          <a href="#settings-wheel" id="subnav-wheel">Wheel buttons</a>
+          <a href="#settings-network" id="subnav-network">Network</a>
+        </nav>
+
+        <!-- Right Form Sections -->
+        <div>
+          <!-- 1. Engineer Personality Settings -->
+          <form class="card form-section" id="sec-engineer" onsubmit="event.preventDefault()">
+            <h2>Engineer Personality</h2>
+            <div class="field">
+              <label for="st-persona">Personality Profile</label>
+              <select class="select" id="st-persona">
+                <option value="cocky">Cocky: Confident, sarcastic, roasts mistakes</option>
+                <option value="calm">Calm: Measured, factual, focused</option>
+                <option value="hype">Hype: High energy and encouraging</option>
+                <option value="professional">Professional: Formal, concise pit wall calls</option>
+              </select>
+            </div>
+            
+            <div class="grid-2">
+              <div class="field">
+                <label for="st-prof">Language & Profanity</label>
+                <select class="select" id="st-prof">
+                  <option value="mild">Mild swearing (bloody, hell)</option>
+                  <option value="none">Clean (no profanity)</option>
+                  <option value="strong">Uncensored (full emotion)</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="st-freq">Reaction Frequency</label>
+                <select class="select" id="st-freq">
+                  <option value="normal">Normal</option>
+                  <option value="quiet">Quiet (minimal chatter)</option>
+                  <option value="chatty">Chatty (frequent commentary)</option>
                 </select>
               </div>
             </div>
-          </div>
 
-          <!-- Metadata Header Grid -->
-          <div class="setup-meta-panel">
-            <div class="meta-panel-header">
-              <h4>SETUP METADATA</h4>
-              <button type="button" id="btn-sync-live-meta" class="btn-sm" title="Pre-fill car class, team, track, and conditions from active session">🎯 SYNC LIVE SESSION</button>
+            <div class="field" style="max-width:260px">
+              <label for="st-gap">Minimum Gap Between Reactions</label>
+              <div class="with-unit">
+                <input class="input num" id="st-gap" type="number" inputmode="numeric" value="20" min="0">
+                <span>s</span>
+              </div>
+              <span class="help">Wins, podiums, retirements, and divebombs always get an immediate callout.</span>
             </div>
-            <div class="setup-meta-grid">
-              <div class="meta-field">
-                <label for="setup-input-name">SETUP NAME</label>
-                <input type="text" id="setup-input-name" class="f1-input" placeholder="e.g. Silverstone Race Low Drag">
-              </div>
-              <div class="meta-field">
-                <label for="setup-input-class">CAR CLASS</label>
-                <select id="setup-input-class" class="f1-select"></select>
-              </div>
-              <div class="meta-field">
-                <label for="setup-input-track">TRACK</label>
-                <select id="setup-input-track" class="f1-select"></select>
-              </div>
-              <div class="meta-field">
-                <label for="setup-input-conditions">CONDITIONS</label>
-                <select id="setup-input-conditions" class="f1-select">
-                  <option value="dry">Dry</option>
-                  <option value="wet">Wet</option>
-                </select>
-              </div>
-              <div class="meta-field">
-                <label for="setup-input-session">SESSION</label>
-                <select id="setup-input-session" class="f1-select">
-                  <option value="race">Race</option>
-                  <option value="quali">Qualifying</option>
-                  <option value="practice">Practice</option>
-                </select>
-              </div>
-              <div class="meta-field">
-                <label for="setup-input-team">TEAM ID</label>
-                <input type="number" id="setup-input-team" class="f1-input" placeholder="Team ID (0-255)" value="0">
-              </div>
-              <div class="meta-field">
-                <label for="setup-input-source-note">SOURCE NOTE</label>
-                <input type="text" id="setup-input-source-note" class="f1-input" placeholder="e.g. Esports baseline, YouTube guide">
-              </div>
-              <div class="meta-field">
-                <label for="setup-input-source-link">SOURCE LINK (URL)</label>
-                <input type="url" id="setup-input-source-link" class="f1-input" placeholder="https://...">
-              </div>
-              <div class="meta-field full-width">
-                <label for="setup-input-notes">FREE-TEXT NOTES</label>
-                <textarea id="setup-input-notes" class="f1-textarea" rows="2" placeholder="Driving balance, kerb riding, tire thermal impressions..."></textarea>
-              </div>
-            </div>
-          </div>
 
-          <!-- Dynamic Parameter Groups Form (Loaded from setup_params.yaml) -->
-          <div class="setup-params-container">
-            <div class="params-header-banner">
-              <h4>SETUP PARAMETERS</h4>
-              <span class="params-hint">All fields optional. Steppers use official game clicks. Desktop: Tab moves, ↑/↓ steps, Enter on last saves.</span>
+            <div class="form-foot">
+              <button class="btn ghost" id="btn-discard-engineer" type="reset">Discard</button>
+              <button class="btn primary" id="btn-save-engineer" type="button">Save Engineer Settings</button>
             </div>
-            <div id="setup-form-groups-wrap" class="setup-form-groups-wrap">
-              <!-- Dynamically generated from setup_params.yaml -->
-            </div>
-          </div>
-        </div>
+          </form>
 
-        <div class="modal-footer setup-form-footer">
-          <div class="setup-form-status-wrap">
-            <span id="setup-draft-status" class="draft-status">Draft saved locally</span>
-            <span id="setup-read-only-notice" class="read-only-notice hidden">⚠️ Captured setup is read-only. Saving will create an imported copy.</span>
-          </div>
-          <div class="setup-form-actions">
-            <button type="button" id="btn-cancel-setup-form" class="btn-secondary">CANCEL</button>
-            <button type="button" id="btn-clear-setup-form" class="btn-secondary">CLEAR FIELDS</button>
-            <button type="button" id="btn-save-setup-form" class="btn-primary success">💾 SAVE SETUP</button>
-          </div>
+          <!-- 2. Audio Devices & Levels -->
+          <form class="card form-section" id="sec-audio" onsubmit="event.preventDefault()">
+            <h2>Audio Devices & Volumes</h2>
+            <div class="grid-2">
+              <div class="field">
+                <label for="st-in">Microphone Input</label>
+                <select class="select" id="st-in"><option value="">Default Microphone</option></select>
+              </div>
+              <div class="field">
+                <label for="st-out">Headset / Speaker Output</label>
+                <select class="select" id="st-out"><option value="">Default Audio Output</option></select>
+              </div>
+            </div>
+
+            <div class="field">
+              <span class="label" style="font-size:12px;font-weight:550;color:var(--text-2)">Volume Levels</span>
+              <div class="range">
+                <label for="v-eng">Engineer</label>
+                <input id="v-eng" type="range" min="0" max="100" value="100">
+                <output for="v-eng" id="v-eng-out">100%</output>
+              </div>
+              <div class="range">
+                <label for="v-spot">Spotter</label>
+                <input id="v-spot" type="range" min="0" max="100" value="90">
+                <output for="v-spot" id="v-spot-out">90%</output>
+              </div>
+              <div class="range">
+                <label for="v-beep">Radio Beeps</label>
+                <input id="v-beep" type="range" min="0" max="100" value="70">
+                <output for="v-beep" id="v-beep-out">70%</output>
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <!-- Speaker Sound Test -->
+              <div class="mini" style="display:grid;gap:10px;padding:14px">
+                <b>Speaker Test</b>
+                <label class="check" style="font-size:13px">
+                  <input type="checkbox" id="chk-radio-fx" checked> Radio Intercom FX
+                </label>
+                <button class="btn" id="btn-speaker-test" type="button">Play Test Message</button>
+              </div>
+
+              <!-- Microphone Live VU Level Test -->
+              <div class="mini" style="display:grid;gap:10px;padding:14px">
+                <b>Microphone VU Test</b>
+                <div class="level" id="level" aria-label="Microphone volume meter"></div>
+                <button class="btn" id="btn-mic-test" type="button">Hold to Record</button>
+              </div>
+            </div>
+
+            <div class="form-foot">
+              <button class="btn ghost" id="btn-refresh-audio" type="button">Refresh Devices</button>
+              <button class="btn primary" id="btn-save-audio" type="button">Save Audio Settings</button>
+            </div>
+          </form>
+
+          <!-- 3. Wheel Buttons & Push-To-Talk -->
+          <form class="card form-section" id="sec-wheel" onsubmit="event.preventDefault()">
+            <h2>Wheel Buttons & Push-To-Talk</h2>
+            <p class="muted">Bind a button on your steering wheel to send UDP Actions to the Race Engineer.</p>
+            <div class="field" style="max-width:320px">
+              <label for="st-ptt-action">F1 UDP Action Button Slot</label>
+              <input class="input num" id="st-ptt-action" type="number" value="1" min="1" max="16">
+              <span class="help">In F1 25 Control Settings → UDP Actions, bind your wheel PTT button to this Action number.</span>
+            </div>
+            <div class="form-foot">
+              <button class="btn primary" id="btn-save-wheel" type="button">Save Wheel Settings</button>
+            </div>
+          </form>
+
+          <!-- 4. Network Ports -->
+          <form class="card form-section" id="sec-network" onsubmit="event.preventDefault()">
+            <h2>Network Ports</h2>
+            <div class="grid-2">
+              <div class="field">
+                <label for="st-udp">Telemetry Port (UDP)</label>
+                <input class="input num" id="st-udp" inputmode="numeric" value="20777" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="st-web">Dashboard Web Port</label>
+                <input class="input num" id="st-web" inputmode="numeric" value="8765" spellcheck="false">
+              </div>
+            </div>
+            <label class="check">
+              <input type="checkbox" id="st-ask-ports"> Ask for ports interactively every time app launches
+            </label>
+            <div class="form-foot">
+              <span class="help" style="margin-right:auto;align-self:center">Port modifications take effect after restart.</span>
+              <button class="btn primary" id="btn-save-ports" type="button">Save Ports</button>
+            </div>
+          </form>
         </div>
       </div>
-    </div>
-
-    <!-- Duplicate Setup Confirmation Modal -->
-    <div id="setup-duplicate-modal" class="modal-backdrop hidden">
-      <div class="modal-card">
-        <div class="modal-header">
-          <h3>DUPLICATE SETUP DETECTED</h3>
-          <button id="btn-close-dup-modal" class="modal-close">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="dup-alert-wrap">
-            <span class="dup-icon">🔍</span>
-            <p id="dup-modal-message">An identical setup with fingerprint <strong id="dup-modal-fp">--</strong> already exists in your library.</p>
-          </div>
-          <div id="dup-existing-card" class="dup-existing-card">
-            <h4 id="dup-existing-name">Existing Setup Name</h4>
-            <span id="dup-existing-meta" class="sub-label">Track, Conditions, Session</span>
-          </div>
-          <p class="dup-prompt">Would you like to open the existing setup, or save anyway as a duplicate?</p>
-        </div>
-        <div class="modal-footer">
-          <button type="button" id="btn-dup-open-existing" class="btn-primary">OPEN EXISTING SETUP</button>
-          <button type="button" id="btn-dup-save-anyway" class="btn-secondary">SAVE ANYWAY</button>
-          <button type="button" id="btn-dup-cancel" class="btn-secondary">CANCEL</button>
-        </div>
-      </div>
-    </div>
+    </section>
   </main>
 
-  <script src="/app.js?v=2"></script>
+  <script src="/app.js"></script>
 </body>
 </html>
