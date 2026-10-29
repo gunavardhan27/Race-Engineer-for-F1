@@ -228,9 +228,9 @@ class Broadcaster:
     def unregister(self, q: asyncio.Queue):
         self._clients.discard(q)
 
-    def broadcast_state(self, payload: dict[str, Any]) -> bool:
-        """Pushes state payload if changed. Returns True if broadcast occurred."""
-        if not has_changed(payload, self._last_payload):
+    def broadcast_state(self, payload: dict[str, Any], force: bool = False) -> bool:
+        """Pushes state payload if changed or forced. Returns True if broadcast occurred."""
+        if not force and not has_changed(payload, self._last_payload):
             return False
         self._last_payload = payload
         self.push_message(payload)
@@ -389,14 +389,14 @@ def create_app(
     async def get_style():
         f = STATIC_DIR / "style.css"
         if f.is_file():
-            return FileResponse(f, media_type="text/css")
+            return FileResponse(f, media_type="text/css", headers={"Cache-Control": "no-cache, must-revalidate"})
         raise HTTPException(status_code=404)
 
     @app.get("/app.js")
     async def get_script():
         f = STATIC_DIR / "app.js"
         if f.is_file():
-            return FileResponse(f, media_type="application/javascript")
+            return FileResponse(f, media_type="application/javascript", headers={"Cache-Control": "no-cache, must-revalidate"})
         raise HTTPException(status_code=404)
 
     @app.get("/api/track_map")
@@ -1418,8 +1418,11 @@ class DashboardServer:
 
     async def _run_broadcast(self, hz: float):
         interval = 1.0 / hz
+        last_heartbeat = 0.0
         try:
             while True:
+                now = time.monotonic()
+                force_push = (now - last_heartbeat) >= 1.0
                 if self.track_map:
                     self.track_map.update_from_state(self.state)
                 payload = build_live_payload(self.state, self.track_map)
@@ -1432,7 +1435,9 @@ class DashboardServer:
                         "countdown_str": st.get("countdown_str", "--"),
                         "last_provider": st.get("last_provider", "none"),
                     }
-                self.broadcaster.broadcast_state(payload)
+                pushed = self.broadcaster.broadcast_state(payload, force=force_push)
+                if pushed:
+                    last_heartbeat = now
                 await asyncio.sleep(interval)
         except asyncio.CancelledError:
             pass

@@ -15,7 +15,16 @@
 
   function getToken() {
     const params = new URLSearchParams(window.location.search);
-    return params.get('token') || '';
+    const urlToken = params.get('token');
+    if (urlToken) {
+      try { localStorage.setItem('race_engineer_token', urlToken); } catch (e) {}
+      return urlToken;
+    }
+    try {
+      return localStorage.getItem('race_engineer_token') || '';
+    } catch (e) {
+      return '';
+    }
   }
 
   // --- DOM Elements ---
@@ -420,10 +429,22 @@
 
   // --- UI Update: Full Telemetry State ---
   function updateTelemetryUI(data) {
-    lastPacketTime = Date.now();
-    el.noTelemetryBanner.classList.add('hidden');
-    el.connectionBadge.className = 'status-pill connected';
-    el.connectionText.textContent = 'LIVE';
+    const isLive = !!data.session_live;
+    if (data.last_packet_time && data.last_packet_time > 0) {
+      lastPacketTime = Date.now();
+    }
+
+    if (isLive || (lastPacketTime > 0 && (Date.now() - lastPacketTime) < 3500)) {
+      el.noTelemetryBanner.classList.add('hidden');
+      el.connectionBadge.className = 'status-pill connected';
+      el.connectionText.textContent = 'LIVE';
+      if (el.sessionStatus) el.sessionStatus.textContent = 'ACTIVE';
+    } else {
+      // Connected to dashboard server, waiting for game telemetry packets
+      el.connectionBadge.className = 'status-pill connected';
+      el.connectionText.textContent = 'CONNECTED';
+      if (el.sessionStatus && !data.track) el.sessionStatus.textContent = 'STANDBY';
+    }
 
     // Cloud AI Quota Top-Bar Pill
     if (data.cloud_quota) {
@@ -1080,18 +1101,29 @@
   // --- WebSocket Connection with Exponential Backoff ---
   function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const query = window.location.search; // Forwards ?token=...
-    const wsUrl = `${protocol}//${window.location.host}/ws/live${query}`;
+    const token = getToken();
+    const wsUrl = `${protocol}//${window.location.host}/ws/live${token ? '?token=' + encodeURIComponent(token) : ''}`;
 
     el.connectionBadge.className = 'status-pill connecting';
     el.connectionText.textContent = 'CONNECTING...';
 
-    socket = new WebSocket(wsUrl);
+    if (socket) {
+      try { socket.close(); } catch (e) {}
+      socket = null;
+    }
+
+    try {
+      socket = new WebSocket(wsUrl);
+    } catch (err) {
+      console.error('[Dashboard] WebSocket creation error:', err);
+      scheduleReconnect();
+      return;
+    }
 
     socket.onopen = function () {
       reconnectAttempts = 0;
       el.connectionBadge.className = 'status-pill connected';
-      el.connectionText.textContent = 'CONNECTED';
+      el.connectionText.textContent = (lastPacketTime > 0 && (Date.now() - lastPacketTime) < 3500) ? 'LIVE' : 'CONNECTED';
       console.log('[Dashboard] WebSocket connected to', wsUrl);
     };
 
@@ -4113,20 +4145,28 @@
 
   // --- Init on DOM Load ---
   window.addEventListener('DOMContentLoaded', () => {
-    initTheme();
-    initTabs();
-    initSetupsTab();
-    initTracksTab();
-    fetchPersonaSettings();
-    fetchPortSettings();
-    fetchUsageStatus();
-    fetchUsageHistory();
+    function safeRun(label, fn) {
+      try {
+        fn();
+      } catch (err) {
+        console.error(`[Dashboard] Error in ${label}:`, err);
+      }
+    }
+
+    safeRun('initTheme', initTheme);
+    safeRun('initTabs', initTabs);
+    safeRun('initSetupsTab', initSetupsTab);
+    safeRun('initTracksTab', initTracksTab);
+    safeRun('fetchPersonaSettings', fetchPersonaSettings);
+    safeRun('fetchPortSettings', fetchPortSettings);
+    safeRun('fetchUsageStatus', fetchUsageStatus);
+    safeRun('fetchUsageHistory', fetchUsageHistory);
     if (el.btnRebuildMap) {
       el.btnRebuildMap.addEventListener('click', rebuildTrackMap);
     }
-    fetchTrackMap();
-    startWatchdog();
-    connectWebSocket();
+    safeRun('fetchTrackMap', fetchTrackMap);
+    safeRun('startWatchdog', startWatchdog);
+    safeRun('connectWebSocket', connectWebSocket);
   });
 })();
 
