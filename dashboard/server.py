@@ -14,19 +14,22 @@ from typing import Any
 
 import qrcode
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from config import AppConfig
 from f1telemetry.state import COMPOUNDS, TRACKS, RaceState
 from trackmap import TrackMapManager
 from storage import SessionStorage
 from analysis import analyze_corners, analyze_stint, compute_delta_trace
+from knowledge import KnowledgeBase, track_to_slug
 from setups import (
     SetupsStorage, diff_setups, export_as_json, export_as_sheet,
-    generate_csv_template, import_from_csv, import_from_json,
-    parse_free_text_setup, validate_setup_params
+    generate_csv_template, get_setup_schema, import_from_csv, import_from_json,
+    parse_free_text_setup, validate_setup_input, validate_setup_params,
+    compute_setup_fingerprint,
 )
 
 FORMULAS = {
@@ -58,6 +61,56 @@ SESSION_TYPES = {
 }
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+class SetupCreateRequest(BaseModel):
+    name: str = ""
+    car_class: int = 0
+    team_id: int = 0
+    track_id: int = 0
+    conditions: str = "dry"
+    session_type: str = "race"
+    source_note: str = ""
+    source_link: str = ""
+    notes: str = ""
+    params: dict[str, Any] = Field(default_factory=dict)
+    force: bool = False
+
+
+class SetupUpdateRequest(BaseModel):
+    name: str | None = None
+    car_class: int | None = None
+    team_id: int | None = None
+    track_id: int | None = None
+    conditions: str | None = None
+    session_type: str | None = None
+    source_note: str | None = None
+    source_link: str | None = None
+    notes: str | None = None
+    params: dict[str, Any] | None = None
+    allow_fork: bool = False
+
+
+class CornerItem(BaseModel):
+    number: int
+    name: str
+    description: str = ""
+
+
+class TrackSectionsSave(BaseModel):
+    title: str = ""
+    corners: list[CornerItem] | None = None
+    overtaking: str = ""
+    tyres: str = ""
+    setup_notes: str = ""
+
+
+class TrackSaveRequest(BaseModel):
+    raw: str | None = None
+    raw_markdown: str | None = None
+    sections: TrackSectionsSave | None = None
+    corners_list: list[CornerItem] | None = None
+
 
 
 def build_live_payload(state: RaceState, track_map: TrackMapManager | None = None) -> dict[str, Any]:
@@ -263,10 +316,29 @@ def create_app(
     storage: SessionStorage | None = None,
     setups_storage: SetupsStorage | None = None,
     llm_client: Any | None = None,
+    knowledge: KnowledgeBase | None = None,
 ) -> FastAPI:
     """Creates the FastAPI app instance."""
     app = FastAPI(title="Race Engineer Live Dashboard", docs_url=None, redoc_url=None)
     setups_store = setups_storage or SetupsStorage()
+    knowledge_base = knowledge or KnowledgeBase()
+
+    def check_token(
+        token_param: str | None = None,
+        authorization: str | None = None,
+        x_token: str | None = None,
+    ) -> bool:
+        if not token:
+            return True
+        provided = token_param
+        if not provided and authorization:
+            if authorization.lower().startswith("bearer "):
+                provided = authorization[7:].strip()
+            else:
+                provided = authorization.strip()
+        if not provided and x_token:
+            provided = x_token.strip()
+        return verify_token(provided, token)
 
     # Serve static assets
     if STATIC_DIR.is_dir():
@@ -444,6 +516,69 @@ def create_app(
 
     # ==================== SETUPS API ENDPOINTS ====================
 
+    @app.get("/api/setups/schema")
+    async def get_setups_schema(
+        car_class: int = Query(0),
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        return get_setup_schema(car_class=car_class, storage=setups_store)
+
+    @app.post("/api/setups")
+    async def create_setup(
+        body: SetupCreateRequest,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+
+        val = validate_setup_input(body.params, car_class=body.car_class, storage=setups_store)
+        if not val["valid"]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"message": "Validation failed", "out_of_range": val["out_of_range"]}
+            )
+
+        clean_params = val["clean_params"]
+        fp = compute_setup_fingerprint(clean_params)
+        existing = setups_store.get_setup_by_fingerprint(fp)
+
+        if existing and not body.force:
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content={
+                    "saved": False,
+                    "duplicate": True,
+                    "error": "duplicate_setup",
+                    "existing_setup": existing,
+                    "fingerprint": fp,
+                    "message": f"An identical setup '{existing.get('name', 'Setup')}' already exists in your library.",
+                },
+            )
+
+        saved, _ = setups_store.create_custom_setup(
+            params=clean_params,
+            car_class=body.car_class,
+            team_id=body.team_id,
+            track_id=body.track_id,
+            conditions=body.conditions,
+            session_type=body.session_type,
+            name=body.name,
+            source_note=body.source_note,
+            source_link=body.source_link,
+            notes=body.notes,
+            force=True,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_201_CREATED,
+            content=saved,
+        )
+
     @app.get("/api/setups")
     async def get_setups(
         track_id: int | None = Query(None),
@@ -451,8 +586,10 @@ def create_app(
         conditions: str | None = Query(None),
         session_type: str | None = Query(None),
         token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
     ):
-        if not verify_token(token_param, token):
+        if not check_token(token_param, authorization, x_token):
             raise HTTPException(status_code=403, detail="Unauthorized")
 
         s = state.session
@@ -502,8 +639,12 @@ def create_app(
         }
 
     @app.get("/api/setups/current")
-    async def get_current_setup(token_param: str | None = Query(None, alias="token")):
-        if not verify_token(token_param, token):
+    async def get_current_setup(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
             raise HTTPException(status_code=403, detail="Unauthorized")
         my = state.my_setup
         if not my:
@@ -598,8 +739,10 @@ def create_app(
     async def get_setup_details(
         setup_id: str,
         token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
     ):
-        if not verify_token(token_param, token):
+        if not check_token(token_param, authorization, x_token):
             raise HTTPException(status_code=403, detail="Unauthorized")
         if setup_id == "current":
             my = state.my_setup
@@ -613,6 +756,73 @@ def create_app(
         if not s:
             raise HTTPException(status_code=404, detail="Setup not found")
         return s
+
+    @app.put("/api/setups/{setup_id}")
+    async def update_setup(
+        setup_id: str,
+        body: SetupUpdateRequest,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+
+        existing = setups_store.get_setup(setup_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Setup not found")
+
+        if existing.get("source") == "captured" and not body.allow_fork:
+            raise HTTPException(
+                status_code=400,
+                detail="Captured setups are read-only. Editing creates a new imported copy. Set allow_fork=true to save as a copy."
+            )
+
+        update_data = body.model_dump(exclude_unset=True)
+        if body.params is not None:
+            eff_class = body.car_class if body.car_class is not None else existing.get("car_class", 0)
+            val = validate_setup_input(body.params, car_class=eff_class, storage=setups_store)
+            if not val["valid"]:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"message": "Validation failed", "out_of_range": val["out_of_range"]}
+                )
+            update_data["params"] = val["clean_params"]
+
+        try:
+            updated = setups_store.update_setup(setup_id, update_data, allow_fork=body.allow_fork)
+            is_forked = existing.get("source") == "captured" and body.allow_fork
+            return {
+                **updated,
+                "updated": True,
+                "forked": is_forked,
+                "setup": updated,
+            }
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.delete("/api/setups/{setup_id}")
+    async def delete_setup(
+        setup_id: str,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+
+        existing = setups_store.get_setup(setup_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Setup not found")
+
+        if existing.get("source") == "captured":
+            raise HTTPException(status_code=400, detail="Captured setups are read-only and cannot be deleted.")
+
+        try:
+            deleted = setups_store.delete_setup(setup_id)
+            return {"deleted": deleted, "id": setup_id}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     @app.post("/api/setups/import")
     async def import_setup(
@@ -683,10 +893,58 @@ def create_app(
             source_note=source_note or f"Imported ({mode})",
             name=name or f"Imported {conditions.capitalize()} ({mode})",
         )
+    # ==================== TRACKS API ENDPOINTS ====================
+
+    @app.get("/api/tracks")
+    async def get_tracks(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        return {"tracks": knowledge_base.list_available_tracks()}
+
+    @app.get("/api/tracks/{track}")
+    async def get_track_notes(
+        track: str,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        return knowledge_base.get_track_markdown(track)
+
+    @app.put("/api/tracks/{track}")
+    async def save_track_notes(
+        track: str,
+        body: TrackSaveRequest,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+
+        raw_text = body.raw or body.raw_markdown
+        if raw_text is not None:
+            saved = knowledge_base.save_track_markdown(track, raw_text)
+        elif body.sections is not None or body.corners_list is not None:
+            sec_dict = body.sections.model_dump() if body.sections else {}
+            if body.corners_list is not None:
+                sec_dict["corners"] = [c.model_dump() for c in body.corners_list]
+            saved = knowledge_base.save_track_markdown(track, sec_dict)
+        else:
+            raise HTTPException(status_code=400, detail="Missing track content: provide 'raw' markdown or 'sections'")
+
+        cnt = len(saved.get("corners_list") or saved.get("corners") or [])
         return {
+            "status": "saved",
             "saved": True,
-            "setup": saved,
-            "validation": val,
+            "track": track,
+            "corners_count": cnt,
+            "data": saved,
         }
 
     @app.websocket("/ws/live")
@@ -720,6 +978,7 @@ class DashboardServer:
         storage: SessionStorage | None = None,
         setups_storage: SetupsStorage | None = None,
         llm_client: Any | None = None,
+        knowledge: KnowledgeBase | None = None,
     ):
         self.state = state
         self.config = config
@@ -729,6 +988,7 @@ class DashboardServer:
         self.storage = storage
         self.setups_storage = setups_storage or SetupsStorage()
         self.llm_client = llm_client
+        self.knowledge = knowledge or KnowledgeBase()
         self.app = create_app(
             self.state,
             self.broadcaster,
@@ -737,6 +997,7 @@ class DashboardServer:
             self.storage,
             self.setups_storage,
             self.llm_client,
+            knowledge=self.knowledge,
         )
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None

@@ -1,0 +1,207 @@
+# F1 25 Car Setup Parameters Definition
+# Defines the parameters, display order, groups, steps and units for UI form generation.
+# If season updates add or change setup parameters, updating this file automatically updates
+# the form schema and validation rules.
+
+version: 1
+
+groups:
+  - name: "Aerodynamics"
+    display_order: 1
+  - name: "Transmission"
+    display_order: 2
+  - name: "Suspension Geometry"
+    display_order: 3
+  - name: "Suspension"
+    display_order: 4
+  - name: "Brakes"
+    display_order: 5
+  - name: "Tyres"
+    display_order: 6
+  - name: "Fuel and Ballast"
+    display_order: 7
+
+parameters:
+  - key: "front_wing"
+    label: "Front Wing Aero"
+    group: "Aerodynamics"
+    unit: "clicks"
+    type: "int"
+    step: 1
+    display_order: 1
+
+  - key: "rear_wing"
+    label: "Rear Wing Aero"
+    group: "Aerodynamics"
+    unit: "clicks"
+    type: "int"
+    step: 1
+    display_order: 2
+
+  - key: "on_throttle"
+    label: "Diff Adjustment On-Throttle"
+    group: "Transmission"
+    unit: "%"
+    type: "int"
+    step: 1
+    display_order: 3
+
+  - key: "off_throttle"
+    label: "Diff Adjustment Off-Throttle"
+    group: "Transmission"
+    unit: "%"
+    type: "int"
+    step: 1
+    display_order: 4
+
+  - key: "engine_braking"
+    label: "Engine Braking"
+    group: "Transmission"
+    unit: "%"
+    type: "int"
+    step: 1
+    display_order: 5
+
+  - key: "front_camber"
+    label: "Front Camber"
+    group: "Suspension Geometry"
+    unit: "°"
+    type: "float"
+    step: 0.05
+    display_order: 6
+
+  - key: "rear_camber"
+    label: "Rear Camber"
+    group: "Suspension Geometry"
+    unit: "°"
+    type: "float"
+    step: 0.05
+    display_order: 7
+
+  - key: "front_toe"
+    label: "Front Toe-Out"
+    group: "Suspension Geometry"
+    unit: "°"
+    type: "float"
+    step: 0.01
+    display_order: 8
+
+  - key: "rear_toe"
+    label: "Rear Toe-In"
+    group: "Suspension Geometry"
+    unit: "°"
+    type: "float"
+    step: 0.01
+    display_order: 9
+
+  - key: "front_suspension"
+    label: "Front Suspension"
+    group: "Suspension"
+    unit: "clicks"
+    type: "int"
+    step: 1
+    display_order: 10
+
+  - key: "rear_suspension"
+    label: "Rear Suspension"
+    group: "Suspension"
+    unit: "clicks"
+    type: "int"
+    step: 1
+    display_order: 11
+
+  - key: "front_anti_roll_bar"
+    label: "Front Anti-Roll Bar"
+    group: "Suspension"
+    unit: "clicks"
+    type: "int"
+    step: 1
+    display_order: 12
+
+  - key: "rear_anti_roll_bar"
+    label: "Rear Anti-Roll Bar"
+    group: "Suspension"
+    unit: "clicks"
+    type: "int"
+    step: 1
+    display_order: 13
+
+  - key: "front_suspension_height"
+    label: "Front Ride Height"
+    group: "Suspension"
+    unit: "clicks"
+    type: "int"
+    step: 1
+    display_order: 14
+
+  - key: "rear_suspension_height"
+    label: "Rear Ride Height"
+    group: "Suspension"
+    unit: "clicks"
+    type: "int"
+    step: 1
+    display_order: 15
+
+  - key: "brake_pressure"
+    label: "Brake Pressure"
+    group: "Brakes"
+    unit: "%"
+    type: "int"
+    step: 1
+    display_order: 16
+
+  - key: "brake_bias"
+    label: "Front Brake Bias"
+    group: "Brakes"
+    unit: "%"
+    type: "int"
+    step: 1
+    display_order: 17
+
+  - key: "front_left_tyre_pressure"
+    label: "Front Left Tyre Pressure"
+    group: "Tyres"
+    unit: "psi"
+    type: "float"
+    step: 0.1
+    display_order: 18
+
+  - key: "front_right_tyre_pressure"
+    label: "Front Right Tyre Pressure"
+    group: "Tyres"
+    unit: "psi"
+    type: "float"
+    step: 0.1
+    display_order: 19
+
+  - key: "rear_left_tyre_pressure"
+    label: "Rear Left Tyre Pressure"
+    group: "Tyres"
+    unit: "psi"
+    type: "float"
+    step: 0.1
+    display_order: 20
+
+  - key: "rear_right_tyre_pressure"
+    label: "Rear Right Tyre Pressure"
+    group: "Tyres"
+    unit: "psi"
+    type: "float"
+    step: 0.1
+    display_order: 21
+
+  - key: "ballast"
+    label: "Ballast"
+    group: "Fuel and Ballast"
+    unit: "kg"
+    type: "int"
+    step: 1
+    display_order: 22
+
+  - key: "fuel_load"
+    label: "Fuel Load"
+    group: "Fuel and Ballast"
+    unit: "kg"
+    type: "float"
+    step: 0.5
+    display_order: 23

@@ -38,6 +38,7 @@
       <button id="tab-btn-live" class="nav-tab active">LIVE HUD</button>
       <button id="tab-btn-laps" class="nav-tab">LAPS & ANALYSIS</button>
       <button id="tab-btn-setups" class="nav-tab">SETUPS</button>
+      <button id="tab-btn-tracks" class="nav-tab">TRACKS</button>
     </nav>
   </header>
 
@@ -623,8 +624,9 @@
           </div>
 
           <div class="controls-actions">
+            <button id="btn-open-new-setup" class="btn-primary" title="Create a new setup with dynamic form">➕ NEW SETUP</button>
+            <button id="btn-open-import" class="btn-secondary" title="Import setup from JSON, CSV, or Free Text">📥 IMPORT SETUP</button>
             <button id="btn-setups-live-sync" class="btn-refresh" title="Auto-filter to current live session">🎯 LIVE SESSION</button>
-            <button id="btn-open-import" class="btn-primary" title="Import setup from JSON, CSV, or Free Text">📥 IMPORT SETUP</button>
             <a id="btn-download-csv-tmpl" href="/api/setups/template/csv" class="btn-secondary" download="f1_25_setup_template.csv" title="Download CSV setup template">📄 CSV TEMPLATE</a>
           </div>
         </div>
@@ -639,6 +641,7 @@
             <span id="mounted-setup-fp" class="mounted-setup-fp mono">--</span>
           </div>
           <div class="mounted-actions">
+            <button id="btn-edit-mounted-setup" class="btn-sm" title="Open current car setup in setup editor">EDIT / COPY</button>
             <button id="btn-export-mounted-sheet" class="btn-sm">TXT SHEET</button>
             <button id="btn-export-mounted-json" class="btn-sm">JSON</button>
           </div>
@@ -742,6 +745,113 @@
       </section>
     </div> <!-- /#view-setups -->
 
+    <!-- VIEW 4: TRACK NOTES EDITOR -->
+    <div id="view-tracks" class="view-panel hidden">
+      <div class="tracks-layout-grid">
+        <!-- Sidebar: Track Selection -->
+        <aside class="tracks-sidebar-panel">
+          <div class="tracks-sidebar-header">
+            <h3>CIRCUITS & KNOWLEDGE</h3>
+            <span class="tracks-count-badge" id="tracks-count-badge">0 tracks</span>
+          </div>
+          <div class="tracks-search-wrap">
+            <input type="text" id="tracks-search-input" class="f1-input" placeholder="🔍 Filter tracks...">
+          </div>
+          <div id="tracks-list-container" class="tracks-list-container">
+            <!-- Dynamically populated track list items -->
+          </div>
+        </aside>
+
+        <!-- Main Editor Area -->
+        <section class="tracks-editor-panel">
+          <div class="track-editor-header">
+            <div class="track-title-block">
+              <h2 id="track-editor-heading">SELECT A TRACK</h2>
+              <span id="track-editor-file-badge" class="track-file-badge mono">knowledge/tracks/--.md</span>
+            </div>
+            <div class="track-view-mode-bar">
+              <button type="button" id="btn-track-mode-form" class="mode-tab-btn active">FORM VIEW</button>
+              <button type="button" id="btn-track-mode-raw" class="mode-tab-btn">RAW MARKDOWN</button>
+            </div>
+          </div>
+
+          <!-- Form View -->
+          <div id="track-editor-form-view" class="track-editor-form-view">
+            <!-- Corners Section -->
+            <div class="track-section-card">
+              <div class="section-card-header">
+                <h4>1. CORNERS (VOCABULARY & CORNER NOTES)</h4>
+                <span class="section-hint">Number, name, and description feeding AI agent and STT vocabulary without restart</span>
+              </div>
+              <div class="table-scroll-wrap">
+                <table class="timing-table corners-editor-table">
+                  <thead>
+                    <tr>
+                      <th style="width: 70px;">TURN #</th>
+                      <th style="width: 220px;">CORNER NAME / CODE</th>
+                      <th>SHORT DESCRIPTION & DRIVING NOTES</th>
+                      <th style="width: 60px; text-align: center;">✕</th>
+                    </tr>
+                  </thead>
+                  <tbody id="track-corners-tbody">
+                    <!-- Dynamic corner rows -->
+                  </tbody>
+                </table>
+              </div>
+              <div class="corners-action-row">
+                <button type="button" id="btn-add-corner-row" class="btn-sm">+ ADD CORNER ROW</button>
+              </div>
+            </div>
+
+            <!-- Overtaking Section -->
+            <div class="track-section-card">
+              <div class="section-card-header">
+                <h4>2. OVERTAKING</h4>
+                <span class="section-hint">DRS straights, passing zones, and defensive lines</span>
+              </div>
+              <textarea id="track-section-overtaking" class="f1-textarea" rows="4" placeholder="Enter overtaking and DRS zone notes..."></textarea>
+            </div>
+
+            <!-- Tyres Section -->
+            <div class="track-section-card">
+              <div class="section-card-header">
+                <h4>3. TYRES</h4>
+                <span class="section-hint">Thermal degradation, high-load corner stress, graining/blistering risks</span>
+              </div>
+              <textarea id="track-section-tyres" class="f1-textarea" rows="4" placeholder="Enter tyre wear and surface temperature notes..."></textarea>
+            </div>
+
+            <!-- Setup notes Section -->
+            <div class="track-section-card">
+              <div class="section-card-header">
+                <h4>4. SETUP NOTES</h4>
+                <span class="section-hint">Track-specific downforce, diff, brake bias, and suspension balance</span>
+              </div>
+              <textarea id="track-section-setup-notes" class="f1-textarea" rows="5" placeholder="Enter track-specific setup and balance guidance..."></textarea>
+            </div>
+          </div>
+
+          <!-- Raw Markdown View -->
+          <div id="track-editor-raw-view" class="track-editor-raw-view hidden">
+            <div class="raw-editor-header">
+              <label for="track-raw-content">RAW MARKDOWN CONTENT (.md)</label>
+              <span class="section-hint">Directly view and edit the raw markdown text</span>
+            </div>
+            <textarea id="track-raw-content" class="f1-textarea mono raw-markdown-textarea" rows="24" placeholder="# Circuit Name&#10;&#10;## Corners&#10;..."></textarea>
+          </div>
+
+          <!-- Bottom Action Bar -->
+          <div class="track-editor-footer">
+            <div class="track-footer-status">
+              <span id="track-save-status" class="track-status-pill">Ready</span>
+              <span class="backup-note">Atomic write: previous version preserved as &lt;track&gt;.md.bak</span>
+            </div>
+            <button type="button" id="btn-save-track-notes" class="btn-primary success">💾 SAVE TRACK NOTES</button>
+          </div>
+        </section>
+      </div>
+    </div> <!-- /#view-tracks -->
+
     <!-- Setup Details Modal -->
     <div id="setup-details-modal" class="modal-backdrop hidden">
       <div class="modal-card">
@@ -834,6 +944,138 @@
               <button id="btn-confirm-save-import" class="btn-primary success" disabled>💾 CONFIRM & SAVE SETUP</button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Setup Entry Form Modal (Generated from setup_params.yaml) -->
+    <div id="setup-form-modal" class="modal-backdrop hidden">
+      <div class="modal-card modal-large setup-form-card">
+        <div class="modal-header">
+          <div class="modal-header-left">
+            <h3 id="setup-form-modal-title">NEW CAR SETUP</h3>
+            <span id="setup-form-mode-badge" class="badge">NEW</span>
+          </div>
+          <button id="btn-close-setup-form-modal" class="modal-close">&times;</button>
+        </div>
+
+        <div class="modal-body setup-form-body">
+          <!-- Start Options Banner -->
+          <div class="setup-form-start-bar">
+            <span class="start-bar-label">START FROM:</span>
+            <div class="start-options-group">
+              <button type="button" id="btn-start-blank" class="start-btn active">BLANK</button>
+              <button type="button" id="btn-start-copy-current" class="start-btn">COPY CAR SETUP</button>
+              <div class="start-dup-group">
+                <label for="select-duplicate-setup">DUPLICATE:</label>
+                <select id="select-duplicate-setup" class="f1-select">
+                  <option value="">Choose setup...</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Metadata Header Grid -->
+          <div class="setup-meta-panel">
+            <div class="meta-panel-header">
+              <h4>SETUP METADATA</h4>
+              <button type="button" id="btn-sync-live-meta" class="btn-sm" title="Pre-fill car class, team, track, and conditions from active session">🎯 SYNC LIVE SESSION</button>
+            </div>
+            <div class="setup-meta-grid">
+              <div class="meta-field">
+                <label for="setup-input-name">SETUP NAME</label>
+                <input type="text" id="setup-input-name" class="f1-input" placeholder="e.g. Silverstone Race Low Drag">
+              </div>
+              <div class="meta-field">
+                <label for="setup-input-class">CAR CLASS</label>
+                <select id="setup-input-class" class="f1-select"></select>
+              </div>
+              <div class="meta-field">
+                <label for="setup-input-track">TRACK</label>
+                <select id="setup-input-track" class="f1-select"></select>
+              </div>
+              <div class="meta-field">
+                <label for="setup-input-conditions">CONDITIONS</label>
+                <select id="setup-input-conditions" class="f1-select">
+                  <option value="dry">Dry</option>
+                  <option value="wet">Wet</option>
+                </select>
+              </div>
+              <div class="meta-field">
+                <label for="setup-input-session">SESSION</label>
+                <select id="setup-input-session" class="f1-select">
+                  <option value="race">Race</option>
+                  <option value="quali">Qualifying</option>
+                  <option value="practice">Practice</option>
+                </select>
+              </div>
+              <div class="meta-field">
+                <label for="setup-input-team">TEAM ID</label>
+                <input type="number" id="setup-input-team" class="f1-input" placeholder="Team ID (0-255)" value="0">
+              </div>
+              <div class="meta-field">
+                <label for="setup-input-source-note">SOURCE NOTE</label>
+                <input type="text" id="setup-input-source-note" class="f1-input" placeholder="e.g. Esports baseline, YouTube guide">
+              </div>
+              <div class="meta-field">
+                <label for="setup-input-source-link">SOURCE LINK (URL)</label>
+                <input type="url" id="setup-input-source-link" class="f1-input" placeholder="https://...">
+              </div>
+              <div class="meta-field full-width">
+                <label for="setup-input-notes">FREE-TEXT NOTES</label>
+                <textarea id="setup-input-notes" class="f1-textarea" rows="2" placeholder="Driving balance, kerb riding, tire thermal impressions..."></textarea>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dynamic Parameter Groups Form (Loaded from setup_params.yaml) -->
+          <div class="setup-params-container">
+            <div class="params-header-banner">
+              <h4>SETUP PARAMETERS</h4>
+              <span class="params-hint">All fields optional. Steppers use official game clicks. Desktop: Tab moves, ↑/↓ steps, Enter on last saves.</span>
+            </div>
+            <div id="setup-form-groups-wrap" class="setup-form-groups-wrap">
+              <!-- Dynamically generated from setup_params.yaml -->
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer setup-form-footer">
+          <div class="setup-form-status-wrap">
+            <span id="setup-draft-status" class="draft-status">Draft saved locally</span>
+            <span id="setup-read-only-notice" class="read-only-notice hidden">⚠️ Captured setup is read-only. Saving will create an imported copy.</span>
+          </div>
+          <div class="setup-form-actions">
+            <button type="button" id="btn-cancel-setup-form" class="btn-secondary">CANCEL</button>
+            <button type="button" id="btn-clear-setup-form" class="btn-secondary">CLEAR FIELDS</button>
+            <button type="button" id="btn-save-setup-form" class="btn-primary success">💾 SAVE SETUP</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Duplicate Setup Confirmation Modal -->
+    <div id="setup-duplicate-modal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>DUPLICATE SETUP DETECTED</h3>
+          <button id="btn-close-dup-modal" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="dup-alert-wrap">
+            <span class="dup-icon">🔍</span>
+            <p id="dup-modal-message">An identical setup with fingerprint <strong id="dup-modal-fp">--</strong> already exists in your library.</p>
+          </div>
+          <div id="dup-existing-card" class="dup-existing-card">
+            <h4 id="dup-existing-name">Existing Setup Name</h4>
+            <span id="dup-existing-meta" class="sub-label">Track, Conditions, Session</span>
+          </div>
+          <p class="dup-prompt">Would you like to open the existing setup, or save anyway as a duplicate?</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-dup-open-existing" class="btn-primary">OPEN EXISTING SETUP</button>
+          <button type="button" id="btn-dup-save-anyway" class="btn-secondary">SAVE ANYWAY</button>
+          <button type="button" id="btn-dup-cancel" class="btn-secondary">CANCEL</button>
         </div>
       </div>
     </div>

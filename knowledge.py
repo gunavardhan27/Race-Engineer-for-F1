@@ -7,14 +7,67 @@ Enforces a configurable token cap (~400 tokens / 1600 characters).
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 import re
-from typing import Optional
+import shutil
+from typing import Any, Optional
 
 from config import KnowledgeConfig
 from f1telemetry.state import TRACKS
 
 log = logging.getLogger("engineer.knowledge")
+
+
+def track_to_slug(track_id_or_name: int | str) -> str:
+    """Normalizes track id or name to filesystem slug."""
+    if isinstance(track_id_or_name, int):
+        track_name = TRACKS.get(track_id_or_name, f"track_{track_id_or_name}")
+    else:
+        track_name = str(track_id_or_name)
+    slug = track_name.lower().replace(" ", "_").replace("-", "_")
+    if slug.endswith(".md"):
+        slug = slug[:-3]
+    return slug
+
+
+def parse_corners_list(corners_text: str) -> list[dict[str, Any]]:
+    """Parses Corners markdown section into list of {number, name, description}."""
+    corners: list[dict[str, Any]] = []
+    for line in corners_text.splitlines():
+        line_str = line.strip()
+        if not line_str:
+            continue
+        m = re.match(r"^(\d+)\.\s*([^:]+?)\s*:\s*(.*)$", line_str)
+        if m:
+            corners.append({
+                "number": int(m.group(1)),
+                "name": m.group(2).strip(),
+                "description": m.group(3).strip(),
+            })
+        else:
+            m2 = re.match(r"^(\d+)\.\s*(.*)$", line_str)
+            if m2:
+                corners.append({
+                    "number": int(m2.group(1)),
+                    "name": m2.group(2).strip(),
+                    "description": "",
+                })
+    return corners
+
+
+def build_corners_markdown(corners: list[dict[str, Any]]) -> str:
+    """Formats corner dicts back into markdown numbered list."""
+    lines: list[str] = []
+    for c in sorted(corners, key=lambda x: x.get("number", 0)):
+        num = c.get("number", 1)
+        name = c.get("name", "").strip()
+        desc = c.get("description", "").strip()
+        if desc:
+            lines.append(f"{num}. {name}: {desc}")
+        else:
+            lines.append(f"{num}. {name}")
+    return "\n".join(lines)
 
 
 def parse_markdown_sections(text: str) -> dict[str, str]:
@@ -118,6 +171,169 @@ class KnowledgeBase:
     def get_corner_names(self) -> list[str]:
         """Returns corner names for STT initial_prompt biasing."""
         return list(self.corner_names)
+
+    def list_available_tracks(self) -> list[dict[str, Any]]:
+        """Lists all known tracks and whether they have markdown notes."""
+        result: list[dict[str, Any]] = []
+        seen_slugs: set[str] = set()
+
+        for tid, tname in sorted(TRACKS.items(), key=lambda x: x[1]):
+            slug = track_to_slug(tname)
+            seen_slugs.add(slug)
+            file_path = self.tracks_dir / f"{slug}.md"
+            has_file = file_path.is_file()
+            corners_count = 0
+            if has_file:
+                try:
+                    txt = file_path.read_text(encoding="utf-8")
+                    sec = parse_markdown_sections(txt)
+                    corners_count = len(parse_corners_list(sec.get("Corners", "")))
+                except Exception:
+                    pass
+            result.append({
+                "id": tid,
+                "name": tname,
+                "slug": slug,
+                "has_file": has_file,
+                "corner_count": corners_count,
+            })
+
+        if self.tracks_dir.is_dir():
+            for p in sorted(self.tracks_dir.glob("*.md")):
+                if p.name.endswith(".bak") or p.name.endswith(".tmp"):
+                    continue
+                slug = p.stem
+                if slug not in seen_slugs:
+                    seen_slugs.add(slug)
+                    corners_count = 0
+                    try:
+                        txt = p.read_text(encoding="utf-8")
+                        sec = parse_markdown_sections(txt)
+                        corners_count = len(parse_corners_list(sec.get("Corners", "")))
+                    except Exception:
+                        pass
+                    result.append({
+                        "id": None,
+                        "name": slug.replace("_", " ").title(),
+                        "slug": slug,
+                        "has_file": True,
+                        "corner_count": corners_count,
+                    })
+
+        return sorted(result, key=lambda x: x["name"])
+
+    def get_track_markdown(self, track_slug_or_id: str | int) -> dict[str, Any]:
+        """Loads and parses track markdown file into structured sections and raw text."""
+        slug = track_to_slug(track_slug_or_id)
+        file_path = self.tracks_dir / f"{slug}.md"
+        exists = file_path.is_file()
+
+        raw = ""
+        title = ""
+        sections: dict[str, str] = {}
+        corners: list[dict[str, Any]] = []
+
+        if exists:
+            try:
+                raw = file_path.read_text(encoding="utf-8")
+                sections = parse_markdown_sections(raw)
+                corners = parse_corners_list(sections.get("Corners", ""))
+                for line in raw.splitlines():
+                    if line.startswith("# "):
+                        title = line[2:].strip()
+                        break
+            except Exception as e:
+                log.warning("Could not read track file %s: %s", file_path, e)
+
+        if not title:
+            if isinstance(track_slug_or_id, int) and track_slug_or_id in TRACKS:
+                title = f"{TRACKS[track_slug_or_id]} Circuit"
+            else:
+                title = f"{slug.replace('_', ' ').title()} Circuit"
+
+        if not exists:
+            sections = {
+                "Corners": "",
+                "Overtaking": "",
+                "Tyres": "",
+                "Setup notes": "",
+            }
+            raw = f"# {title}\n\n## Corners\n\n## Overtaking\n\n## Tyres\n\n## Setup notes\n"
+
+        return {
+            "slug": slug,
+            "title": title,
+            "name": title,
+            "raw": raw,
+            "raw_markdown": raw,
+            "sections": sections,
+            "corners": corners,
+            "corners_list": corners,
+            "exists": exists,
+        }
+
+    def save_track_markdown(
+        self,
+        track_slug_or_id: str | int,
+        content: str | dict[str, Any],
+    ) -> dict[str, Any]:
+        """Atomically saves track markdown file, backs up previous version as .bak, and reloads knowledge."""
+        slug = track_to_slug(track_slug_or_id)
+        self.tracks_dir.mkdir(parents=True, exist_ok=True)
+        target_path = self.tracks_dir / f"{slug}.md"
+        bak_path = self.tracks_dir / f"{slug}.md.bak"
+        tmp_path = self.tracks_dir / f"{slug}.md.tmp"
+
+        if isinstance(content, str):
+            raw_text = content
+        else:
+            title = content.get("title") or f"{slug.replace('_', ' ').title()} Circuit"
+            corners_val = content.get("corners")
+            if isinstance(corners_val, list):
+                corners_text = build_corners_markdown(corners_val)
+            else:
+                corners_text = content.get("sections", {}).get("Corners", "").strip()
+
+            overtaking = content.get("overtaking", "")
+            if not overtaking and "sections" in content:
+                overtaking = content["sections"].get("Overtaking", "").strip()
+
+            tyres = content.get("tyres", "")
+            if not tyres and "sections" in content:
+                tyres = content["sections"].get("Tyres", "").strip()
+
+            setup_notes = content.get("setup_notes", "")
+            if not setup_notes and "sections" in content:
+                setup_notes = content["sections"].get("Setup notes", "").strip()
+
+            raw_text = (
+                f"# {title}\n\n"
+                f"## Corners\n{corners_text}\n\n"
+                f"## Overtaking\n{overtaking}\n\n"
+                f"## Tyres\n{tyres}\n\n"
+                f"## Setup notes\n{setup_notes}\n"
+            )
+
+        # 1. Backup existing file to .bak
+        if target_path.is_file():
+            try:
+                shutil.copy2(target_path, bak_path)
+            except Exception as e:
+                log.warning("Could not create backup %s: %s", bak_path, e)
+
+        # 2. Write temp file in same directory
+        tmp_path.write_text(raw_text, encoding="utf-8")
+
+        # 3. Atomic rename/replace
+        os.replace(str(tmp_path), str(target_path))
+        log.info("Atomically saved track notes to %s (backup: %s)", target_path, bak_path)
+
+        # 4. Immediate in-memory reload
+        self.current_track_name = None  # Reset cache to force reload
+        self.load_track(slug)
+
+        return self.get_track_markdown(slug)
+
 
     def select_knowledge(self, question: str, max_tokens: Optional[int] = None) -> str:
         """Selects relevant track and setup notes via keyword overlap, capped at max_tokens."""

@@ -13,6 +13,11 @@
   let lastPacketTime = 0;
   const NO_TELEMETRY_THRESHOLD_MS = 3000;
 
+  function getToken() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('token') || '';
+  }
+
   // --- DOM Elements ---
   const el = {
     trackName: document.getElementById('track-name'),
@@ -138,17 +143,21 @@
     // Setups
     tabBtnSetups: document.getElementById('tab-btn-setups'),
     viewSetups: document.getElementById('view-setups'),
+    tabBtnTracks: document.getElementById('tab-btn-tracks'),
+    viewTracks: document.getElementById('view-tracks'),
     setupsFilterTrack: document.getElementById('setups-filter-track'),
     setupsFilterClass: document.getElementById('setups-filter-class'),
     setupsFilterConditions: document.getElementById('setups-filter-conditions'),
     setupsFilterSession: document.getElementById('setups-filter-session'),
     btnSetupsLiveSync: document.getElementById('btn-setups-live-sync'),
+    btnOpenNewSetup: document.getElementById('btn-open-new-setup'),
     btnOpenImport: document.getElementById('btn-open-import'),
     btnDownloadCsvTmpl: document.getElementById('btn-download-csv-tmpl'),
 
     mountedSetupBanner: document.getElementById('mounted-setup-banner'),
     mountedSetupName: document.getElementById('mounted-setup-name'),
     mountedSetupFp: document.getElementById('mounted-setup-fp'),
+    btnEditMountedSetup: document.getElementById('btn-edit-mounted-setup'),
     btnExportMountedSheet: document.getElementById('btn-export-mounted-sheet'),
     btnExportMountedJson: document.getElementById('btn-export-mounted-json'),
     statMountedWings: document.getElementById('stat-mounted-wings'),
@@ -156,6 +165,60 @@
     statMountedBias: document.getElementById('stat-mounted-bias'),
     statMountedTyresF: document.getElementById('stat-mounted-tyres-f'),
     statMountedTyresR: document.getElementById('stat-mounted-tyres-r'),
+
+    // Setup Form Modal
+    setupFormModal: document.getElementById('setup-form-modal'),
+    setupFormModalTitle: document.getElementById('setup-form-modal-title'),
+    setupFormModeBadge: document.getElementById('setup-form-mode-badge'),
+    btnCloseSetupFormModal: document.getElementById('btn-close-setup-form-modal'),
+    btnCancelSetupForm: document.getElementById('btn-cancel-setup-form'),
+    btnClearSetupForm: document.getElementById('btn-clear-setup-form'),
+    btnSaveSetupForm: document.getElementById('btn-save-setup-form'),
+    btnStartBlank: document.getElementById('btn-start-blank'),
+    btnStartCopyCurrent: document.getElementById('btn-start-copy-current'),
+    selectDuplicateSetup: document.getElementById('select-duplicate-setup'),
+    btnSyncLiveMeta: document.getElementById('btn-sync-live-meta'),
+    setupInputName: document.getElementById('setup-input-name'),
+    setupInputClass: document.getElementById('setup-input-class'),
+    setupInputTrack: document.getElementById('setup-input-track'),
+    setupInputConditions: document.getElementById('setup-input-conditions'),
+    setupInputSession: document.getElementById('setup-input-session'),
+    setupInputTeam: document.getElementById('setup-input-team'),
+    setupInputSourceNote: document.getElementById('setup-input-source-note'),
+    setupInputSourceLink: document.getElementById('setup-input-source-link'),
+    setupInputNotes: document.getElementById('setup-input-notes'),
+    setupFormGroupsWrap: document.getElementById('setup-form-groups-wrap'),
+    setupDraftStatus: document.getElementById('setup-draft-status'),
+    setupReadOnlyNotice: document.getElementById('setup-read-only-notice'),
+
+    // Duplicate Modal
+    setupDuplicateModal: document.getElementById('setup-duplicate-modal'),
+    dupModalFp: document.getElementById('dup-modal-fp'),
+    dupExistingName: document.getElementById('dup-existing-name'),
+    dupExistingMeta: document.getElementById('dup-existing-meta'),
+    btnDupOpenExisting: document.getElementById('btn-dup-open-existing'),
+    btnDupSaveAnyway: document.getElementById('btn-dup-save-anyway'),
+    btnDupCancel: document.getElementById('btn-dup-cancel'),
+    btnCloseDupModal: document.getElementById('btn-close-dup-modal'),
+
+    // Track Notes Editor
+    tracksSearchInput: document.getElementById('tracks-search-input'),
+    tracksListContainer: document.getElementById('tracks-list-container'),
+    tracksCountBadge: document.getElementById('tracks-count-badge'),
+    trackEditorHeading: document.getElementById('track-editor-heading'),
+    trackEditorFileBadge: document.getElementById('track-editor-file-badge'),
+    btnTrackModeForm: document.getElementById('btn-track-mode-form'),
+    btnTrackModeRaw: document.getElementById('btn-track-mode-raw'),
+    trackEditorFormView: document.getElementById('track-editor-form-view'),
+    trackEditorRawView: document.getElementById('track-editor-raw-view'),
+    trackCornersTbody: document.getElementById('track-corners-tbody'),
+    btnAddCornerRow: document.getElementById('btn-add-corner-row'),
+    trackSectionOvertaking: document.getElementById('track-section-overtaking'),
+    trackSectionTyres: document.getElementById('track-section-tyres'),
+    trackSectionSetupNotes: document.getElementById('track-section-setup-notes'),
+    trackRawContent: document.getElementById('track-raw-content'),
+    trackSaveStatus: document.getElementById('track-save-status'),
+    btnSaveTrackNotes: document.getElementById('btn-save-track-notes'),
 
     setupsRankTbody: document.getElementById('setups-rank-tbody'),
     diffSelectA: document.getElementById('diff-select-a'),
@@ -995,18 +1058,22 @@
       el.tabBtnLive.classList.add('active');
       if (el.tabBtnLaps) el.tabBtnLaps.classList.remove('active');
       if (el.tabBtnSetups) el.tabBtnSetups.classList.remove('active');
+      if (el.tabBtnTracks) el.tabBtnTracks.classList.remove('active');
       if (el.viewLive) el.viewLive.classList.remove('hidden');
       if (el.viewLaps) el.viewLaps.classList.add('hidden');
       if (el.viewSetups) el.viewSetups.classList.add('hidden');
+      if (el.viewTracks) el.viewTracks.classList.add('hidden');
     });
 
     el.tabBtnLaps.addEventListener('click', () => {
       el.tabBtnLaps.classList.add('active');
       if (el.tabBtnLive) el.tabBtnLive.classList.remove('active');
       if (el.tabBtnSetups) el.tabBtnSetups.classList.remove('active');
+      if (el.tabBtnTracks) el.tabBtnTracks.classList.remove('active');
       if (el.viewLaps) el.viewLaps.classList.remove('hidden');
       if (el.viewLive) el.viewLive.classList.add('hidden');
       if (el.viewSetups) el.viewSetups.classList.add('hidden');
+      if (el.viewTracks) el.viewTracks.classList.add('hidden');
       if (loadedSessions.length === 0) {
         fetchSessions();
       }
@@ -1017,11 +1084,27 @@
         el.tabBtnSetups.classList.add('active');
         if (el.tabBtnLive) el.tabBtnLive.classList.remove('active');
         if (el.tabBtnLaps) el.tabBtnLaps.classList.remove('active');
+        if (el.tabBtnTracks) el.tabBtnTracks.classList.remove('active');
         if (el.viewSetups) el.viewSetups.classList.remove('hidden');
         if (el.viewLive) el.viewLive.classList.add('hidden');
         if (el.viewLaps) el.viewLaps.classList.add('hidden');
+        if (el.viewTracks) el.viewTracks.classList.add('hidden');
         fetchSetups();
         fetchCurrentSetup();
+      });
+    }
+
+    if (el.tabBtnTracks) {
+      el.tabBtnTracks.addEventListener('click', () => {
+        el.tabBtnTracks.classList.add('active');
+        if (el.tabBtnLive) el.tabBtnLive.classList.remove('active');
+        if (el.tabBtnLaps) el.tabBtnLaps.classList.remove('active');
+        if (el.tabBtnSetups) el.tabBtnSetups.classList.remove('active');
+        if (el.viewTracks) el.viewTracks.classList.remove('hidden');
+        if (el.viewLive) el.viewLive.classList.add('hidden');
+        if (el.viewLaps) el.viewLaps.classList.add('hidden');
+        if (el.viewSetups) el.viewSetups.classList.add('hidden');
+        fetchTracksList();
       });
     }
 
@@ -1667,6 +1750,47 @@
       });
     }
 
+    // Setup Entry Form triggers
+    if (el.btnOpenNewSetup) {
+      el.btnOpenNewSetup.addEventListener('click', () => openSetupFormModal('new'));
+    }
+    if (el.btnEditMountedSetup) {
+      el.btnEditMountedSetup.addEventListener('click', () => {
+        if (currentActiveSetup) {
+          openSetupFormModal('edit', currentActiveSetup);
+        } else {
+          openSetupFormModal('new');
+        }
+      });
+    }
+
+    if (el.btnCloseSetupFormModal) el.btnCloseSetupFormModal.addEventListener('click', closeSetupFormModal);
+    if (el.btnCancelSetupForm) el.btnCancelSetupForm.addEventListener('click', closeSetupFormModal);
+    if (el.btnClearSetupForm) el.btnClearSetupForm.addEventListener('click', clearSetupFormFields);
+    if (el.btnSaveSetupForm) el.btnSaveSetupForm.addEventListener('click', () => saveSetupForm(false));
+
+    if (el.btnStartBlank) el.btnStartBlank.addEventListener('click', startFromBlank);
+    if (el.btnStartCopyCurrent) el.btnStartCopyCurrent.addEventListener('click', startFromCurrentCar);
+    if (el.selectDuplicateSetup) {
+      el.selectDuplicateSetup.addEventListener('change', (e) => {
+        if (e.target.value) startFromDuplicate(e.target.value);
+      });
+    }
+    if (el.btnSyncLiveMeta) el.btnSyncLiveMeta.addEventListener('click', syncLiveMetaToForm);
+
+    if (el.setupInputClass) {
+      el.setupInputClass.addEventListener('change', (e) => {
+        const cls = parseInt(e.target.value, 10);
+        ensureSetupSchema(cls);
+      });
+    }
+
+    // Duplicate modal triggers
+    if (el.btnDupOpenExisting) el.btnDupOpenExisting.addEventListener('click', openDuplicateExisting);
+    if (el.btnDupSaveAnyway) el.btnDupSaveAnyway.addEventListener('click', () => saveSetupForm(true));
+    if (el.btnDupCancel) el.btnDupCancel.addEventListener('click', closeDuplicateModal);
+    if (el.btnCloseDupModal) el.btnCloseDupModal.addEventListener('click', closeDuplicateModal);
+
     // Import modal
     initImportModal();
   }
@@ -1734,14 +1858,24 @@
           });
         }
 
-        // Also populate import track dropdown if empty
-        if (el.importTrack && data.tracks && el.importTrack.options.length === 0) {
-          data.tracks.forEach(t => {
-            const opt = document.createElement('option');
-            opt.value = t.id;
-            opt.textContent = t.name;
-            el.importTrack.appendChild(opt);
-          });
+        // Also populate import and setup form track dropdowns if empty
+        if (data.tracks) {
+          if (el.importTrack && el.importTrack.options.length === 0) {
+            data.tracks.forEach(t => {
+              const opt = document.createElement('option');
+              opt.value = t.id;
+              opt.textContent = t.name;
+              el.importTrack.appendChild(opt);
+            });
+          }
+          if (el.setupInputTrack && el.setupInputTrack.options.length === 0) {
+            data.tracks.forEach(t => {
+              const opt = document.createElement('option');
+              opt.value = t.id;
+              opt.textContent = t.name;
+              el.setupInputTrack.appendChild(opt);
+            });
+          }
         }
 
         // Sync filters if useLiveSession was triggered
@@ -1803,6 +1937,8 @@
         <td>${statusBadge}</td>
         <td style="text-align: right; white-space: nowrap;">
           <button class="btn-sm btn-action-diff" data-id="${s.id}" title="Compare this setup">DIFF</button>
+          <button class="btn-sm btn-action-edit" data-id="${s.id}" title="${s.source === 'captured' ? 'Edit copy of captured setup' : 'Edit setup'}">${s.source === 'captured' ? 'COPY/EDIT' : 'EDIT'}</button>
+          ${s.source !== 'captured' ? `<button class="btn-sm btn-action-del" data-id="${s.id}" title="Delete setup" style="color: var(--color-red);">DEL</button>` : ''}
           <button class="btn-sm btn-action-view" data-id="${s.id}" title="View all parameters">VIEW</button>
           <button class="btn-sm btn-action-sheet" data-id="${s.id}" title="Export Plain-Text Sheet">TXT</button>
           <button class="btn-sm btn-action-json" data-id="${s.id}" title="Export JSON">JSON</button>
@@ -1817,6 +1953,16 @@
         const diffPanel = document.querySelector('.setups-diff-panel');
         if (diffPanel) diffPanel.scrollIntoView({ behavior: 'smooth' });
       });
+
+      const editBtn = tr.querySelector('.btn-action-edit');
+      if (editBtn) {
+        editBtn.addEventListener('click', () => openSetupFormModal('edit', s));
+      }
+
+      const delBtn = tr.querySelector('.btn-action-del');
+      if (delBtn) {
+        delBtn.addEventListener('click', () => deleteSetupItem(s.id, s.name));
+      }
 
       tr.querySelector('.btn-action-view').addEventListener('click', () => openSetupDetails(s.id));
       tr.querySelector('.btn-action-sheet').addEventListener('click', () => exportSetupFile(s.id, 'sheet'));
@@ -1835,6 +1981,10 @@
     el.diffSelectA.innerHTML = '<option value="current">Current Mounted Setup</option>';
     el.diffSelectB.innerHTML = '<option value="">Select setup to compare...</option><option value="current">Current Mounted Setup</option>';
 
+    if (el.selectDuplicateSetup) {
+      el.selectDuplicateSetup.innerHTML = '<option value="">Choose setup...</option>';
+    }
+
     setupsList.forEach(s => {
       const optA = document.createElement('option');
       optA.value = s.id;
@@ -1845,6 +1995,13 @@
       optB.value = s.id;
       optB.textContent = `${s.rank ? `P${s.rank} ` : ''}${s.name} (${s.source})`;
       el.diffSelectB.appendChild(optB);
+
+      if (el.selectDuplicateSetup) {
+        const optDup = document.createElement('option');
+        optDup.value = s.id;
+        optDup.textContent = `${s.name || `Setup ${s.id}`} (${s.source})`;
+        el.selectDuplicateSetup.appendChild(optDup);
+      }
     });
 
     if (valA) el.diffSelectA.value = valA;
@@ -2126,11 +2283,1064 @@
     }
   }
 
+  // ==========================================================================
+  // Setup Entry Form & Modal
+  // ==========================================================================
+  const SETUP_DRAFT_KEY = 'race_engineer_setup_draft';
+  let setupFormMode = 'new'; // 'new' | 'edit'
+  let setupFormEditingSetup = null;
+  let currentSetupSchema = null;
+  let lastDuplicateData = null;
+  let setupAutosaveTimer = null;
+
+  function openSetupFormModal(mode, setup = null) {
+    setupFormMode = mode;
+    setupFormEditingSetup = setup;
+
+    if (el.setupFormModalTitle) {
+      if (mode === 'edit') {
+        if (setup && setup.source === 'captured') {
+          el.setupFormModalTitle.textContent = `EDIT CAPTURED SETUP (COPY)`;
+          if (el.setupFormModeBadge) {
+            el.setupFormModeBadge.textContent = 'IMPORT COPY';
+            el.setupFormModeBadge.className = 'badge warning';
+          }
+          if (el.setupReadOnlyNotice) el.setupReadOnlyNotice.classList.remove('hidden');
+        } else {
+          el.setupFormModalTitle.textContent = `EDIT SETUP #${setup ? setup.id : ''}`;
+          if (el.setupFormModeBadge) {
+            el.setupFormModeBadge.textContent = 'EDIT';
+            el.setupFormModeBadge.className = 'badge primary';
+          }
+          if (el.setupReadOnlyNotice) el.setupReadOnlyNotice.classList.add('hidden');
+        }
+      } else {
+        el.setupFormModalTitle.textContent = 'NEW CAR SETUP';
+        if (el.setupFormModeBadge) {
+          el.setupFormModeBadge.textContent = 'NEW';
+          el.setupFormModeBadge.className = 'badge success';
+        }
+        if (el.setupReadOnlyNotice) el.setupReadOnlyNotice.classList.add('hidden');
+      }
+    }
+
+    // Populate car class options if empty
+    if (el.setupInputClass && el.setupInputClass.options.length === 0) {
+      el.setupInputClass.innerHTML = `
+        <option value="0">F1 Modern</option>
+        <option value="2">F2</option>
+        <option value="1">F1 Classic</option>
+      `;
+    }
+
+    // Populate track options from filter if empty
+    if (el.setupInputTrack && el.setupInputTrack.options.length === 0 && el.setupsFilterTrack) {
+      Array.from(el.setupsFilterTrack.options).forEach(opt => {
+        const newOpt = document.createElement('option');
+        newOpt.value = opt.value;
+        newOpt.textContent = opt.textContent;
+        el.setupInputTrack.appendChild(newOpt);
+      });
+    }
+
+    const carClass = setup && setup.car_class !== undefined ? setup.car_class : (el.setupInputClass ? parseInt(el.setupInputClass.value, 10) : 0);
+    ensureSetupSchema(carClass).then(() => {
+      if (mode === 'edit' && setup) {
+        populateFormFromSetup(setup, false);
+      } else {
+        const restored = restoreSetupDraft();
+        if (!restored) {
+          clearSetupFormFields();
+          syncLiveMetaToForm();
+        }
+      }
+      updateLiveDiffs();
+      if (el.setupFormModal) el.setupFormModal.classList.remove('hidden');
+    });
+  }
+
+  function closeSetupFormModal() {
+    if (el.setupFormModal) el.setupFormModal.classList.add('hidden');
+    setupFormEditingSetup = null;
+  }
+
+  function clearSetupFormFields() {
+    document.querySelectorAll('.param-input').forEach(input => {
+      input.value = '';
+      input.classList.remove('out-of-bounds');
+    });
+    if (el.setupInputName) el.setupInputName.value = '';
+    if (el.setupInputSourceNote) el.setupInputSourceNote.value = '';
+    if (el.setupInputSourceLink) el.setupInputSourceLink.value = '';
+    if (el.setupInputNotes) el.setupInputNotes.value = '';
+    if (el.btnStartBlank) el.btnStartBlank.classList.add('active');
+    if (el.btnStartCopyCurrent) el.btnStartCopyCurrent.classList.remove('active');
+    if (el.selectDuplicateSetup) el.selectDuplicateSetup.value = '';
+    updateLiveDiffs();
+    clearSetupDraft();
+  }
+
+  function ensureSetupSchema(carClass = 0) {
+    const token = getToken();
+    return fetch(`/api/setups/schema?car_class=${carClass}&token=${encodeURIComponent(token)}`)
+      .then(res => res.json())
+      .then(schema => {
+        currentSetupSchema = schema;
+        renderSetupFormGroups(schema);
+      })
+      .catch(err => console.error('Error fetching setup schema:', err));
+  }
+
+  function renderSetupFormGroups(schema) {
+    if (!el.setupFormGroupsWrap) return;
+    el.setupFormGroupsWrap.innerHTML = '';
+
+    const groups = schema.groups || [];
+    const parameters = schema.parameters || [];
+
+    // Group parameters by group name
+    const byGroup = {};
+    groups.forEach(g => { byGroup[g] = []; });
+    parameters.forEach(p => {
+      if (!byGroup[p.group]) byGroup[p.group] = [];
+      byGroup[p.group].push(p);
+    });
+
+    let paramIndex = 0;
+    const totalParams = parameters.length;
+
+    groups.forEach(groupName => {
+      const paramsInGroup = byGroup[groupName] || [];
+      if (paramsInGroup.length === 0) return;
+
+      const card = document.createElement('div');
+      card.className = 'setup-group-card';
+
+      const h5 = document.createElement('h5');
+      h5.className = 'group-card-title';
+      h5.textContent = groupName.toUpperCase();
+      card.appendChild(h5);
+
+      const rowsWrap = document.createElement('div');
+      rowsWrap.className = 'group-params-wrap';
+
+      paramsInGroup.forEach(p => {
+        paramIndex++;
+        const isLastField = (paramIndex === totalParams);
+        const row = document.createElement('div');
+        row.className = 'setup-param-row';
+        row.dataset.key = p.key;
+
+        const labelWrap = document.createElement('div');
+        labelWrap.className = 'param-label-wrap';
+
+        const label = document.createElement('label');
+        label.className = 'param-title';
+        label.setAttribute('for', `param-input-${p.key}`);
+        label.textContent = p.label;
+        labelWrap.appendChild(label);
+
+        if (p.unit) {
+          const unitSpan = document.createElement('span');
+          unitSpan.className = 'param-unit';
+          unitSpan.textContent = `[${p.unit}]`;
+          labelWrap.appendChild(unitSpan);
+        }
+
+        if (p.has_confirmed_range && p.min !== null && p.max !== null) {
+          const rangeSpan = document.createElement('span');
+          rangeSpan.className = 'range-hint';
+          rangeSpan.textContent = `[${p.min} – ${p.max}]`;
+          labelWrap.appendChild(rangeSpan);
+        } else {
+          const unconfirmedSpan = document.createElement('span');
+          unconfirmedSpan.className = 'range-unconfirmed-badge';
+          unconfirmedSpan.textContent = 'range not confirmed';
+          unconfirmedSpan.title = 'Observed range not confirmed for 2026 update; any value allowed';
+          labelWrap.appendChild(unconfirmedSpan);
+        }
+
+        row.appendChild(labelWrap);
+
+        const controlsWrap = document.createElement('div');
+        controlsWrap.className = 'param-controls-wrap';
+
+        const minusBtn = document.createElement('button');
+        minusBtn.type = 'button';
+        minusBtn.className = 'stepper-btn btn-minus';
+        minusBtn.textContent = '−';
+        minusBtn.title = `Decrease by ${p.step}`;
+        minusBtn.tabIndex = -1;
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'f1-input param-input';
+        input.inputMode = 'decimal';
+        input.id = `param-input-${p.key}`;
+        input.dataset.key = p.key;
+        input.dataset.type = p.type;
+        input.dataset.step = p.step;
+        input.dataset.hasConfirmedRange = p.has_confirmed_range ? '1' : '0';
+        if (p.min !== null && p.min !== undefined) input.dataset.min = p.min;
+        if (p.max !== null && p.max !== undefined) input.dataset.max = p.max;
+        input.step = p.step;
+        input.placeholder = '--';
+
+        const plusBtn = document.createElement('button');
+        plusBtn.type = 'button';
+        plusBtn.className = 'stepper-btn btn-plus';
+        plusBtn.textContent = '+';
+        plusBtn.title = `Increase by ${p.step}`;
+        plusBtn.tabIndex = -1;
+
+        const diffSpan = document.createElement('span');
+        diffSpan.id = `diff-badge-${p.key}`;
+        diffSpan.className = 'diff-badge-indicator diff-na';
+        diffSpan.textContent = '--';
+
+        minusBtn.addEventListener('click', () => stepParam(p.key, -1));
+        plusBtn.addEventListener('click', () => stepParam(p.key, 1));
+
+        input.addEventListener('input', () => onParamInputChanged(input));
+        input.addEventListener('change', () => onParamInputChanged(input));
+
+        // Desktop keyboard navigation
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            stepParam(p.key, 1);
+          } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            stepParam(p.key, -1);
+          } else if (e.key === 'Enter') {
+            if (isLastField) {
+              e.preventDefault();
+              saveSetupForm(false);
+            }
+          }
+        });
+
+        controlsWrap.appendChild(minusBtn);
+        controlsWrap.appendChild(input);
+        controlsWrap.appendChild(plusBtn);
+        controlsWrap.appendChild(diffSpan);
+
+        row.appendChild(controlsWrap);
+        rowsWrap.appendChild(row);
+      });
+
+      card.appendChild(rowsWrap);
+      el.setupFormGroupsWrap.appendChild(card);
+    });
+  }
+
+  function stepParam(key, direction) {
+    const input = document.getElementById(`param-input-${key}`);
+    if (!input) return;
+
+    const type = input.dataset.type || 'int';
+    const step = parseFloat(input.dataset.step || (type === 'float' ? '0.05' : '1'));
+    const hasConfirmed = input.dataset.hasConfirmedRange === '1';
+    const minVal = input.dataset.min !== undefined && input.dataset.min !== '' ? parseFloat(input.dataset.min) : null;
+    const maxVal = input.dataset.max !== undefined && input.dataset.max !== '' ? parseFloat(input.dataset.max) : null;
+
+    let currentVal = input.value.trim() !== '' ? parseFloat(input.value) : null;
+
+    if (currentVal === null || isNaN(currentVal)) {
+      if (currentActiveSetup && currentActiveSetup.params && currentActiveSetup.params[key] !== undefined) {
+        currentVal = parseFloat(currentActiveSetup.params[key]);
+      } else if (minVal !== null) {
+        currentVal = minVal;
+      } else {
+        currentVal = 0;
+      }
+    } else {
+      currentVal += direction * step;
+    }
+
+    if (hasConfirmed) {
+      if (minVal !== null && currentVal < minVal) currentVal = minVal;
+      if (maxVal !== null && currentVal > maxVal) currentVal = maxVal;
+    }
+
+    if (type === 'int') {
+      input.value = Math.round(currentVal);
+    } else {
+      const decimals = step < 0.05 ? 3 : (step < 0.1 ? 2 : 1);
+      input.value = (Math.round(currentVal * 1000) / 1000).toFixed(decimals);
+    }
+
+    onParamInputChanged(input);
+  }
+
+  function onParamInputChanged(input) {
+    const key = input.dataset.key;
+    const hasConfirmed = input.dataset.hasConfirmedRange === '1';
+    const minVal = input.dataset.min !== undefined && input.dataset.min !== '' ? parseFloat(input.dataset.min) : null;
+    const maxVal = input.dataset.max !== undefined && input.dataset.max !== '' ? parseFloat(input.dataset.max) : null;
+
+    if (input.value.trim() !== '') {
+      const val = parseFloat(input.value);
+      if (hasConfirmed && !isNaN(val)) {
+        if ((minVal !== null && val < minVal) || (maxVal !== null && val > maxVal)) {
+          input.classList.add('out-of-bounds');
+        } else {
+          input.classList.remove('out-of-bounds');
+        }
+      } else {
+        input.classList.remove('out-of-bounds');
+      }
+    } else {
+      input.classList.remove('out-of-bounds');
+    }
+
+    updateSingleLiveDiff(key);
+    scheduleSetupAutosave();
+  }
+
+  function updateSingleLiveDiff(key) {
+    const input = document.getElementById(`param-input-${key}`);
+    const badge = document.getElementById(`diff-badge-${key}`);
+    if (!input || !badge) return;
+
+    const currentCarVal = (currentActiveSetup && currentActiveSetup.params && currentActiveSetup.params[key] !== undefined)
+      ? parseFloat(currentActiveSetup.params[key])
+      : null;
+
+    if (input.value.trim() === '' || currentCarVal === null || isNaN(currentCarVal)) {
+      badge.textContent = '--';
+      badge.className = 'diff-badge-indicator diff-na';
+      return;
+    }
+
+    const inputVal = parseFloat(input.value);
+    if (isNaN(inputVal)) {
+      badge.textContent = '--';
+      badge.className = 'diff-badge-indicator diff-na';
+      return;
+    }
+
+    const delta = inputVal - currentCarVal;
+    const type = input.dataset.type || 'int';
+
+    if (Math.abs(delta) < 0.0001) {
+      badge.textContent = '0';
+      badge.className = 'diff-badge-indicator diff-zero';
+    } else if (delta > 0) {
+      const str = type === 'float' ? `+${delta.toFixed(2)}` : `+${Math.round(delta)}`;
+      badge.textContent = str;
+      badge.className = 'diff-badge-indicator diff-plus';
+    } else {
+      const str = type === 'float' ? `−${Math.abs(delta).toFixed(2)}` : `−${Math.abs(Math.round(delta))}`;
+      badge.textContent = str;
+      badge.className = 'diff-badge-indicator diff-minus';
+    }
+  }
+
+  function updateLiveDiffs() {
+    const inputs = document.querySelectorAll('.param-input');
+    inputs.forEach(input => {
+      updateSingleLiveDiff(input.dataset.key);
+    });
+  }
+
+  function startFromBlank() {
+    document.querySelectorAll('.param-input').forEach(input => {
+      input.value = '';
+      input.classList.remove('out-of-bounds');
+    });
+    if (el.btnStartBlank) el.btnStartBlank.classList.add('active');
+    if (el.btnStartCopyCurrent) el.btnStartCopyCurrent.classList.remove('active');
+    if (el.selectDuplicateSetup) el.selectDuplicateSetup.value = '';
+    updateLiveDiffs();
+    scheduleSetupAutosave();
+  }
+
+  function startFromCurrentCar() {
+    if (!currentActiveSetup || !currentActiveSetup.params) {
+      fetchCurrentSetup();
+      alert('No active car setup captured yet. Complete a lap or drive out of pit lane in-game.');
+      return;
+    }
+
+    const p = currentActiveSetup.params;
+    document.querySelectorAll('.param-input').forEach(input => {
+      const k = input.dataset.key;
+      if (p[k] !== undefined && p[k] !== null) {
+        input.value = p[k];
+      } else {
+        input.value = '';
+      }
+      input.classList.remove('out-of-bounds');
+    });
+
+    if (el.setupInputName && !el.setupInputName.value.trim()) {
+      el.setupInputName.value = `Imported from Car Setup (${currentActiveSetup.id || 'Active'})`;
+    }
+    if (el.setupInputTrack && currentActiveSetup.track_id) {
+      el.setupInputTrack.value = currentActiveSetup.track_id;
+    }
+    if (el.setupInputClass && currentActiveSetup.car_class !== undefined) {
+      el.setupInputClass.value = currentActiveSetup.car_class;
+    }
+
+    if (el.btnStartBlank) el.btnStartBlank.classList.remove('active');
+    if (el.btnStartCopyCurrent) el.btnStartCopyCurrent.classList.add('active');
+    if (el.selectDuplicateSetup) el.selectDuplicateSetup.value = '';
+
+    updateLiveDiffs();
+    scheduleSetupAutosave();
+  }
+
+  function startFromDuplicate(setupId) {
+    if (!setupId) return;
+    const token = getToken();
+    fetch(`/api/setups/${encodeURIComponent(setupId)}?token=${encodeURIComponent(token)}`)
+      .then(res => res.json())
+      .then(fullSetup => {
+        populateFormFromSetup(fullSetup, true);
+        if (el.btnStartBlank) el.btnStartBlank.classList.remove('active');
+        if (el.btnStartCopyCurrent) el.btnStartCopyCurrent.classList.remove('active');
+        updateLiveDiffs();
+        scheduleSetupAutosave();
+      })
+      .catch(err => console.error('Error fetching duplicate setup:', err));
+  }
+
+  function populateFormFromSetup(setup, isDuplicate = false) {
+    if (!setup) return;
+
+    if (el.setupInputName) {
+      el.setupInputName.value = isDuplicate ? `${setup.name || 'Setup'} (Copy)` : (setup.name || '');
+    }
+    if (el.setupInputClass && setup.car_class !== undefined) {
+      el.setupInputClass.value = setup.car_class;
+    }
+    if (el.setupInputTrack && setup.track_id !== undefined) {
+      el.setupInputTrack.value = setup.track_id;
+    }
+    if (el.setupInputConditions && setup.conditions) {
+      el.setupInputConditions.value = setup.conditions;
+    }
+    if (el.setupInputSession && setup.session_type) {
+      el.setupInputSession.value = setup.session_type;
+    }
+    if (el.setupInputTeam && setup.team_id !== undefined) {
+      el.setupInputTeam.value = setup.team_id;
+    }
+    if (el.setupInputSourceNote) {
+      el.setupInputSourceNote.value = isDuplicate ? `Duplicate of #${setup.id}` : (setup.source_note || '');
+    }
+    if (el.setupInputSourceLink) {
+      el.setupInputSourceLink.value = setup.source_link || '';
+    }
+    if (el.setupInputNotes) {
+      el.setupInputNotes.value = setup.notes || '';
+    }
+
+    const p = setup.params || {};
+    document.querySelectorAll('.param-input').forEach(input => {
+      const k = input.dataset.key;
+      if (p[k] !== undefined && p[k] !== null) {
+        input.value = p[k];
+      } else {
+        input.value = '';
+      }
+      input.classList.remove('out-of-bounds');
+    });
+  }
+
+  function syncLiveMetaToForm() {
+    if (el.setupsFilterTrack && el.setupInputTrack) {
+      el.setupInputTrack.value = el.setupsFilterTrack.value;
+    }
+    if (el.setupsFilterClass && el.setupInputClass) {
+      el.setupInputClass.value = el.setupsFilterClass.value;
+    }
+    if (el.setupsFilterConditions && el.setupInputConditions) {
+      el.setupInputConditions.value = el.setupsFilterConditions.value;
+    }
+    if (el.setupsFilterSession && el.setupInputSession) {
+      el.setupInputSession.value = el.setupsFilterSession.value;
+    }
+    if (currentActiveSetup) {
+      if (currentActiveSetup.track_id && el.setupInputTrack) el.setupInputTrack.value = currentActiveSetup.track_id;
+      if (currentActiveSetup.car_class !== undefined && el.setupInputClass) el.setupInputClass.value = currentActiveSetup.car_class;
+      if (currentActiveSetup.team_id !== undefined && el.setupInputTeam) el.setupInputTeam.value = currentActiveSetup.team_id;
+    }
+  }
+
+  function saveSetupForm(force = false) {
+    const params = {};
+    document.querySelectorAll('.param-input').forEach(input => {
+      const valStr = input.value.trim();
+      if (valStr !== '') {
+        const type = input.dataset.type || 'int';
+        params[input.dataset.key] = type === 'float' ? parseFloat(valStr) : parseInt(valStr, 10);
+      }
+    });
+
+    const name = el.setupInputName ? el.setupInputName.value.trim() : '';
+    const trackId = el.setupInputTrack ? parseInt(el.setupInputTrack.value, 10) : 7;
+    const carClass = el.setupInputClass ? parseInt(el.setupInputClass.value, 10) : 0;
+    const conditions = el.setupInputConditions ? el.setupInputConditions.value : 'dry';
+    const sessionType = el.setupInputSession ? el.setupInputSession.value : 'race';
+    const teamId = el.setupInputTeam && el.setupInputTeam.value.trim() !== '' ? parseInt(el.setupInputTeam.value, 10) : 0;
+    const sourceNote = el.setupInputSourceNote ? el.setupInputSourceNote.value.trim() : '';
+    const sourceLink = el.setupInputSourceLink ? el.setupInputSourceLink.value.trim() : '';
+    const notes = el.setupInputNotes ? el.setupInputNotes.value.trim() : '';
+
+    const token = getToken();
+
+    if (setupFormMode === 'edit' && setupFormEditingSetup) {
+      const isCaptured = setupFormEditingSetup.source === 'captured';
+      const payload = {
+        name: name || setupFormEditingSetup.name,
+        track_id: trackId,
+        car_class: carClass,
+        conditions: conditions,
+        session_type: sessionType,
+        team_id: teamId,
+        source_note: sourceNote,
+        source_link: sourceLink,
+        notes: notes,
+        params: params,
+        allow_fork: isCaptured,
+      };
+
+      fetch(`/api/setups/${encodeURIComponent(setupFormEditingSetup.id)}?token=${encodeURIComponent(token)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data.detail) {
+            alert('Save error: ' + JSON.stringify(data.detail));
+            return;
+          }
+          clearSetupDraft();
+          closeSetupFormModal();
+          alert(isCaptured ? `Forked captured setup into new imported setup #${data.id}!` : `Setup #${data.id} updated successfully!`);
+          fetchSetups(false);
+        })
+        .catch(err => alert('Save error: ' + err));
+    } else {
+      const payload = {
+        name: name || 'Custom Setup',
+        track_id: trackId,
+        car_class: carClass,
+        conditions: conditions,
+        session_type: sessionType,
+        team_id: teamId,
+        source: 'imported',
+        source_note: sourceNote,
+        source_link: sourceLink,
+        notes: notes,
+        params: params,
+        force: force,
+      };
+
+      fetch(`/api/setups?token=${encodeURIComponent(token)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+        .then(res => {
+          if (res.status === 409) {
+            return res.json().then(dup => {
+              handleDuplicateSetup(dup, payload);
+            });
+          }
+          return res.json().then(data => {
+            if (data.detail) {
+              alert('Save error: ' + JSON.stringify(data.detail));
+              return;
+            }
+            clearSetupDraft();
+            closeSetupFormModal();
+            closeDuplicateModal();
+            alert(`Setup saved successfully! (ID: ${data.id})`);
+            fetchSetups(false);
+          });
+        })
+        .catch(err => alert('Save error: ' + err));
+    }
+  }
+
+  function handleDuplicateSetup(dup, payload) {
+    lastDuplicateData = { dup, payload };
+    if (el.dupModalFp) el.dupModalFp.textContent = dup.fingerprint || '--';
+    const ex = dup.existing_setup || {};
+    if (el.dupExistingName) el.dupExistingName.textContent = ex.name || `Setup #${ex.id}`;
+    if (el.dupExistingMeta) {
+      el.dupExistingMeta.textContent = `ID #${ex.id} | Source: ${ex.source} | Conditions: ${(ex.conditions || 'dry').toUpperCase()}`;
+    }
+    if (el.setupDuplicateModal) el.setupDuplicateModal.classList.remove('hidden');
+  }
+
+  function openDuplicateExisting() {
+    if (lastDuplicateData && lastDuplicateData.dup && lastDuplicateData.dup.existing_setup) {
+      const id = lastDuplicateData.dup.existing_setup.id;
+      closeDuplicateModal();
+      closeSetupFormModal();
+      openSetupDetails(id);
+    }
+  }
+
+  function closeDuplicateModal() {
+    if (el.setupDuplicateModal) el.setupDuplicateModal.classList.add('hidden');
+  }
+
+  function deleteSetupItem(id, name) {
+    if (!confirm(`Are you sure you want to delete setup "${name || id}" (ID: ${id})?`)) {
+      return;
+    }
+    const token = getToken();
+    fetch(`/api/setups/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}`, {
+      method: 'DELETE'
+    })
+      .then(res => {
+        if (!res.ok) {
+          return res.json().then(e => { throw new Error(e.detail || `HTTP ${res.status}`); });
+        }
+        return res.json();
+      })
+      .then(() => {
+        alert(`Setup #${id} deleted.`);
+        fetchSetups(false);
+      })
+      .catch(err => alert('Delete error: ' + err.message));
+  }
+
+  function scheduleSetupAutosave() {
+    if (setupAutosaveTimer) clearTimeout(setupAutosaveTimer);
+    setupAutosaveTimer = setTimeout(() => {
+      saveSetupDraft();
+    }, 500);
+  }
+
+  function saveSetupDraft() {
+    const params = {};
+    document.querySelectorAll('.param-input').forEach(input => {
+      if (input.value.trim() !== '') {
+        params[input.dataset.key] = input.value.trim();
+      }
+    });
+
+    const draft = {
+      name: el.setupInputName ? el.setupInputName.value : '',
+      car_class: el.setupInputClass ? el.setupInputClass.value : '0',
+      track_id: el.setupInputTrack ? el.setupInputTrack.value : '7',
+      conditions: el.setupInputConditions ? el.setupInputConditions.value : 'dry',
+      session_type: el.setupInputSession ? el.setupInputSession.value : 'race',
+      team_id: el.setupInputTeam ? el.setupInputTeam.value : '0',
+      source_note: el.setupInputSourceNote ? el.setupInputSourceNote.value : '',
+      source_link: el.setupInputSourceLink ? el.setupInputSourceLink.value : '',
+      notes: el.setupInputNotes ? el.setupInputNotes.value : '',
+      params: params,
+      time: new Date().toLocaleTimeString(),
+    };
+
+    try {
+      localStorage.setItem(SETUP_DRAFT_KEY, JSON.stringify(draft));
+      if (el.setupDraftStatus) {
+        el.setupDraftStatus.textContent = `Draft autosaved (${draft.time})`;
+        el.setupDraftStatus.style.color = 'var(--text-muted)';
+      }
+    } catch (e) {
+      console.debug('Autosave error:', e);
+    }
+  }
+
+  function restoreSetupDraft() {
+    try {
+      const raw = localStorage.getItem(SETUP_DRAFT_KEY);
+      if (!raw) return false;
+      const draft = JSON.parse(raw);
+      if (!draft || typeof draft !== 'object') return false;
+
+      if (el.setupInputName && draft.name) el.setupInputName.value = draft.name;
+      if (el.setupInputClass && draft.car_class) el.setupInputClass.value = draft.car_class;
+      if (el.setupInputTrack && draft.track_id) el.setupInputTrack.value = draft.track_id;
+      if (el.setupInputConditions && draft.conditions) el.setupInputConditions.value = draft.conditions;
+      if (el.setupInputSession && draft.session_type) el.setupInputSession.value = draft.session_type;
+      if (el.setupInputTeam && draft.team_id) el.setupInputTeam.value = draft.team_id;
+      if (el.setupInputSourceNote && draft.source_note) el.setupInputSourceNote.value = draft.source_note;
+      if (el.setupInputSourceLink && draft.source_link) el.setupInputSourceLink.value = draft.source_link;
+      if (el.setupInputNotes && draft.notes) el.setupInputNotes.value = draft.notes;
+
+      const p = draft.params || {};
+      document.querySelectorAll('.param-input').forEach(input => {
+        const k = input.dataset.key;
+        if (p[k] !== undefined) {
+          input.value = p[k];
+        }
+      });
+
+      if (el.setupDraftStatus) {
+        el.setupDraftStatus.textContent = `Restored draft (${draft.time || 'earlier'})`;
+        el.setupDraftStatus.style.color = 'var(--color-cyan)';
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function clearSetupDraft() {
+    localStorage.removeItem(SETUP_DRAFT_KEY);
+    if (el.setupDraftStatus) {
+      el.setupDraftStatus.textContent = 'Draft cleared';
+      el.setupDraftStatus.style.color = 'var(--text-muted)';
+    }
+  }
+
+  // ==========================================================================
+  // Track Notes Editor Module
+  // ==========================================================================
+  let loadedTracksList = [];
+  let currentSelectedTrackSlug = null;
+  let currentTrackEditorMode = 'form'; // 'form' | 'raw'
+
+  function initTracksTab() {
+    if (el.tracksSearchInput) {
+      el.tracksSearchInput.addEventListener('input', (e) => {
+        filterTracksList(e.target.value.trim().toLowerCase());
+      });
+    }
+
+    if (el.btnTrackModeForm) {
+      el.btnTrackModeForm.addEventListener('click', () => setTrackEditorMode('form'));
+    }
+
+    if (el.btnTrackModeRaw) {
+      el.btnTrackModeRaw.addEventListener('click', () => setTrackEditorMode('raw'));
+    }
+
+    if (el.btnAddCornerRow) {
+      el.btnAddCornerRow.addEventListener('click', () => addCornerRow());
+    }
+
+    if (el.btnSaveTrackNotes) {
+      el.btnSaveTrackNotes.addEventListener('click', saveCurrentTrackNotes);
+    }
+  }
+
+  function fetchTracksList() {
+    const token = getToken();
+    fetch(`/api/tracks?token=${encodeURIComponent(token)}`)
+      .then(res => res.json())
+      .then(data => {
+        loadedTracksList = data.tracks || [];
+        if (el.tracksCountBadge) {
+          el.tracksCountBadge.textContent = `${loadedTracksList.length} circuits`;
+        }
+        renderTracksList(loadedTracksList);
+
+        if (!currentSelectedTrackSlug && loadedTracksList.length > 0) {
+          const silverstone = loadedTracksList.find(t => t.slug === 'silverstone');
+          selectTrack(silverstone ? silverstone.slug : loadedTracksList[0].slug);
+        }
+      })
+      .catch(err => console.error('Error fetching tracks:', err));
+  }
+
+  function renderTracksList(tracks) {
+    if (!el.tracksListContainer) return;
+    el.tracksListContainer.innerHTML = '';
+
+    tracks.forEach(t => {
+      const div = document.createElement('div');
+      div.className = `track-item-card ${t.slug === currentSelectedTrackSlug ? 'active' : ''}`;
+      div.dataset.slug = t.slug;
+
+      div.innerHTML = `
+        <div class="track-item-main">
+          <span class="track-name-label">${t.name}</span>
+          <span class="track-item-badge ${t.has_file ? 'has-notes' : 'no-notes'}">
+            ${t.has_file ? `${t.corners_count} corners` : 'no notes'}
+          </span>
+        </div>
+        <div class="track-item-sub mono">${t.slug}.md</div>
+      `;
+
+      div.addEventListener('click', () => selectTrack(t.slug));
+      el.tracksListContainer.appendChild(div);
+    });
+  }
+
+  function filterTracksList(query) {
+    if (!query) {
+      renderTracksList(loadedTracksList);
+      return;
+    }
+    const filtered = loadedTracksList.filter(t => 
+      t.name.toLowerCase().includes(query) || t.slug.toLowerCase().includes(query)
+    );
+    renderTracksList(filtered);
+  }
+
+  function selectTrack(slug) {
+    currentSelectedTrackSlug = slug;
+
+    document.querySelectorAll('.track-item-card').forEach(item => {
+      if (item.dataset.slug === slug) {
+        item.classList.add('active');
+      } else {
+        item.classList.remove('active');
+      }
+    });
+
+    const token = getToken();
+    fetch(`/api/tracks/${encodeURIComponent(slug)}?token=${encodeURIComponent(token)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (el.trackEditorHeading) el.trackEditorHeading.textContent = data.name.toUpperCase();
+        if (el.trackEditorFileBadge) el.trackEditorFileBadge.textContent = `knowledge/tracks/${data.slug}.md`;
+
+        populateCornersTable(data.corners_list || []);
+        if (el.trackSectionOvertaking) el.trackSectionOvertaking.value = data.sections.overtaking || '';
+        if (el.trackSectionTyres) el.trackSectionTyres.value = data.sections.tyres || '';
+        if (el.trackSectionSetupNotes) el.trackSectionSetupNotes.value = data.sections.setup_notes || '';
+
+        if (el.trackRawContent) el.trackRawContent.value = data.raw_markdown || '';
+
+        if (el.trackSaveStatus) {
+          el.trackSaveStatus.textContent = 'Ready';
+          el.trackSaveStatus.className = 'track-status-pill';
+        }
+      })
+      .catch(err => console.error('Error fetching track notes:', err));
+  }
+
+  function populateCornersTable(cornersList) {
+    if (!el.trackCornersTbody) return;
+    el.trackCornersTbody.innerHTML = '';
+
+    if (cornersList.length === 0) {
+      addCornerRow({ number: 1, name: '', description: '' });
+      return;
+    }
+
+    cornersList.forEach(c => addCornerRow(c));
+  }
+
+  function addCornerRow(corner = null) {
+    if (!el.trackCornersTbody) return;
+
+    let nextNum = 1;
+    const existingRows = el.trackCornersTbody.querySelectorAll('.corner-row');
+    if (existingRows.length > 0) {
+      const lastNumInput = existingRows[existingRows.length - 1].querySelector('.corner-num-input');
+      if (lastNumInput && !isNaN(parseInt(lastNumInput.value, 10))) {
+        nextNum = parseInt(lastNumInput.value, 10) + 1;
+      }
+    }
+
+    const tr = document.createElement('tr');
+    tr.className = 'corner-row';
+
+    tr.innerHTML = `
+      <td>
+        <input type="number" class="f1-input corner-num-input" value="${corner ? corner.number : nextNum}" min="1" max="99">
+      </td>
+      <td>
+        <input type="text" class="f1-input corner-name-input" value="${corner ? (corner.name || '') : ''}" placeholder="e.g. Copse (T9)">
+      </td>
+      <td>
+        <input type="text" class="f1-input corner-desc-input" value="${corner ? (corner.description || '') : ''}" placeholder="e.g. Fast right, flat in qualifying">
+      </td>
+      <td style="text-align: center;">
+        <button type="button" class="btn-del-corner" title="Remove corner">✕</button>
+      </td>
+    `;
+
+    tr.querySelector('.btn-del-corner').addEventListener('click', () => {
+      tr.remove();
+    });
+
+    el.trackCornersTbody.appendChild(tr);
+  }
+
+  function getCornersListFromTable() {
+    const corners = [];
+    if (!el.trackCornersTbody) return corners;
+
+    const rows = el.trackCornersTbody.querySelectorAll('.corner-row');
+    rows.forEach(row => {
+      const numInput = row.querySelector('.corner-num-input');
+      const nameInput = row.querySelector('.corner-name-input');
+      const descInput = row.querySelector('.corner-desc-input');
+
+      const number = numInput ? parseInt(numInput.value, 10) : 0;
+      const name = nameInput ? nameInput.value.trim() : '';
+      const description = descInput ? descInput.value.trim() : '';
+
+      if (name || description) {
+        corners.push({ number, name, description });
+      }
+    });
+
+    return corners;
+  }
+
+  function buildMarkdownFromForm() {
+    const trackName = el.trackEditorHeading ? el.trackEditorHeading.textContent : 'Track Notes';
+    const corners = getCornersListFromTable();
+    const overtaking = el.trackSectionOvertaking ? el.trackSectionOvertaking.value.trim() : '';
+    const tyres = el.trackSectionTyres ? el.trackSectionTyres.value.trim() : '';
+    const setupNotes = el.trackSectionSetupNotes ? el.trackSectionSetupNotes.value.trim() : '';
+
+    let md = `# ${trackName}\n\n## Corners\n`;
+    if (corners.length > 0) {
+      corners.forEach(c => {
+        md += `${c.number}. ${c.name}: ${c.description}\n`;
+      });
+    } else {
+      md += `(No corners defined yet)\n`;
+    }
+
+    md += `\n## Overtaking\n${overtaking || 'None.'}\n`;
+    md += `\n## Tyres\n${tyres || 'None.'}\n`;
+    md += `\n## Setup notes\n${setupNotes || 'None.'}\n`;
+
+    return md;
+  }
+
+  function parseMarkdownToForm(raw) {
+    const sections = {
+      corners: '',
+      overtaking: '',
+      tyres: '',
+      setup_notes: ''
+    };
+
+    const lines = raw.split('\n');
+    let currentSec = null;
+    const cornersList = [];
+
+    for (let line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('## Corners')) {
+        currentSec = 'corners';
+        continue;
+      } else if (trimmed.startsWith('## Overtaking')) {
+        currentSec = 'overtaking';
+        continue;
+      } else if (trimmed.startsWith('## Tyres')) {
+        currentSec = 'tyres';
+        continue;
+      } else if (trimmed.startsWith('## Setup notes')) {
+        currentSec = 'setup_notes';
+        continue;
+      } else if (trimmed.startsWith('## ')) {
+        currentSec = null;
+        continue;
+      }
+
+      if (currentSec === 'corners') {
+        const match = trimmed.match(/^(\d+)\.\s*([^:]+):\s*(.*)$/);
+        if (match) {
+          cornersList.push({
+            number: parseInt(match[1], 10),
+            name: match[2].trim(),
+            description: match[3].trim()
+          });
+        }
+      } else if (currentSec && sections[currentSec] !== undefined) {
+        sections[currentSec] += line + '\n';
+      }
+    }
+
+    populateCornersTable(cornersList);
+    if (el.trackSectionOvertaking) el.trackSectionOvertaking.value = sections.overtaking.trim();
+    if (el.trackSectionTyres) el.trackSectionTyres.value = sections.tyres.trim();
+    if (el.trackSectionSetupNotes) el.trackSectionSetupNotes.value = sections.setup_notes.trim();
+  }
+
+  function setTrackEditorMode(mode) {
+    currentTrackEditorMode = mode;
+
+    if (mode === 'raw') {
+      if (el.btnTrackModeRaw) el.btnTrackModeRaw.classList.add('active');
+      if (el.btnTrackModeForm) el.btnTrackModeForm.classList.remove('active');
+      if (el.trackEditorRawView) el.trackEditorRawView.classList.remove('hidden');
+      if (el.trackEditorFormView) el.trackEditorFormView.classList.add('hidden');
+      if (el.trackRawContent) {
+        el.trackRawContent.value = buildMarkdownFromForm();
+      }
+    } else {
+      if (el.btnTrackModeForm) el.btnTrackModeForm.classList.add('active');
+      if (el.btnTrackModeRaw) el.btnTrackModeRaw.classList.remove('active');
+      if (el.trackEditorFormView) el.trackEditorFormView.classList.remove('hidden');
+      if (el.trackEditorRawView) el.trackEditorRawView.classList.add('hidden');
+      if (el.trackRawContent) {
+        parseMarkdownToForm(el.trackRawContent.value);
+      }
+    }
+  }
+
+  function saveCurrentTrackNotes() {
+    if (!currentSelectedTrackSlug) {
+      alert('Please select a track first.');
+      return;
+    }
+
+    if (el.trackSaveStatus) {
+      el.trackSaveStatus.textContent = 'Saving...';
+      el.trackSaveStatus.className = 'track-status-pill saving';
+    }
+
+    const token = getToken();
+    let payload = {};
+
+    if (currentTrackEditorMode === 'raw') {
+      payload = {
+        raw_markdown: el.trackRawContent ? el.trackRawContent.value : ''
+      };
+    } else {
+      const corners = getCornersListFromTable();
+      payload = {
+        sections: {
+          overtaking: el.trackSectionOvertaking ? el.trackSectionOvertaking.value.trim() : '',
+          tyres: el.trackSectionTyres ? el.trackSectionTyres.value.trim() : '',
+          setup_notes: el.trackSectionSetupNotes ? el.trackSectionSetupNotes.value.trim() : '',
+        },
+        corners_list: corners
+      };
+    }
+
+    fetch(`/api/tracks/${encodeURIComponent(currentSelectedTrackSlug)}?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.detail) {
+          alert('Save error: ' + JSON.stringify(data.detail));
+          if (el.trackSaveStatus) el.trackSaveStatus.textContent = 'Error';
+          return;
+        }
+        if (el.trackSaveStatus) {
+          el.trackSaveStatus.textContent = `Saved & reloaded (${data.corners_count} corners)`;
+          el.trackSaveStatus.className = 'track-status-pill saved';
+        }
+        fetchTracksList();
+      })
+      .catch(err => {
+        alert('Save error: ' + err);
+        if (el.trackSaveStatus) el.trackSaveStatus.textContent = 'Error';
+      });
+  }
+
   // --- Init on DOM Load ---
   window.addEventListener('DOMContentLoaded', () => {
     initTheme();
     initTabs();
     initSetupsTab();
+    initTracksTab();
     if (el.btnRebuildMap) {
       el.btnRebuildMap.addEventListener('click', rebuildTrackMap);
     }

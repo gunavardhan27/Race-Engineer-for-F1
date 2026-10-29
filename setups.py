@@ -17,10 +17,130 @@ import statistics
 import time
 from pathlib import Path
 from typing import Any, Optional
+import yaml
 
 log = logging.getLogger("engineer.setups")
 
 SCHEMA_VERSION = 1
+SETUP_PARAMS_YAML_PATH = Path(__file__).parent / "setup_params.yaml"
+
+
+def load_setup_param_definitions(yaml_path: str | Path | None = None) -> dict[str, Any]:
+    """Loads parameter and group definitions from setup_params.yaml."""
+    p = Path(yaml_path) if yaml_path else SETUP_PARAMS_YAML_PATH
+    if not p.is_file():
+        return {"version": 1, "groups": [], "parameters": []}
+    with open(p, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    return data
+
+
+def get_setup_schema(
+    car_class: int = 0,
+    storage: Optional[Any] = None,
+    yaml_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Generates the merged form schema combining setup_params.yaml and confirmed ranges."""
+    defs = load_setup_param_definitions(yaml_path)
+    ranges: dict[str, dict[str, float]] = {}
+    if storage is not None and hasattr(storage, "get_param_ranges"):
+        ranges = storage.get_param_ranges(car_class)
+
+    group_dicts = sorted(defs.get("groups", []), key=lambda g: g.get("display_order", 0) if isinstance(g, dict) else 0)
+    groups = [g["name"] if isinstance(g, dict) else str(g) for g in group_dicts]
+    raw_params = sorted(defs.get("parameters", []), key=lambda p: p.get("display_order", 0))
+
+    params_out: list[dict[str, Any]] = []
+    for p in raw_params:
+        key = canonical_param_name(p.get("key", ""))
+        p_copy = dict(p)
+        p_copy["key"] = key
+        if key in ranges:
+            r = ranges[key]
+            p_copy["has_confirmed_range"] = True
+            p_copy["min"] = r["min"]
+            p_copy["max"] = r["max"]
+            p_copy["step"] = r.get("step", p.get("step", 1))
+        else:
+            p_copy["has_confirmed_range"] = False
+            p_copy["min"] = None
+            p_copy["max"] = None
+        params_out.append(p_copy)
+
+    return {
+        "version": defs.get("version", 1),
+        "car_class": car_class,
+        "groups": groups,
+        "group_details": group_dicts,
+        "parameters": params_out,
+    }
+
+
+def validate_setup_input(
+    params: dict[str, Any],
+    car_class: int = 0,
+    storage: Optional[Any] = None,
+    yaml_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Validates user-entered setup parameters.
+
+    Rules:
+    - Every field is optional. Empty stay empty: never fill defaults or guesses.
+    - If range is confirmed: flag typed values outside [min, max] in out_of_range.
+    - If range is not confirmed: allow any number, record in unconfirmed_ranges;
+      NEVER block saving because a range is unknown.
+    """
+    ranges: dict[str, dict[str, float]] = {}
+    if storage is not None and hasattr(storage, "get_param_ranges"):
+        ranges = storage.get_param_ranges(car_class)
+
+    clean_params: dict[str, Any] = {}
+    out_of_range: dict[str, dict[str, float]] = {}
+    unconfirmed_ranges: list[str] = []
+    unknown: list[str] = []
+
+    for k, v in params.items():
+        if v is None or v == "":
+            continue
+        canon = canonical_param_name(k)
+        if canon not in STANDARD_PARAMS and canon != "next_front_wing_value":
+            unknown.append(k)
+
+        try:
+            val_num = float(v)
+            if canon in INT_PARAMS:
+                clean_val = int(round(val_num))
+            elif canon in FLOAT_PARAMS:
+                clean_val = round(val_num, 3)
+            else:
+                clean_val = val_num
+        except (ValueError, TypeError):
+            continue
+
+        clean_params[canon] = clean_val
+
+        if canon in ranges:
+            r = ranges[canon]
+            if clean_val < r["min"] or clean_val > r["max"]:
+                out_of_range[canon] = {
+                    "value": clean_val,
+                    "min": r["min"],
+                    "max": r["max"],
+                }
+        else:
+            unconfirmed_ranges.append(canon)
+
+    missing = [p for p in STANDARD_PARAMS if p not in clean_params]
+
+    return {
+        "valid": len(out_of_range) == 0,
+        "clean_params": clean_params,
+        "missing": missing,
+        "out_of_range": out_of_range,
+        "unconfirmed_ranges": unconfirmed_ranges,
+        "unknown": unknown,
+    }
+
 
 STANDARD_PARAMS = [
     # Aerodynamics
@@ -373,6 +493,8 @@ def export_as_json(setup: dict[str, Any]) -> str:
         "game_format": setup.get("game_format", 2025),
         "source": setup.get("source", "imported"),
         "source_note": setup.get("source_note", ""),
+        "source_link": setup.get("source_link", ""),
+        "notes": setup.get("notes", ""),
         "created_at": setup.get("created_at", time.time()),
         "schema_version": setup.get("schema_version", SCHEMA_VERSION),
         "params": setup.get("params", {}),
@@ -497,6 +619,8 @@ class SetupsStorage:
                     game_format INTEGER NOT NULL DEFAULT 2025,
                     source TEXT NOT NULL,
                     source_note TEXT DEFAULT '',
+                    source_link TEXT DEFAULT '',
+                    notes TEXT DEFAULT '',
                     name TEXT DEFAULT '',
                     created_at REAL NOT NULL,
                     params TEXT NOT NULL,
@@ -516,6 +640,15 @@ class SetupsStorage:
                 CREATE INDEX IF NOT EXISTS idx_setups_lookup ON setups(track_id, car_class, conditions, session_type);
                 CREATE INDEX IF NOT EXISTS idx_setups_fp ON setups(fingerprint);
             """)
+            # Migration check for existing databases
+            try:
+                conn.execute("ALTER TABLE setups ADD COLUMN source_link TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE setups ADD COLUMN notes TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     def save_captured_setup(
@@ -530,7 +663,7 @@ class SetupsStorage:
         name: str = "",
     ) -> dict[str, Any]:
         """Saves player setup captured from telemetry. Returns existing setup if fingerprint matches."""
-        clean = {k: v for k, v in params.items() if v is not None}
+        clean = {k: v for k, v in params.items() if v is not None and v != ""}
         fp = compute_setup_fingerprint(clean)
 
         with sqlite3.connect(self.db_path) as conn:
@@ -546,9 +679,9 @@ class SetupsStorage:
             cur.execute("""
                 INSERT INTO setups (
                     fingerprint, car_class, team_id, track_id, conditions,
-                    session_type, game_format, source, source_note, name,
-                    created_at, params, schema_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'captured', 'Captured from CarSetups packet', ?, ?, ?, ?)
+                    session_type, game_format, source, source_note, source_link,
+                    notes, name, created_at, params, schema_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'captured', 'Captured from CarSetups packet', '', '', ?, ?, ?, ?)
             """, (
                 fp, car_class, team_id, track_id, conditions.lower(),
                 session_type.lower(), game_format, default_name, now,
@@ -571,9 +704,11 @@ class SetupsStorage:
         name: str = "",
         team_id: int = 0,
         game_format: int = 2025,
+        source_link: str = "",
+        notes: str = "",
     ) -> dict[str, Any]:
         """Saves user-imported setup. If identical fingerprint exists, updates metadata or returns existing."""
-        clean = {k: v for k, v in params.items() if v is not None}
+        clean = {k: v for k, v in params.items() if v is not None and v != ""}
         fp = compute_setup_fingerprint(clean)
 
         with sqlite3.connect(self.db_path) as conn:
@@ -582,14 +717,16 @@ class SetupsStorage:
             cur.execute("SELECT * FROM setups WHERE fingerprint = ?", (fp,))
             row = cur.fetchone()
             if row:
-                # Update name / note if provided
-                if name or source_note:
+                # Update metadata if provided
+                if name or source_note or source_link or notes:
                     cur.execute("""
                         UPDATE setups
                         SET name = COALESCE(NULLIF(?, ''), name),
-                            source_note = COALESCE(NULLIF(?, ''), source_note)
+                            source_note = COALESCE(NULLIF(?, ''), source_note),
+                            source_link = COALESCE(NULLIF(?, ''), source_link),
+                            notes = COALESCE(NULLIF(?, ''), notes)
                         WHERE fingerprint = ?
-                    """, (name, source_note, fp))
+                    """, (name, source_note, source_link, notes, fp))
                     conn.commit()
                     cur.execute("SELECT * FROM setups WHERE fingerprint = ?", (fp,))
                     return self._row_to_dict(cur.fetchone())
@@ -600,19 +737,176 @@ class SetupsStorage:
             cur.execute("""
                 INSERT INTO setups (
                     fingerprint, car_class, team_id, track_id, conditions,
-                    session_type, game_format, source, source_note, name,
-                    created_at, params, schema_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'imported', ?, ?, ?, ?, ?)
+                    session_type, game_format, source, source_note, source_link,
+                    notes, name, created_at, params, schema_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'imported', ?, ?, ?, ?, ?, ?, ?)
             """, (
                 fp, car_class, team_id, track_id, conditions.lower(),
-                session_type.lower(), game_format, source_note, default_name,
-                now, json.dumps(clean, sort_keys=True), SCHEMA_VERSION
+                session_type.lower(), game_format, source_note, source_link,
+                notes, default_name, now, json.dumps(clean, sort_keys=True), SCHEMA_VERSION
             ))
             new_id = cur.lastrowid
             conn.commit()
 
             cur.execute("SELECT * FROM setups WHERE id = ?", (new_id,))
             return self._row_to_dict(cur.fetchone())
+
+    def create_custom_setup(
+        self,
+        params: dict[str, Any],
+        car_class: int,
+        track_id: int,
+        conditions: str,
+        session_type: str,
+        name: str = "",
+        team_id: int = 0,
+        source_note: str = "",
+        source_link: str = "",
+        notes: str = "",
+        game_format: int = 2025,
+        force: bool = False,
+    ) -> tuple[dict[str, Any], bool]:
+        """Creates a custom/manual setup.
+
+        Returns:
+            (setup_dict, is_duplicate)
+        """
+        clean = {k: v for k, v in params.items() if v is not None and v != ""}
+        fp = compute_setup_fingerprint(clean)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM setups WHERE fingerprint = ?", (fp,))
+            row = cur.fetchone()
+            if row and not force:
+                return self._row_to_dict(row), True
+
+            if row and force:
+                cur.execute("""
+                    UPDATE setups
+                    SET name = COALESCE(NULLIF(?, ''), name),
+                        car_class = ?, team_id = ?, track_id = ?,
+                        conditions = ?, session_type = ?,
+                        source_note = COALESCE(NULLIF(?, ''), source_note),
+                        source_link = COALESCE(NULLIF(?, ''), source_link),
+                        notes = COALESCE(NULLIF(?, ''), notes),
+                        params = ?
+                    WHERE fingerprint = ?
+                """, (
+                    name, car_class, team_id, track_id,
+                    conditions.lower(), session_type.lower(),
+                    source_note, source_link, notes,
+                    json.dumps(clean, sort_keys=True), fp
+                ))
+                conn.commit()
+                cur.execute("SELECT * FROM setups WHERE fingerprint = ?", (fp,))
+                return self._row_to_dict(cur.fetchone()), False
+
+            default_name = name or f"Custom {conditions.capitalize()} ({fp[:6]})"
+            now = time.time()
+            cur.execute("""
+                INSERT INTO setups (
+                    fingerprint, car_class, team_id, track_id, conditions,
+                    session_type, game_format, source, source_note, source_link,
+                    notes, name, created_at, params, schema_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'imported', ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                fp, car_class, team_id, track_id, conditions.lower(),
+                session_type.lower(), game_format, source_note, source_link,
+                notes, default_name, now, json.dumps(clean, sort_keys=True), SCHEMA_VERSION
+            ))
+            new_id = cur.lastrowid
+            conn.commit()
+
+            cur.execute("SELECT * FROM setups WHERE id = ?", (new_id,))
+            return self._row_to_dict(cur.fetchone()), False
+
+    def update_setup(
+        self,
+        setup_id: int | str,
+        data: dict[str, Any],
+        allow_fork: bool = False,
+    ) -> dict[str, Any]:
+        """Updates an existing setup.
+
+        Captured setups (source='captured') are read-only.
+        If allow_fork is True, creates a new imported copy.
+        Otherwise raises ValueError.
+        """
+        existing = self.get_setup(setup_id)
+        if not existing:
+            raise KeyError(f"Setup {setup_id} not found")
+
+        # Captured setup protection
+        if existing.get("source") == "captured":
+            if not allow_fork:
+                raise ValueError("Captured setups are read-only. Editing creates a new imported copy.")
+
+            forked_params = data.get("params", existing["params"])
+            clean_params = {k: v for k, v in forked_params.items() if v is not None and v != ""}
+            new_name = data.get("name") or f"{existing.get('name', 'Setup')} (Copy)"
+            saved, _ = self.create_custom_setup(
+                params=clean_params,
+                car_class=data.get("car_class", existing["car_class"]),
+                team_id=data.get("team_id", existing["team_id"]),
+                track_id=data.get("track_id", existing["track_id"]),
+                conditions=data.get("conditions", existing["conditions"]),
+                session_type=data.get("session_type", existing["session_type"]),
+                name=new_name,
+                source_note=data.get("source_note") or f"Forked from captured setup {existing['fingerprint'][:6]}",
+                source_link=data.get("source_link", existing.get("source_link", "")),
+                notes=data.get("notes", existing.get("notes", "")),
+                force=True,
+            )
+            return saved
+
+        new_params = data.get("params", existing["params"])
+        clean_params = {k: v for k, v in new_params.items() if v is not None and v != ""}
+        new_fp = compute_setup_fingerprint(clean_params)
+
+        name = data.get("name", existing["name"])
+        car_class = data.get("car_class", existing["car_class"])
+        team_id = data.get("team_id", existing["team_id"])
+        track_id = data.get("track_id", existing["track_id"])
+        conditions = data.get("conditions", existing["conditions"])
+        session_type = data.get("session_type", existing["session_type"])
+        source_note = data.get("source_note", existing["source_note"])
+        source_link = data.get("source_link", existing.get("source_link", ""))
+        notes = data.get("notes", existing.get("notes", ""))
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE setups
+                SET fingerprint = ?, name = ?, car_class = ?, team_id = ?,
+                    track_id = ?, conditions = ?, session_type = ?,
+                    source_note = ?, source_link = ?, notes = ?, params = ?
+                WHERE id = ?
+            """, (
+                new_fp, name, car_class, team_id,
+                track_id, conditions.lower(), session_type.lower(),
+                source_note, source_link, notes,
+                json.dumps(clean_params, sort_keys=True), existing["id"]
+            ))
+            conn.commit()
+
+            cur.execute("SELECT * FROM setups WHERE id = ?", (existing["id"],))
+            return self._row_to_dict(cur.fetchone())
+
+    def delete_setup(self, setup_id: int | str) -> bool:
+        """Deletes a setup. Captured setups are protected and cannot be deleted."""
+        existing = self.get_setup(setup_id)
+        if not existing:
+            return False
+        if existing.get("source") == "captured":
+            raise ValueError("Captured setups are read-only and cannot be deleted.")
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM setups WHERE id = ?", (existing["id"],))
+            conn.commit()
+        return True
 
     def get_setup(self, setup_id: int | str) -> Optional[dict[str, Any]]:
         with sqlite3.connect(self.db_path) as conn:
@@ -880,4 +1174,6 @@ class SetupsStorage:
             d["params"] = json.loads(d["params"])
         except Exception:
             d["params"] = {}
+        d["source_link"] = d.get("source_link") or ""
+        d["notes"] = d.get("notes") or ""
         return d

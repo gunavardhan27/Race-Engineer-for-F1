@@ -481,6 +481,7 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
             storage=engineer.storage,
             setups_storage=engineer.setups_storage,
             llm_client=llm_client,
+            knowledge=engineer.knowledge,
         )
         server_task, bcast_task = dashboard_server.start(loop=loop)
         tasks.extend([server_task, bcast_task])
