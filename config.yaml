@@ -1,0 +1,68 @@
+# Race Engineer Configuration
+# Target: Windows 11, RTX 2050 (4GB VRAM) - all local AI runs on CPU by default.
+
+telemetry:
+  host: "127.0.0.1"
+  port: 20777
+  ptt_action: 1                # In-game "UDP Action 1" button bound to wheel
+
+audio:
+  input_device: null           # Device name or index (null = default system mic)
+  output_device: null          # Device name or index (null = default system headset)
+  sample_rate: 16000           # 16 kHz mono for STT
+
+stt:
+  model: "small.en"            # faster-whisper model ("small.en", "base.en", "distil-small.en")
+  compute_type: "int8"         # CPU quantization
+  device: "cpu"
+  beam_size: 1
+  min_duration_s: 0.25         # Ignore button clicks shorter than 250ms
+  max_duration_s: 15.0         # Transmission cap
+  pre_roll_ms: 300             # Ring buffer to prevent clipping first syllable
+  ptt_source: "udp"            # "udp" (in-game wheel action) or "joystick"
+  joystick_index: 0
+  joystick_button: 0
+
+tts:
+  engine: "piper"              # "piper" (local CPU), "kokoro" (local CPU), or "edge" (cloud)
+  voice: "en_GB-alan-medium"   # British race engineer voice
+  device: "cpu"
+  radio_fx: true               # Band-pass filter, compression, static, and clicks
+
+llm:
+  primary: "groq"              # "groq" | "ollama" | "openai_compatible"
+  fallback: "ollama"           # used if primary errors, times out, or no internet; or null
+  timeout_s: 4.0
+  max_tokens: 60
+  groq:
+    model: "llama-3.1-8b-instant"
+    api_key_env: "GROQ_API_KEY"
+  ollama:
+    base_url: "http://localhost:11434"
+    model: "qwen2.5:3b-instruct"
+    num_gpu: 0                 # 0 = CPU only (keeps RTX 2050 free for the game)
+  openai_compatible:
+    base_url: "http://localhost:8080/v1"
+    model: "local"
+
+knowledge:
+  enabled: true
+  tracks_dir: "knowledge/tracks"
+  general_path: "knowledge/general.md"
+  max_tokens: 400
+
+redis:
+  enabled: false
+  url: "redis://localhost:6379/0"
+  hz: 10.0
+
+dashboard:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8765
+  hz: 10.0
+  token: null                 # Auto-generated shared secret token on first run if null
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s %(levelname)s %(name)s: %(message)s"

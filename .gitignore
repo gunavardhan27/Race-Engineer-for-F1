@@ -1,0 +1,37 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Model weights & downloads (auto-downloaded on first run)
+models/
+*.onnx
+*.onnx.json
+
+# Databases & runtime session records
+*.db
+*.db-shm
+*.db-wal
+*.bin
+*.log
+
+# Unit test / cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets & local config
+.env
+.env.local
+
+# OS & IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
