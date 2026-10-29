@@ -157,3 +157,15 @@ def test_tts_factory():
     engine = create_tts_engine(cfg)
     assert isinstance(engine, PiperTTS)
     assert engine.voice_name == "en_GB-alan-medium"
+
+
+def test_normalize_text_for_speech():
+    """Verify that lap time colons are naturally converted for speech to eliminate 'colon'."""
+    from tts import normalize_text_for_speech
+
+    assert normalize_text_for_speech("1:20.4, that's your best lap.") == "1 20.4, that's your best lap."
+    assert normalize_text_for_speech("Last lap was 1:24.456.") == "Last lap was 1 24.456."
+    assert normalize_text_for_speech("Lap time 1:20.") == "Lap time 1 point 20."
+    assert normalize_text_for_speech("Target 1:24.") == "Target 1 point 24."
+    assert normalize_text_for_speech("Fast lap 0:58.2.") == "Fast lap 58.2."
+    assert normalize_text_for_speech("Radio check. Telemetry live.") == "Radio check. Telemetry live."

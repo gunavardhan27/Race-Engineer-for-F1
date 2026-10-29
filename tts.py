@@ -21,9 +21,32 @@ from typing import Any, Optional, Protocol, Tuple
 import httpx
 import numpy as np
 
+import re
 from config import TTSConfig
 
 log = logging.getLogger("engineer.tts")
+
+
+def normalize_text_for_speech(text: str) -> str:
+    """Normalizes text for natural racing speech synthesis.
+    Converts lap time colons so the TTS engine does not say 'colon':
+      - '1:24.4' -> '1 24.4' (pronounced 'one twenty-four point four')
+      - '1:20' -> '1 point 20' (pronounced 'one point twenty')
+      - '0:58.2' -> '58.2' (pronounced 'fifty-eight point two')
+    """
+    if not text:
+        return text
+
+    # Remove sub-minute 0: prefix: e.g. 0:58.2 -> 58.2
+    text = re.sub(r"\b0:(\d{2}(?:\.\d+)?)\b", r"\1", text)
+
+    # Lap times with decimals: 1:24.4 -> 1 24.4
+    text = re.sub(r"\b(\d+):(\d{2})\.(\d+)\b", r"\1 \2.\3", text)
+
+    # Lap times without decimals: 1:24 -> 1 point 24
+    text = re.sub(r"\b(\d+):(\d{2})\b", r"\1 point \2", text)
+
+    return text
 
 
 class TTSProvider(Protocol):
@@ -98,6 +121,7 @@ class PiperTTS:
         log.info("PiperTTS loaded model: %s", onnx_path)
 
     def _synth_sync(self, text: str) -> Tuple[np.ndarray, int]:
+        text = normalize_text_for_speech(text)
         self._ensure_loaded()
         chunks = list(self.voice.synthesize(text))
         if not chunks:
@@ -135,6 +159,7 @@ class KokoroTTS:
             raise RuntimeError("kokoro-onnx is not installed. Install via: pip install kokoro-onnx")
 
     def _synth_sync(self, text: str) -> Tuple[np.ndarray, int]:
+        text = normalize_text_for_speech(text)
         self._ensure_loaded()
         samples, sample_rate = self._kokoro.create(text, voice=self.voice, speed=1.0, lang="en-us")
         return samples.astype(np.float32), sample_rate
@@ -167,7 +192,7 @@ class EdgeTTS:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     async def synth(self, text: str) -> Tuple[np.ndarray, int]:
-        clean_text = text.strip()
+        clean_text = normalize_text_for_speech(text.strip())
         if not clean_text:
             return np.array([], dtype=np.float32), 24000
 
