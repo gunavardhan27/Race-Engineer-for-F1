@@ -3551,6 +3551,323 @@
     }
   }
 
+  // --- App Sound Test & Audio Hardware ---
+  let isMicRecording = false;
+  let micLevelPollInterval = null;
+  let isSoundTestBlocked = false;
+
+  function updateSoundTestSessionState(isLive) {
+    isSoundTestBlocked = !!isLive;
+    if (el.soundTestSessionBanner) {
+      if (isSoundTestBlocked) {
+        el.soundTestSessionBanner.classList.remove('hidden');
+        if (el.soundTestControlsContainer) {
+          el.soundTestControlsContainer.style.opacity = '0.45';
+          el.soundTestControlsContainer.style.pointerEvents = 'none';
+        }
+        if (el.soundTestStatusBadge) {
+          el.soundTestStatusBadge.textContent = 'SESSION LIVE (BLOCKED)';
+          el.soundTestStatusBadge.style.color = '#ef4444';
+          el.soundTestStatusBadge.style.borderColor = '#ef4444';
+          el.soundTestStatusBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+        }
+      } else {
+        el.soundTestSessionBanner.classList.add('hidden');
+        if (el.soundTestControlsContainer) {
+          el.soundTestControlsContainer.style.opacity = '1';
+          el.soundTestControlsContainer.style.pointerEvents = 'auto';
+        }
+        if (el.soundTestStatusBadge) {
+          el.soundTestStatusBadge.textContent = 'OFFLINE READY';
+          el.soundTestStatusBadge.style.color = '#00e5ff';
+          el.soundTestStatusBadge.style.borderColor = '#00e5ff';
+          el.soundTestStatusBadge.style.background = 'rgba(0, 229, 255, 0.15)';
+        }
+      }
+    }
+  }
+
+  async function fetchAudioDevices() {
+    try {
+      const token = getToken();
+      const url = token ? `/api/audio/devices?token=${encodeURIComponent(token)}` : '/api/audio/devices';
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (el.soundTestDeviceWarning) {
+        if (data.warning) {
+          el.soundTestDeviceWarning.textContent = '⚠️ ' + data.warning;
+          el.soundTestDeviceWarning.classList.remove('hidden');
+        } else {
+          el.soundTestDeviceWarning.classList.add('hidden');
+        }
+      }
+
+      if (el.selectAudioInput && Array.isArray(data.input_devices)) {
+        el.selectAudioInput.innerHTML = '<option value="">(System Default)</option>';
+        data.input_devices.forEach(dev => {
+          const opt = document.createElement('option');
+          opt.value = dev.id;
+          opt.textContent = `${dev.id}: ${dev.name} (${dev.hostapi || 'Direct'})`;
+          if (data.current_input != null && dev.id === data.current_input) {
+            opt.selected = true;
+          }
+          el.selectAudioInput.appendChild(opt);
+        });
+      }
+
+      if (el.selectAudioOutput && Array.isArray(data.output_devices)) {
+        el.selectAudioOutput.innerHTML = '<option value="">(System Default)</option>';
+        data.output_devices.forEach(dev => {
+          const opt = document.createElement('option');
+          opt.value = dev.id;
+          opt.textContent = `${dev.id}: ${dev.name} (${dev.hostapi || 'Direct'})`;
+          if (data.current_output != null && dev.id === data.current_output) {
+            opt.selected = true;
+          }
+          el.selectAudioOutput.appendChild(opt);
+        });
+      }
+    } catch (e) {
+      console.warn("Could not fetch audio devices:", e);
+    }
+  }
+
+  async function saveAudioDevices() {
+    try {
+      const token = getToken();
+      const inVal = el.selectAudioInput ? el.selectAudioInput.value : '';
+      const outVal = el.selectAudioOutput ? el.selectAudioOutput.value : '';
+      const payload = {
+        input_device: inVal !== '' ? parseInt(inVal, 10) : null,
+        output_device: outVal !== '' ? parseInt(outVal, 10) : null,
+      };
+      const url = token ? `/api/audio/devices?token=${encodeURIComponent(token)}` : '/api/audio/devices';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (el.soundTestDeviceWarning) {
+          if (data.warning) {
+            el.soundTestDeviceWarning.textContent = '⚠️ ' + data.warning;
+            el.soundTestDeviceWarning.classList.remove('hidden');
+          } else {
+            el.soundTestDeviceWarning.classList.add('hidden');
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Could not save audio devices:", e);
+    }
+  }
+
+  async function fetchVolumes() {
+    try {
+      const token = getToken();
+      const url = token ? `/api/settings/volumes?token=${encodeURIComponent(token)}` : '/api/settings/volumes';
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (el.sliderVolEngineer && data.engineer != null) {
+        const pct = Math.round(data.engineer * 100);
+        el.sliderVolEngineer.value = pct;
+        if (el.labelVolEngineer) el.labelVolEngineer.textContent = pct + '%';
+      }
+      if (el.sliderVolSpotter && data.spotter != null) {
+        const pct = Math.round(data.spotter * 100);
+        el.sliderVolSpotter.value = pct;
+        if (el.labelVolSpotter) el.labelVolSpotter.textContent = pct + '%';
+      }
+      if (el.sliderVolBeeps && data.menu_beeps != null) {
+        const pct = Math.round(data.menu_beeps * 100);
+        el.sliderVolBeeps.value = pct;
+        if (el.labelVolBeeps) el.labelVolBeeps.textContent = pct + '%';
+      }
+    } catch (e) {
+      console.warn("Could not fetch volumes:", e);
+    }
+  }
+
+  async function saveVolumes() {
+    try {
+      const token = getToken();
+      const payload = {
+        engineer: el.sliderVolEngineer ? parseInt(el.sliderVolEngineer.value, 10) / 100.0 : 1.0,
+        spotter: el.sliderVolSpotter ? parseInt(el.sliderVolSpotter.value, 10) / 100.0 : 0.9,
+        menu_beeps: el.sliderVolBeeps ? parseInt(el.sliderVolBeeps.value, 10) / 100.0 : 0.7,
+      };
+      const url = token ? `/api/settings/volumes?token=${encodeURIComponent(token)}` : '/api/settings/volumes';
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      console.error("Could not save volumes:", e);
+    }
+  }
+
+  async function runSpeakerTest() {
+    if (isSoundTestBlocked) return;
+    try {
+      const token = getToken();
+      if (el.btnSpeakerTest) {
+        el.btnSpeakerTest.disabled = true;
+        el.btnSpeakerTest.textContent = '🔊 PLAYING...';
+      }
+      if (el.speakerTestStatus) el.speakerTestStatus.textContent = 'Playing test audio through output device...';
+
+      const payload = {
+        with_radio_fx: el.toggleSpeakerFx ? el.toggleSpeakerFx.checked : true,
+      };
+      const url = token ? `/api/sound_test/speaker?token=${encodeURIComponent(token)}` : '/api/sound_test/speaker';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.status === 409) {
+        if (el.speakerTestStatus) el.speakerTestStatus.textContent = 'Blocked: session is currently live.';
+      } else if (res.ok) {
+        if (el.speakerTestStatus) el.speakerTestStatus.textContent = 'Speaker test completed.';
+      }
+    } catch (e) {
+      if (el.speakerTestStatus) el.speakerTestStatus.textContent = 'Speaker test error: ' + e;
+    } finally {
+      if (el.btnSpeakerTest) {
+        el.btnSpeakerTest.disabled = false;
+        el.btnSpeakerTest.textContent = '🔊 PLAY SPEAKER TEST';
+      }
+    }
+  }
+
+  async function startMicRecording() {
+    if (isSoundTestBlocked || isMicRecording) return;
+    isMicRecording = true;
+    try {
+      const token = getToken();
+      if (el.btnMicTest) {
+        el.btnMicTest.classList.add('btn-mic-recording');
+        el.btnMicTest.textContent = '🔴 RECORDING... RELEASE TO PLAY';
+      }
+      if (el.micTranscriptResult) el.micTranscriptResult.textContent = 'Listening... Speak clearly into your mic.';
+      if (el.micClippingBadge) el.micClippingBadge.classList.add('hidden');
+
+      const url = token ? `/api/sound_test/mic/start?token=${encodeURIComponent(token)}` : '/api/sound_test/mic/start';
+      await fetch(url, { method: 'POST' });
+
+      if (micLevelPollInterval) clearInterval(micLevelPollInterval);
+      micLevelPollInterval = setInterval(pollMicLevel, 70);
+    } catch (e) {
+      console.error("Could not start mic test:", e);
+    }
+  }
+
+  async function pollMicLevel() {
+    if (!isMicRecording) return;
+    try {
+      const token = getToken();
+      const url = token ? `/api/sound_test/mic/level?token=${encodeURIComponent(token)}` : '/api/sound_test/mic/level';
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      const peakPct = Math.min(100, Math.max(0, (data.peak || 0) * 100));
+      if (el.micMeterFill) {
+        el.micMeterFill.style.width = peakPct.toFixed(1) + '%';
+        if (data.clipping) {
+          el.micMeterFill.style.backgroundColor = '#ef4444';
+        } else if (data.peak > 0.8) {
+          el.micMeterFill.style.backgroundColor = '#f59e0b';
+        } else {
+          el.micMeterFill.style.backgroundColor = '#00e676';
+        }
+      }
+      if (el.micMeterDb) {
+        el.micMeterDb.textContent = (data.peak_db !== undefined && isFinite(data.peak_db)) ? `${data.peak_db.toFixed(1)} dB` : '-∞ dB';
+      }
+      if (el.micMetricsLabel) {
+        el.micMetricsLabel.textContent = `Peak: ${(data.peak || 0).toFixed(2)} | RMS: ${(data.rms || 0).toFixed(2)}`;
+      }
+      if (el.micClippingBadge) {
+        if (data.clipping) {
+          el.micClippingBadge.classList.remove('hidden');
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  async function stopMicRecording() {
+    if (!isMicRecording) return;
+    isMicRecording = false;
+    if (micLevelPollInterval) {
+      clearInterval(micLevelPollInterval);
+      micLevelPollInterval = null;
+    }
+    if (el.btnMicTest) {
+      el.btnMicTest.classList.remove('btn-mic-recording');
+      el.btnMicTest.textContent = '⏳ PROCESSING & PLAYING BACK...';
+    }
+
+    try {
+      const token = getToken();
+      const url = token ? `/api/sound_test/mic/stop?token=${encodeURIComponent(token)}` : '/api/sound_test/mic/stop';
+      const res = await fetch(url, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        if (el.micTranscriptResult) {
+          const t = data.transcript && data.transcript.trim() ? `"${data.transcript}"` : '(No speech detected)';
+          el.micTranscriptResult.textContent = `Transcribed: ${t} • Peak: ${(data.peak || 0).toFixed(2)} (${(data.peak_db || 0).toFixed(1)} dB)`;
+        }
+        if (el.micClippingBadge) {
+          if (data.clipping) {
+            el.micClippingBadge.classList.remove('hidden');
+          } else {
+            el.micClippingBadge.classList.add('hidden');
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Could not stop mic test:", e);
+      if (el.micTranscriptResult) el.micTranscriptResult.textContent = 'Error processing mic test.';
+    } finally {
+      setTimeout(() => {
+        if (el.btnMicTest && !isMicRecording) {
+          el.btnMicTest.textContent = '🎤 HOLD TO RECORD MIC';
+        }
+      }, 1500);
+    }
+  }
+
+  async function triggerInGameRadioCheck() {
+    try {
+      const token = getToken();
+      if (el.btnTriggerRadioCheck) {
+        el.btnTriggerRadioCheck.disabled = true;
+        el.btnTriggerRadioCheck.textContent = '📻 CHECKING...';
+      }
+      const url = token ? `/api/radio_check?token=${encodeURIComponent(token)}` : '/api/radio_check';
+      const res = await fetch(url, { method: 'POST' });
+      const data = await res.json();
+      console.log("[Radio Check] Triggered:", data);
+    } catch (e) {
+      console.error("Could not trigger radio check:", e);
+    } finally {
+      setTimeout(() => {
+        if (el.btnTriggerRadioCheck) {
+          el.btnTriggerRadioCheck.disabled = false;
+          el.btnTriggerRadioCheck.textContent = '📻 TRIGGER RADIO CHECK';
+        }
+      }, 3000);
+    }
+  }
+
   // --- Network & Ports Settings ---
   async function fetchPortSettings() {
     try {
