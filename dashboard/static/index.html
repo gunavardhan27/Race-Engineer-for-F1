@@ -1062,6 +1062,50 @@
             </div>
           </div>
         </section>
+
+        <!-- NETWORK & PORT CONFIGURATION -->
+        <section class="analysis-panel port-config-panel" style="margin-top: 1.5rem; padding: 1.5rem; border-radius: 8px; background: rgba(18, 22, 32, 0.85); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 0.75rem;">
+            <div>
+              <h2 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin: 0 0 0.25rem 0;">NETWORK &amp; PORTS</h2>
+              <p style="font-size: 0.85rem; color: #94a3b8; margin: 0;">Configure F1 25 UDP telemetry listening port and web dashboard port.</p>
+            </div>
+            <span class="track-status-pill" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid #10b981; font-size: 0.75rem; padding: 0.25rem 0.6rem; border-radius: 9999px;">
+              CONFIG
+            </span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+              <div class="form-group" style="display: flex; flex-direction: column; gap: 0.4rem;">
+                <label for="setting-telemetry-port" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0;">
+                  F1 25 UDP Telemetry Port
+                </label>
+                <input type="number" id="setting-telemetry-port" min="1024" max="65535" value="20777" class="filter-select" style="width: 100%; padding: 0.6rem 0.75rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.95rem;">
+                <span style="font-size: 0.75rem; color: #64748b;">Matches in-game UDP Port setting (default: 20777).</span>
+              </div>
+              <div class="form-group" style="display: flex; flex-direction: column; gap: 0.4rem;">
+                <label for="setting-dashboard-port" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0;">
+                  Web Dashboard Port
+                </label>
+                <input type="number" id="setting-dashboard-port" min="1024" max="65535" value="8765" class="filter-select" style="width: 100%; padding: 0.6rem 0.75rem; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; font-size: 0.95rem;">
+                <span style="font-size: 0.75rem; color: #64748b;">HTTP and WebSocket server port (default: 8765).</span>
+              </div>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 0.6rem;">
+              <input type="checkbox" id="setting-ask-port" style="accent-color: #00e5ff; width: 16px; height: 16px; cursor: pointer;">
+              <label for="setting-ask-port" style="font-size: 0.85rem; color: #cbd5e1; cursor: pointer;">
+                Prompt interactively for ports in terminal on application startup (or pass <code style="background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px;">--ask-port</code>)
+              </label>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; align-items: center; gap: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 1rem;">
+              <span id="ports-feedback-msg" style="font-size: 0.85rem; color: #10b981; display: none;">✓ Port settings saved</span>
+              <button type="button" id="btn-save-ports" class="btn-primary" style="padding: 0.6rem 1.25rem;">SAVE PORT SETTINGS</button>
+            </div>
+          </div>
+        </section>
       </div>
     </div> <!-- /#view-settings -->
 

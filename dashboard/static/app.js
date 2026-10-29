@@ -295,6 +295,13 @@
     micTranscriptResult: document.getElementById('mic-transcript-result'),
     btnTriggerRadioCheck: document.getElementById('btn-trigger-radio-check'),
 
+    // Network & Ports
+    settingTelemetryPort: document.getElementById('setting-telemetry-port'),
+    settingDashboardPort: document.getElementById('setting-dashboard-port'),
+    settingAskPort: document.getElementById('setting-ask-port'),
+    btnSavePorts: document.getElementById('btn-save-ports'),
+    portsFeedbackMsg: document.getElementById('ports-feedback-msg'),
+
     // Usage Guard
     tabBtnUsage: document.getElementById('tab-btn-usage'),
     viewUsage: document.getElementById('view-usage'),
@@ -1188,6 +1195,7 @@
         fetchPersonaSettings();
         fetchAudioDevices();
         fetchVolumes();
+        fetchPortSettings();
       });
     }
 
@@ -1266,6 +1274,9 @@
     }
     if (el.btnTriggerRadioCheck) {
       el.btnTriggerRadioCheck.addEventListener('click', triggerInGameRadioCheck);
+    }
+    if (el.btnSavePorts) {
+      el.btnSavePorts.addEventListener('click', savePortSettings);
     }
 
     if (el.filterTrack) {
@@ -3540,6 +3551,55 @@
     }
   }
 
+  // --- Network & Ports Settings ---
+  async function fetchPortSettings() {
+    try {
+      const token = getToken();
+      const url = token ? `/api/settings/ports?token=${encodeURIComponent(token)}` : '/api/settings/ports';
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (el.settingTelemetryPort && data.telemetry_port != null) {
+        el.settingTelemetryPort.value = data.telemetry_port;
+      }
+      if (el.settingDashboardPort && data.dashboard_port != null) {
+        el.settingDashboardPort.value = data.dashboard_port;
+      }
+      if (el.settingAskPort && data.ask_port !== undefined) {
+        el.settingAskPort.checked = !!data.ask_port;
+      }
+    } catch (e) {
+      console.warn("Could not fetch port settings:", e);
+    }
+  }
+
+  async function savePortSettings() {
+    try {
+      const token = getToken();
+      const payload = {
+        telemetry_port: el.settingTelemetryPort ? parseInt(el.settingTelemetryPort.value, 10) : 20777,
+        dashboard_port: el.settingDashboardPort ? parseInt(el.settingDashboardPort.value, 10) : 8765,
+        ask_port: el.settingAskPort ? el.settingAskPort.checked : false,
+      };
+      const url = token ? `/api/settings/ports?token=${encodeURIComponent(token)}` : '/api/settings/ports';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        if (el.portsFeedbackMsg) {
+          el.portsFeedbackMsg.style.display = 'inline';
+          setTimeout(() => {
+            if (el.portsFeedbackMsg) el.portsFeedbackMsg.style.display = 'none';
+          }, 3000);
+        }
+      }
+    } catch (e) {
+      console.error("Could not save port settings:", e);
+    }
+  }
+
   // --- AI Usage Guard Status ---
   async function fetchUsageStatus() {
     try {
@@ -3741,6 +3801,7 @@
     initSetupsTab();
     initTracksTab();
     fetchPersonaSettings();
+    fetchPortSettings();
     fetchUsageStatus();
     fetchUsageHistory();
     if (el.btnRebuildMap) {

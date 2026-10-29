@@ -91,3 +91,17 @@ def test_cli_flags_override_config():
     assert ptt_action == 3
     assert redis_url == "redis://custom:6379/1"
     assert redis_hz == 20.0
+
+
+def test_ask_port_config_and_cli():
+    """Verify ask_port defaults to false and --ask-port flag parses correctly."""
+    cfg = load_config("config.yaml")
+    assert hasattr(cfg.telemetry, "ask_port")
+    assert cfg.telemetry.ask_port is False
+
+    args_no_flag = parse_args([])
+    assert args_no_flag.ask_port is None
+
+    args_flag = parse_args(["--ask-port"])
+    assert args_flag.ask_port is True
+

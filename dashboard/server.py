@@ -131,6 +131,12 @@ class VolumesUpdateRequest(BaseModel):
     menu_beeps: float | None = None
 
 
+class PortsUpdateRequest(BaseModel):
+    telemetry_port: int | None = None
+    dashboard_port: int | None = None
+    ask_port: bool | None = None
+
+
 def build_live_payload(state: RaceState, track_map: TrackMapManager | None = None) -> dict[str, Any]:
     """Combines snapshot(), timing_tower(), motion/car positions, and telemetry extras."""
     payload = state.snapshot()
@@ -1258,6 +1264,72 @@ def create_app(
             msg = engineer.start_two_way_radio_check()
             return {"status": "ok", "message": msg}
         return {"status": "error", "message": "Engineer unavailable for radio check"}
+
+    @app.get("/api/settings/ports")
+    async def get_ports_endpoint(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        t_port = config.telemetry.port if config and hasattr(config, "telemetry") else 20777
+        d_port = config.dashboard.port if config and hasattr(config, "dashboard") else 8765
+        ask = getattr(config.telemetry, "ask_port", False) if config and hasattr(config, "telemetry") else False
+        return {
+            "telemetry_port": t_port,
+            "dashboard_port": d_port,
+            "ask_port": ask,
+        }
+
+    @app.post("/api/settings/ports")
+    async def post_ports_endpoint(
+        req: PortsUpdateRequest,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        if config:
+            if req.telemetry_port is not None and 1 <= req.telemetry_port <= 65535:
+                config.telemetry.port = req.telemetry_port
+            if req.dashboard_port is not None and 1 <= req.dashboard_port <= 65535:
+                config.dashboard.port = req.dashboard_port
+            if req.ask_port is not None:
+                config.telemetry.ask_port = req.ask_port
+
+            if config_path and Path(config_path).exists():
+                try:
+                    import yaml
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        raw = yaml.safe_load(f) or {}
+                    if "telemetry" not in raw or not isinstance(raw["telemetry"], dict):
+                        raw["telemetry"] = {}
+                    if req.telemetry_port is not None:
+                        raw["telemetry"]["port"] = req.telemetry_port
+                    if req.ask_port is not None:
+                        raw["telemetry"]["ask_port"] = req.ask_port
+                    if "dashboard" not in raw or not isinstance(raw["dashboard"], dict):
+                        raw["dashboard"] = {}
+                    if req.dashboard_port is not None:
+                        raw["dashboard"]["port"] = req.dashboard_port
+                    with open(config_path, "w", encoding="utf-8") as f:
+                        yaml.safe_dump(raw, f, sort_keys=False)
+                except Exception as e:
+                    log.warning("Could not persist ports to %s: %s", config_path, e)
+
+            return {
+                "status": "ok",
+                "telemetry_port": config.telemetry.port,
+                "dashboard_port": config.dashboard.port,
+                "ask_port": getattr(config.telemetry, "ask_port", False),
+                "note": "Port settings saved. Active listener port updates on app restart.",
+            }
+        return {"status": "error", "message": "Config unavailable"}
+
 
     @app.websocket("/ws/live")
     async def ws_live(websocket: WebSocket, token_param: str | None = Query(None, alias="token")):

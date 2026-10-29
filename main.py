@@ -862,6 +862,7 @@ def parse_args(argv=None):
     p.add_argument("--export-format", choices=["sheet", "json"], default="sheet", help="format for --export-setup (default: sheet)")
     p.add_argument("--usage", action="store_true", help="print today's cloud AI usage and limits and exit")
     p.add_argument("--sound-test", action="store_true", help="run offline speaker sound test and exit")
+    p.add_argument("--ask-port", action="store_true", default=None, help="ask interactively for UDP and dashboard ports on startup")
     return p.parse_args(argv)
 
 
@@ -938,6 +939,41 @@ def main(argv=None):
         sys.exit(0)
 
     cfg = load_config(args.config)
+
+    # Interactively ask for ports if requested via --ask-port flag or config.telemetry.ask_port
+    should_ask_port = args.ask_port if args.ask_port is not None else getattr(cfg.telemetry, "ask_port", False)
+    if should_ask_port:
+        curr_udp = args.port if args.port is not None else cfg.telemetry.port
+        curr_dash = args.dashboard_port if args.dashboard_port is not None else cfg.dashboard.port
+        try:
+            print("\n==============================================================")
+            print("                 PORT CONFIGURATION SELECTION")
+            print("==============================================================")
+            print("Press Enter to keep the default port, or type a new port number.\n")
+            udp_in = input(f"  F1 25 UDP Telemetry Port [default {curr_udp}]: ").strip()
+            if udp_in:
+                try:
+                    p_val = int(udp_in)
+                    if 1 <= p_val <= 65535:
+                        args.port = p_val
+                    else:
+                        print(f"  Invalid port {p_val}, keeping {curr_udp}")
+                except ValueError:
+                    print(f"  Invalid input '{udp_in}', keeping {curr_udp}")
+
+            dash_in = input(f"  Web Dashboard Port       [default {curr_dash}]: ").strip()
+            if dash_in:
+                try:
+                    d_val = int(dash_in)
+                    if 1 <= d_val <= 65535:
+                        args.dashboard_port = d_val
+                    else:
+                        print(f"  Invalid port {d_val}, keeping {curr_dash}")
+                except ValueError:
+                    print(f"  Invalid input '{dash_in}', keeping {curr_dash}")
+            print("==============================================================\n")
+        except (EOFError, KeyboardInterrupt):
+            print("\nPort selection skipped, using defaults.")
 
     # CLI flags override config
     host = args.host if args.host is not None else cfg.telemetry.host

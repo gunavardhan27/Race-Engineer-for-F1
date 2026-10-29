@@ -20,6 +20,7 @@ class TelemetryConfig:
     host: str = "127.0.0.1"
     port: int = 20777
     ptt_action: int = 1
+    ask_port: bool = False
 
 
 @dataclass
@@ -36,7 +37,7 @@ class RadioCheckConfig:
 
 @dataclass
 class SoundTestConfig:
-    on_app_start: bool = True     # Play "Engineer online." on app launch
+    on_app_start: bool = True     # Play "Engineer Online, Radio check radio check." on app launch
 
 
 @dataclass

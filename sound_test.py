@@ -9,7 +9,7 @@ Features:
    peak level (dB), live level meter, and clipping warning.
 3. Device management with instant live switching and fallback on unplugged hardware.
 4. Startup sound:
-   Plays click + "Engineer online." when window/app opens (config sound_test.on_app_start).
+   Plays click + "Engineer Online, Radio check radio check." when window/app opens (config sound_test.on_app_start).
 5. Live session gating:
    Disabled while an F1 session is live ("Use radio check in game instead").
 """
@@ -32,7 +32,7 @@ from radio_fx import apply_radio_fx
 log = logging.getLogger("engineer.sound_test")
 
 SOUND_TEST_SPEAKER_PHRASE = "Sound test. One, two, three. Radio's working."
-STARTUP_PHRASE = "Engineer online."
+STARTUP_PHRASE = "Engineer Online, Radio check radio check."
 
 
 class SoundTestManager:
@@ -106,7 +106,7 @@ class SoundTestManager:
             return {"status": "error", "message": str(e)}
 
     async def play_startup_sound(self) -> Dict[str, Any]:
-        """Plays click + 'Engineer online.' on initial app launch if enabled."""
+        """Plays click + 'Engineer Online, Radio check radio check.' on initial app launch if enabled."""
         if not getattr(self.config.sound_test, "on_app_start", True):
             return {"status": "skipped", "reason": "sound_test.on_app_start disabled"}
 

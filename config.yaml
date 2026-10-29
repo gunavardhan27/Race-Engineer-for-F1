@@ -5,6 +5,7 @@ telemetry:
   host: "127.0.0.1"
   port: 20777
   ptt_action: 1                # In-game "UDP Action 1" button bound to wheel
+  ask_port: false              # Prompt interactively for ports on launch if true (or use --ask-port)
 
 audio:
   input_device: null           # Device name or index (null = default system mic)
