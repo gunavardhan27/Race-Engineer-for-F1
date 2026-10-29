@@ -104,6 +104,7 @@ class LapData:
     corner_cutting_warnings: int = 0
     grid_position: int = 0
     speed_trap_kph: float = 0.0
+    total_distance: float = 0.0
 
 
 @dataclass(slots=True)
@@ -210,6 +211,8 @@ class Event:
     vehicle_2_idx: int | None = None
     flashback_frame: int | None = None
     flashback_time: float | None = None
+    lap_num: int | None = None
+    raw_bytes: bytes | None = None
 
 
 @dataclass(slots=True)
@@ -377,7 +380,8 @@ def parse_lap_data(buf: bytes, h: Header):
             total_warnings=f[20],
             corner_cutting_warnings=f[21],
             grid_position=f[24],
-            speed_trap_kph=float(f[28]) if len(f) > 28 and f[28] is not None else 0.0))
+            speed_trap_kph=float(f[28]) if len(f) > 28 and f[28] is not None else 0.0,
+            total_distance=float(f[11])))
     return cars
 
 
@@ -484,9 +488,10 @@ def parse_event(buf: bytes, h: Header):
                 ev.vehicle_idx,
                 ev.other_vehicle_idx,
                 ev.penalty_time,
-                _,
+                ev.lap_num,
                 ev.places_gained,
             ) = struct.unpack_from("<BBBBBBB", buf, p)
+            ev.raw_bytes = buf[p:p + 7]
     elif ev.code == "OVTK":
         if len(buf) >= p + 2:
             ev.overtaking_vehicle_idx, ev.being_overtaken_vehicle_idx = struct.unpack_from("<BB", buf, p)
@@ -616,6 +621,52 @@ _PARSERS = {
     PacketId.FINAL_CLASSIFICATION: parse_final_classification,
     PacketId.CAR_DAMAGE: parse_car_damage,
     PacketId.TIME_TRIAL: parse_time_trial,
+}
+
+
+PENALTY_TYPES: dict[int, str] = {
+    0: "Drive through",
+    1: "Stop Go",
+    2: "Grid penalty",
+    3: "Penalty reminder",
+    4: "Time penalty",
+    5: "Warning",
+    6: "Disqualified",
+    7: "Removed from formation lap",
+    8: "Parked too long timer",
+    9: "Tyre regulations",
+    10: "This lap invalidated",
+    11: "This and next lap invalidated",
+    12: "This lap invalidated without reason",
+    13: "This and next lap invalidated without reason",
+    14: "This and previous lap invalidated",
+    15: "This and previous lap invalidated without reason",
+    16: "Retired",
+    17: "Black flag timer",
+}
+
+INFRINGEMENT_TYPES: dict[int, str] = {
+    0: "Blocking by slow driving",
+    1: "Blocking by wrong way driving",
+    2: "Reversing off the start line",
+    3: "Big Collision",
+    4: "Small Collision",
+    5: "Collision failed to hand back position single",
+    6: "Collision failed to hand back position multiple",
+    7: "Corner cutting gained time",
+    8: "Corner cutting overtake single",
+    9: "Corner cutting overtake multiple",
+    10: "Crossed pit exit lane",
+    11: "Ignoring blue flags",
+    12: "Ignoring yellow flags",
+    13: "Ignoring drive through",
+    14: "Too many drive throughs",
+    15: "Drive through reminder servable",
+    16: "Safety car car infraction",
+    17: "Safety car exceeding allowed pace",
+    18: "Virtual safety car exceeding allowed pace",
+    19: "Pit lane speed infraction",
+    20: "Parked too long in garage",
 }
 
 

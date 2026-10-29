@@ -35,7 +35,8 @@ from config import AppConfig, load_config
 from f1telemetry import packets
 from f1telemetry.deterministic import Callout, Callouts, RadioQueue, route
 from f1telemetry.spotter import Spotter, SPOTTER_PHRASES, SpotterState
-from f1telemetry.state import RaceState, TRACKS
+from f1telemetry.state import RaceState, TRACKS, LapRecord
+from f1telemetry.overtakes import BrakingZoneDetector, OvertakeDetector, DefendWarningDetector
 from knowledge import KnowledgeBase
 from latency import LatencyTracker
 from llm import LLMClient
@@ -53,6 +54,105 @@ from usage import UsageGuard
 
 log = logging.getLogger("engineer")
 FRAME = struct.Struct("<dI")   # recording: seconds since start, payload length
+
+
+class ExplainTracker:
+    """Tracks and formats per-lap detected events during replay without audio."""
+
+    def __init__(self):
+        self.events_by_lap: dict[int, list[dict[str, Any]]] = {}
+        self.resets: list[str] = []
+        self.current_lap: int = 1
+
+    def _get_lap_list(self, lap: int) -> list[dict[str, Any]]:
+        if lap not in self.events_by_lap:
+            self.events_by_lap[lap] = []
+        return self.events_by_lap[lap]
+
+    def on_reset(self, old_uid, new_uid):
+        msg = f"{old_uid} -> {new_uid}"
+        self.resets.append(msg)
+        self._get_lap_list(self.current_lap).append({"type": "SESSION_RESET", "text": f"Session reset: {msg}"})
+
+    def on_lap(self, rec):
+        t_sec = (rec.lap_time_ms / 1000.0) if getattr(rec, "lap_time_ms", None) else 0.0
+        self._get_lap_list(self.current_lap).append({
+            "type": "LAP",
+            "text": f"Lap {rec.lap} finished ({t_sec:.3f}s, valid={not rec.invalid}, P{rec.position})"
+        })
+        self.current_lap = rec.lap + 1
+
+    def on_overtake(self, ot):
+        lap = ot.get("lap_num", self.current_lap)
+        d_name = ot.get("other_driver_name") or f"Car {ot.get('other_vehicle_idx', ot.get('car_idx'))}"
+        direction = ot.get("direction", "pass")
+        move = "Pass on" if direction == "pass" else "Overtaken by"
+        cls_name = ot.get("classification", "clean")
+        corner = ot.get("corner_name") or "straight"
+        b_delta = ot.get("braking_delta_m")
+        s_gap = ot.get("start_gap_m")
+        feats = []
+        if b_delta is not None:
+            feats.append(f"brake_delta={b_delta:+.1f}m")
+        if s_gap is not None:
+            feats.append(f"start_gap={s_gap:.1f}m")
+        if ot.get("overlap_at_turn_in"):
+            feats.append("overlap=yes")
+        if ot.get("ran_deep"):
+            feats.append("ran_deep=yes")
+        if ot.get("contact"):
+            feats.append("contact=yes")
+        if ot.get("forced_off"):
+            feats.append("forced_off=yes")
+        if ot.get("switchback"):
+            feats.append("switchback=yes")
+        feat_str = f" [{', '.join(feats)}]" if feats else ""
+        text = f"{move} {d_name} | class: {cls_name} | corner: {corner}{feat_str}"
+        self._get_lap_list(lap).append({"type": "OVERTAKE" if direction == "pass" else "OVERTAKEN", "text": text, "data": ot})
+
+    def on_defend(self, df):
+        lap = self.current_lap
+        d_name = df.get("driver") or f"Car {df.get('car_idx')}"
+        corner = df.get("corner") or "corner"
+        look = "Inside Look" if df.get("inside_look") else "Defend Warning"
+        d_fwd = df.get("d_forward")
+        text = f"{look} into {corner} vs {d_name} (gap: {d_fwd}m)"
+        self._get_lap_list(lap).append({"type": "DEFEND", "text": text, "data": df})
+
+    def on_finish(self, info):
+        lap = self.current_lap
+        pos = info.get("position", 1)
+        behind_s = (info.get("gap_behind_ms") / 1000.0) if info.get("gap_behind_ms") is not None else None
+        ahead_s = (info.get("gap_ahead_ms") / 1000.0) if info.get("gap_ahead_ms") is not None else None
+        pen = info.get("penalties_s", 0)
+        text = f"P{pos} across line | Margin behind: {behind_s}s | Gap ahead: {ahead_s}s | Penalties: {pen}s"
+        self._get_lap_list(lap).append({"type": "FINISH", "text": text, "data": info})
+
+    def on_penalty(self, ev):
+        lap = self.current_lap
+        pname = packets.PENALTY_TYPES.get(ev.penalty_type, f"type_{ev.penalty_type}")
+        iname = packets.INFRINGEMENT_TYPES.get(ev.infringement_type, f"infringement_{ev.infringement_type}")
+        text = f"{pname} ({iname}), time={ev.penalty_time}s"
+        self._get_lap_list(lap).append({"type": "PENALTY", "text": text, "data": ev})
+
+    def print_report(self, path: str):
+        print("\n" + "=" * 80)
+        print(f"EXPLAIN REPLAY REPORT: {path}")
+        print("=" * 80)
+        if self.resets:
+            print("Session Resets:")
+            for r in self.resets:
+                print(f"  • {r}")
+        print("\nPer-Lap Detected Events:")
+        if not self.events_by_lap:
+            print("  (No events detected in recording)")
+        else:
+            for lap in sorted(self.events_by_lap.keys()):
+                print(f"\n--- LAP {lap} ---")
+                for ev in self.events_by_lap[lap]:
+                    tag = f"[{ev['type']}]"
+                    print(f"  {tag:<14} {ev['text']}")
+        print("\n" + "=" * 80 + "\n")
 
 
 class Recorder:
@@ -126,12 +226,64 @@ class Engineer:
             config_path=self.config_path,
         )
 
+        self.braking_zones = BrakingZoneDetector(knowledge_base=self.knowledge)
+        self.overtake_detector = OvertakeDetector(
+            config=self.config.overtake,
+            storage=self.storage,
+            braking_zones=self.braking_zones,
+        )
+        self.defend_detector = DefendWarningDetector(
+            config=self.config.defend,
+            braking_zones=self.braking_zones,
+            spotter=self.spotter,
+        )
+        self.tracker: ExplainTracker | None = None
+
         if self.config.stt.ptt_source == "joystick":
             self._joystick_thread = start_joystick_listener(
                 self.on_ptt,
                 joystick_index=self.config.stt.joystick_index,
                 button_index=self.config.stt.joystick_button,
             )
+
+    def _reload_session_if_resumed(self):
+        """Reload the current session from the database on app restart if the same session_uid resumes."""
+        if not self.storage or not self.state.session_uid:
+            return
+        try:
+            sess = self.storage.get_session_by_uid(self.state.session_uid)
+            if sess:
+                db_laps = self.storage.get_laps_for_session(sess["id"])
+                if db_laps and not self.state.laps:
+                    for dl in db_laps:
+                        rec = LapRecord(
+                            lap=dl["lap_num"],
+                            lap_time_ms=int(round(dl["lap_time_s"] * 1000)),
+                            invalid=not bool(dl["is_valid"]),
+                            position=dl.get("position", 0),
+                            ahead_idx=None,
+                            gap_ahead_ms=None,
+                            behind_idx=None,
+                            gap_behind_ms=None,
+                            fuel_kg=dl.get("fuel_end_kg"),
+                            tyre_wear=None,
+                            stint=dl.get("stint", 0),
+                            sector1_ms=int(round((dl.get("sector1_s") or 0) * 1000)),
+                            sector2_ms=int(round((dl.get("sector2_s") or 0) * 1000)),
+                            sector3_ms=int(round((dl.get("sector3_s") or 0) * 1000)),
+                        )
+                        self.state.laps.append(rec)
+                    log.info("Resumed session %s: reloaded %d laps from database", self.state.session_uid, len(db_laps))
+                    self._update_lap_analysis()
+                # Load reference lap into braking_zones
+                if self.state.session and self.state.session.track_id is not None:
+                    pb = self.storage.get_personal_best(self.state.session.track_id, self.state.session.formula)
+                    if pb:
+                        trace = self.storage.get_lap_trace(pb["id"])
+                        if trace:
+                            self.braking_zones.update_from_trace(self.state.session.track_id, pb["lap_time_s"], trace)
+        except Exception as e:
+            log.debug("Session resumption reload failed: %s", e)
 
     def is_session_live(self) -> bool:
         """Returns True if telemetry packets from an active session are arriving."""
@@ -335,10 +487,14 @@ class Engineer:
             if data is None:
                 return
             for sig in self.state.update(h, data):
+                now_ts = self.state.session_time if self.state.session_time > 0 else time.monotonic()
                 if sig[0] == "ptt":
                     self.on_ptt(sig[1])
                 elif sig[0] == "new_session":
                     self.pace.reset_session()
+                    self._reload_session_if_resumed()
+                    if self.tracker:
+                        self.tracker.on_reset(self.state.session_uid, sig[1])
                     if self.state.my_setup:
                         self._on_setup_change(self.state.my_setup, self.state.current_setup_fingerprint)
                     if self.state.session and self.state.session.track_id is not None:
@@ -347,6 +503,8 @@ class Engineer:
                     self._on_setup_change(sig[1], sig[2])
                 elif sig[0] == "lap":
                     rec = sig[1]
+                    if self.tracker:
+                        self.tracker.on_lap(rec)
                     if self.trace_collector:
                         self.trace_collector.on_lap_completed(rec, self.state)
                     self._update_lap_analysis()
@@ -354,17 +512,46 @@ class Engineer:
                     self.pace.quiet_mode = self.quiet_mode
                     for c_pace in self.pace.on_lap(rec):
                         self.radio.push(c_pace)
+                    # Update braking zones if clean reference lap
+                    if not rec.invalid and self.storage and self.state.session and self.state.session.track_id is not None:
+                        try:
+                            sess = self.storage.get_session_by_uid(self.state.session_uid)
+                            if sess:
+                                laps_db = self.storage.get_laps_for_session(sess["id"])
+                                if laps_db:
+                                    last_l = laps_db[-1]
+                                    trace = self.storage.get_lap_trace(last_l["id"])
+                                    if trace:
+                                        self.braking_zones.update_from_trace(self.state.session.track_id, rec.lap_time_s, trace)
+                        except Exception as e:
+                            log.debug("Failed updating braking zones from lap trace: %s", e)
                 elif sig[0] == "flashback":
                     lap_num = sig[1]
                     if self.trace_collector:
                         self.trace_collector.on_flashback(lap_num, self.state.session_uid)
+                elif sig[0] == "finished":
+                    if self.tracker:
+                        self.tracker.on_finish(sig[1])
+                elif sig[0] == "penalty":
+                    if self.tracker:
+                        self.tracker.on_penalty(sig[1])
+                elif sig[0] == "event":
+                    ev = sig[1]
+                    if getattr(ev, "code", "") == "COLL":
+                        v1 = getattr(ev, "vehicle_idx", None)
+                        v2 = getattr(ev, "other_vehicle_idx", None)
+                        if v1 is None: v1 = getattr(ev, "vehicle_1_idx", None)
+                        if v2 is None: v2 = getattr(ev, "vehicle_2_idx", None)
+                        if v1 is not None and v2 is not None:
+                            self.overtake_detector.on_collision(v1, v2, now=now_ts)
+
                 for c in self.callouts.process(sig, self.state):
                     self.radio.push(c)
 
                 # Personality reaction check (overrides: never replaces neutral calls; no reaction on active spotter/PTT)
                 if self.personality:
                     spotter_active = (self.spotter.state != SpotterState.CLEAR) if self.spotter else False
-                    c_pers = self.personality.on_signal(sig, self.state, spotter_active=spotter_active)
+                    c_pers = self.personality.on_signal(sig, self.state, spotter_active=spotter_active, now=now_ts)
                     if c_pers:
                         self.radio.push(c_pers)
 
@@ -373,6 +560,40 @@ class Engineer:
                     self._on_final_classification(sig[1])
                     for c_pace in self.pace.on_final_classification(sig[1]):
                         self.radio.push(c_pace)
+
+            # Check overtakes and defend warnings on motion and lap data updates
+            if h.packet_id in (packets.PacketId.LAP_DATA, packets.PacketId.MOTION):
+                now_ts = self.state.session_time if self.state.session_time > 0 else time.monotonic()
+                # 1. Overtake detection
+                ot_records = self.overtake_detector.update(self.state, now=now_ts)
+                for ot in ot_records:
+                    sig_name = "overtake_confirmed" if ot["direction"] == "pass" else "overtaken_confirmed"
+                    sig_ot = (sig_name, ot)
+                    if self.tracker:
+                        self.tracker.on_overtake(ot)
+                    if self.broadcaster:
+                        self.broadcaster.broadcast("overtake", ot)
+                    for c in self.callouts.process(sig_ot, self.state):
+                        self.radio.push(c)
+                    if self.personality:
+                        spotter_active = (self.spotter.state != SpotterState.CLEAR) if self.spotter else False
+                        c_pers = self.personality.on_signal(sig_ot, self.state, spotter_active=spotter_active, now=now_ts)
+                        if c_pers:
+                            self.radio.push(c_pers)
+
+                # 2. Defend warning detection
+                df_records = self.defend_detector.update(self.state, now=now_ts)
+                for df in df_records:
+                    sig_df = ("defend_warning", df)
+                    if self.tracker:
+                        self.tracker.on_defend(df)
+                    for c in self.callouts.process(sig_df, self.state):
+                        self.radio.push(c)
+                    if self.personality:
+                        spotter_active = (self.spotter.state != SpotterState.CLEAR) if self.spotter else False
+                        c_pers = self.personality.on_signal(sig_df, self.state, spotter_active=spotter_active, now=now_ts)
+                        if c_pers:
+                            self.radio.push(c_pers)
 
             # Check spotter and personality spin on motion update
             if h.packet_id == packets.PacketId.MOTION:
@@ -657,17 +878,20 @@ def start_console(engineer: Engineer, loop):
     threading.Thread(target=run, daemon=True).start()   # daemon so Ctrl+C exits cleanly
 
 
-async def replay(path, engineer: Engineer, speed: float):
+async def replay(path, engineer: Engineer, speed: float, explain: bool = False, tracker: ExplainTracker | None = None):
     start, first = time.monotonic(), None
     with open(path, "rb") as f:
         while hdr := f.read(FRAME.size):
             t, n = FRAME.unpack(hdr)
             buf = f.read(n)
-            first = t if first is None else first
-            delay = (t - first) / speed - (time.monotonic() - start)
-            if delay > 0:
-                await asyncio.sleep(delay)
+            if not explain:
+                first = t if first is None else first
+                delay = (t - first) / speed - (time.monotonic() - start)
+                if delay > 0:
+                    await asyncio.sleep(delay)
             engineer.on_packet(buf)
+    if explain and tracker:
+        tracker.print_report(path)
 
 
 async def publish(engineer: Engineer, url: str, hz: float):
@@ -733,6 +957,31 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
     loop = asyncio.get_running_loop()
     recorder = Recorder(args.record) if args.record else None
     latency = LatencyTracker()
+
+    if getattr(args, "explain", False):
+        if not args.replay:
+            print("Error: --explain requires --replay <file>", file=sys.stderr)
+            return
+        tracker = ExplainTracker()
+        engineer = Engineer(
+            ptt_action=ptt_action,
+            recorder=recorder,
+            config=cfg,
+            latency=latency,
+            stt=None,
+            audio_capture=None,
+            tts=None,
+            player=None,
+            knowledge=KnowledgeBase(config=cfg.knowledge),
+            loop=loop,
+            storage=SessionStorage(),
+            config_path=args.config,
+        )
+        engineer.tracker = tracker
+        await replay(args.replay, engineer, args.speed, explain=True, tracker=tracker)
+        if engineer.storage:
+            engineer.storage.close()
+        return
 
     # HOOK 1: initialize STT and persistent audio capture (skipped in --selftest as queries are text-injected)
     if not args.selftest:
@@ -922,6 +1171,7 @@ def parse_args(argv=None):
     p.add_argument("--ptt-action", type=int, default=None, help="in-game 'UDP Action' number (overrides config)")
     p.add_argument("--record", help="save raw packets to this file")
     p.add_argument("--replay", help="replay a recorded file instead of listening")
+    p.add_argument("--explain", action="store_true", help="replay a recorded file and print per-lap detected events without audio")
     p.add_argument("--speed", type=float, default=1.0)
     p.add_argument("--redis", help="redis URL e.g. redis://localhost:6379/0 (overrides config)")
     p.add_argument("--redis-hz", type=float, default=None, help="redis publish rate in Hz (overrides config)")
@@ -1066,6 +1316,15 @@ def main(argv=None):
 
     log_level = getattr(logging, cfg.logging.level.upper(), logging.INFO)
     logging.basicConfig(level=log_level, format=cfg.logging.format)
+    if getattr(cfg.logging, "detectors", False):
+        det_log = logging.getLogger("engineer.detectors")
+        det_log.setLevel(logging.DEBUG)
+        if log_level > logging.DEBUG and not det_log.handlers:
+            ch = logging.StreamHandler()
+            ch.setLevel(logging.DEBUG)
+            ch.setFormatter(logging.Formatter(cfg.logging.format))
+            det_log.addHandler(ch)
+            det_log.propagate = False
 
     try:
         asyncio.run(amain(args, cfg, host, port, ptt_action, redis_url, redis_hz))

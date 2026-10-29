@@ -210,3 +210,115 @@ ai_too_easy:           # consistently far ahead of AI teammate
 
 ai_too_hard:
   - text: "Consistently over a second off {teammate}. No shame in dropping the AI a few notches."
+
+# ---- Finish and overtakes ----
+win_photo_finish:
+  - text: "Photo finish! You took it by {margin}s! Incredible!"
+  - text: "By a whisker! {margin} seconds at the line! Bloody heart attack finish!"
+    level: mild
+  - text: "Fuck me, that was close! Won by {margin}s! Absolute scenes!"
+    level: strong
+
+win_close:
+  - text: "P1! Kept your cool with {name} right on your gearbox. Great drive."
+  - text: "Winner! Squeaked it home by {margin}s. Mega drive."
+  - text: "Get in! P1 by {margin}s! Bloody fantastic defence at the end."
+    level: mild
+  - text: "You fucking beauty! P1, held him off by {margin}s!"
+    level: strong
+
+win_comfortable:
+  - text: "P1! Controlled that beautifully. {margin}s in hand at the flag."
+  - text: "Winner! Comfortable gap of {margin}s at the finish. Top job."
+  - text: "Bloody dominant, {margin}s clear! Drink it in."
+    level: mild
+
+win_dominant:
+  - text: "P1! Pure class. {margin} seconds clear of the rest."
+  - text: "Annihilation. {margin} seconds up the road. In a league of your own."
+  - text: "Bloody hell, were the others even in the same race? {margin}s clear!"
+    level: mild
+  - text: "Fucking destroyed them. {margin} seconds. Unbelievable drive."
+    level: strong
+
+podium_held:
+  - text: "P{pos}! Held off {name} by {margin}s at the flag! Proper grit."
+  - text: "Podium, P{pos}! Gritted your teeth and kept {name} behind. Good stuff."
+  - text: "Bloody brilliant defence for P{pos}! {name} threw everything at you."
+    level: mild
+
+podium_missed_higher:
+  - text: "P{pos}, only {gap}s off P{higher}! So close to that second step."
+  - text: "P{pos}, on the podium! Another lap and P{higher} was yours."
+  - text: "P{pos}! Agonisingly close to P{higher}, but that's a bloody good podium."
+    level: mild
+
+missed_podium:
+  - text: "P4, just {gap}s off the podium! Heartbreaking, but fantastic drive."
+  - text: "P4, so close to silverware. Great race today."
+  - text: "P4, {gap}s off the rostrum. Bloody good effort mate."
+    level: mild
+
+passed_stricken_car:
+  - text: "{name}'s crawling, easy pass."
+  - text: "{name}'s got an issue. Past him, keep focused."
+  - text: "Freebie. {name}'s car is broken."
+
+overtake_clean:
+  - text: "Clinical. Beautiful move on {name} into {corner}."
+  - text: "Textbook pass on {name}. P{pos}."
+  - text: "Clean as a whistle on {name}. Lovely stuff."
+  - text: "Bloody surgical move on {name} into {corner}."
+    level: mild
+
+overtake_brave:
+  - text: "Brave move on {name}! Stuck it right on the edge into {corner}."
+  - text: "Late on the brakes! Ballsy pass on {name}."
+  - text: "Huge commitment into {corner}! Love that."
+  - text: "Bloody hell, you didn't give {name} an inch there!"
+    level: mild
+  - text: "Fucking balls of steel into {corner}! Brilliant pass on {name}."
+    level: strong
+
+overtake_divebomb:
+  - text: "Full send into {corner}! Surprised you made that stick on {name}."
+  - text: "Sent it from downtown! Proper divebomb on {name}."
+  - text: "Bloody hell, that was a lunge and a half on {name}!"
+    level: mild
+  - text: "Holy shit, what a divebomb on {name}! You got away with that one."
+    level: strong
+
+divebomb_contact:
+  - text: "Banged wheels with {name} into {corner}. Bit messy that."
+  - text: "Contact with {name} on the dive. Watch out for stewards."
+  - text: "Rubbing is racing, but that was bloody close with {name}."
+    level: mild
+  - text: "Clattered right into {name}! Watch the bloody penalties!"
+    level: strong
+
+overtake_switchback:
+  - text: "{name} gets the switchback straight away. Sold you a dummy."
+  - text: "{name} cut right back underneath you. Got to protect the exit."
+  - text: "Lost it on the exit. {name} switched back on you."
+
+defend_warning:
+  - text: "{name} is right behind into {corner}, defend."
+  - text: "Watch your mirrors into {corner}, {name}'s closing."
+  - text: "{name}'s right on your gearbox into {corner}. Cover the line."
+  - text: "Car behind is closing fast. Cover the line."
+  - text: "Defend into the corner."
+
+inside_look:
+  - text: "Inside look from {name}! Cover the inside."
+  - text: "{name}'s having a look up the inside into {corner}!"
+  - text: "Door closed on the inside! {name}'s looking."
+  - text: "Inside look! Cover the inside."
+  - text: "Inside look into the corner."
+
+told_you:
+  - text: "Penalty for that divebomb on {name}. Told you."
+  - text: "And there's the penalty. I told you that was over the line."
+  - text: "Stewards didn't like that lunge on {name}. Told you so."
+    level: mild
+  - text: "And there's the fucking penalty. Told you that divebomb was reckless."
+    level: strong

@@ -8,11 +8,13 @@ stored as compressed blobs (NumPy + zlib/deflate) to keep the database small.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import queue
 import sqlite3
 import threading
 import time
+import zlib
 from typing import Any, Optional
 
 import numpy as np
@@ -194,6 +196,38 @@ class SessionStorage:
                 CREATE INDEX IF NOT EXISTS idx_sessions_track ON sessions(track_id, formula, session_type);
                 CREATE INDEX IF NOT EXISTS idx_laps_session ON laps(session_id, lap_num);
                 CREATE INDEX IF NOT EXISTS idx_laps_time ON laps(lap_time_s, is_valid);
+
+                CREATE TABLE IF NOT EXISTS overtakes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_uid TEXT NOT NULL,
+                    lap_num INTEGER NOT NULL,
+                    timestamp REAL NOT NULL,
+                    other_vehicle_idx INTEGER NOT NULL,
+                    other_driver_name TEXT,
+                    direction TEXT NOT NULL,
+                    classification TEXT NOT NULL,
+                    braking_delta_m REAL,
+                    start_gap_m REAL,
+                    overlap_at_turn_in INTEGER,
+                    ran_deep INTEGER,
+                    contact INTEGER,
+                    forced_off INTEGER,
+                    switchback INTEGER,
+                    corner_name TEXT,
+                    raw_features TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_overtakes_session ON overtakes(session_uid, lap_num);
+
+                CREATE TABLE IF NOT EXISTS session_timeline (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_uid TEXT NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    start_time REAL NOT NULL,
+                    end_time REAL NOT NULL,
+                    sample_count INTEGER NOT NULL,
+                    data BLOB NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_timeline_session ON session_timeline(session_uid, chunk_index);
             """)
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN ai_difficulty INTEGER NOT NULL DEFAULT 0;")
@@ -222,6 +256,10 @@ class SessionStorage:
                         self._exec_save_lap(conn, args)
                     elif action == "discard_after":
                         self._exec_discard_after(conn, args)
+                    elif action == "save_overtake":
+                        self._exec_save_overtake(conn, args)
+                    elif action == "save_timeline_chunk":
+                        self._exec_save_timeline_chunk(conn, args)
                     conn.commit()
                 except Exception as e:
                     log.exception("Storage writer error executing %s: %s", action, e)
@@ -329,11 +367,76 @@ class SessionStorage:
               AND lap_num >= ?
         """, (session_uid, lap_num))
 
+    def _exec_save_overtake(self, conn: sqlite3.Connection, data: dict[str, Any]):
+        cur = conn.cursor()
+        raw_feat = data.get("raw_features")
+        if isinstance(raw_feat, dict):
+            raw_feat = json.dumps(raw_feat)
+        cur.execute("""
+            INSERT INTO overtakes (
+                session_uid, lap_num, timestamp, other_vehicle_idx, other_driver_name,
+                direction, classification, braking_delta_m, start_gap_m, overlap_at_turn_in,
+                ran_deep, contact, forced_off, switchback, corner_name, raw_features
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            str(data["session_uid"]),
+            data.get("lap_num", 0),
+            data.get("timestamp", time.time()),
+            data.get("other_vehicle_idx", 0),
+            data.get("other_driver_name", ""),
+            data.get("direction", "pass"),
+            data.get("classification", "clean"),
+            data.get("braking_delta_m"),
+            data.get("start_gap_m"),
+            1 if data.get("overlap_at_turn_in") else 0,
+            1 if data.get("ran_deep") else 0,
+            1 if data.get("contact") else 0,
+            1 if data.get("forced_off") else 0,
+            1 if data.get("switchback") else 0,
+            data.get("corner_name", ""),
+            raw_feat or "",
+        ))
+
+    def _exec_save_timeline_chunk(self, conn: sqlite3.Connection, data: dict[str, Any]):
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO session_timeline (
+                session_uid, chunk_index, start_time, end_time, sample_count, data
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            str(data["session_uid"]),
+            data.get("chunk_index", 0),
+            data.get("start_time", 0.0),
+            data.get("end_time", 0.0),
+            data.get("sample_count", 0),
+            data["data"],
+        ))
+
     # ---- Public Async / Non-blocking Ingestion API -----------------------
     def save_session(self, session_data: dict[str, Any]):
         """Enqueues session metadata creation/update without blocking."""
         if not self._closed:
             self._queue.put(("save_session", dict(session_data)))
+
+    def save_overtake(self, data: dict[str, Any]):
+        """Enqueues an overtake record to be saved without blocking."""
+        if not self._closed:
+            self._queue.put(("save_overtake", dict(data)))
+
+    def save_timeline_chunk(
+        self, session_uid: str | int, chunk_index: int, start_time: float,
+        end_time: float, sample_count: int, compressed_data: bytes
+    ):
+        """Enqueues a compressed 10s timeline snapshot chunk without blocking."""
+        if not self._closed:
+            self._queue.put(("save_timeline_chunk", {
+                "session_uid": str(session_uid),
+                "chunk_index": chunk_index,
+                "start_time": start_time,
+                "end_time": end_time,
+                "sample_count": sample_count,
+                "data": compressed_data,
+            }))
 
     def save_completed_lap(self, lap_data: dict[str, Any], trace: dict[str, np.ndarray] | None = None):
         """Enqueues a completed lap record and its trace blob without blocking."""
@@ -394,6 +497,28 @@ class SessionStorage:
             cur.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
             r = cur.fetchone()
             return dict(r) if r else None
+
+    def get_overtakes(self, session_uid: str | int) -> list[dict[str, Any]]:
+        """Retrieves all overtakes for a session_uid."""
+        with self._reader_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT * FROM overtakes
+                WHERE session_uid = ?
+                ORDER BY timestamp ASC
+            """, (str(session_uid),))
+            return [dict(r) for r in cur.fetchall()]
+
+    def get_timeline(self, session_uid: str | int) -> list[dict[str, Any]]:
+        """Retrieves timeline chunks for a session_uid."""
+        with self._reader_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT * FROM session_timeline
+                WHERE session_uid = ?
+                ORDER BY chunk_index ASC
+            """, (str(session_uid),))
+            return [dict(r) for r in cur.fetchall()]
 
     def get_session_by_uid(self, session_uid: str | int) -> Optional[dict[str, Any]]:
         with self._reader_conn() as conn:

@@ -6,10 +6,14 @@ telemetry. Open-ended questions (handling, setup, strategy) are routed to the AI
 from __future__ import annotations
 
 import heapq
+import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
+
+log = logging.getLogger("engineer.deterministic")
+log_detectors = logging.getLogger("engineer.detectors")
 
 from config import DebriefConfig
 from . import packets
@@ -359,9 +363,10 @@ class Callouts:
         self._fired.add(key)
         return True
 
-    def process(self, sig, st: RaceState) -> list[Callout]:
+    def process(self, sig, st: RaceState, now: float | None = None) -> list[Callout]:
         kind = sig[0]
-        now = time.monotonic()
+        if now is None:
+            now = time.monotonic()
         if kind == "new_session":
             self.__init__(self.debrief_config)
         elif kind == "lap":
@@ -374,16 +379,28 @@ class Callouts:
         elif kind == "event":
             return self._on_event(sig[1], st)
         elif kind == "lap_invalidated":
+            if now - self._last_invalidation_time <= 1.0:
+                return []
             return self._on_lap_invalidated(now)
         elif kind == "track_limits_warning":
+            if now - self._last_warning_time <= 1.0:
+                return []
             return self._on_track_limits_warning(sig[1], now)
         elif kind == "penalty":
-            return self._on_penalty(sig[1])
+            return self._on_penalty(sig[1], st, now)
+        elif kind == "defend_warning":
+            return self._on_defend_warning(sig[1])
         elif kind == "flashback":
             if self.pending_debrief and self.pending_debrief.lap_num > sig[1]:
                 self.pending_debrief = None
                 self.straight_start_time = None
         return []
+
+    def _on_defend_warning(self, info: dict[str, Any]) -> list[Callout]:
+        corner = info.get("corner", "corner")
+        if info.get("inside_look"):
+            return [_c(1, f"Inside look into {corner}.", ttl=1.5)]
+        return [_c(1, f"Defend into {corner}.", ttl=1.5)]
 
     def _on_lap_invalidated(self, now: float) -> list[Callout]:
         self._last_invalidation_time = now
@@ -405,18 +422,73 @@ class Callouts:
             return [_c(0, msg, ttl=5.0)]
         return [_c(1, f"Track limits warning, {self._format_warning(n)}.", ttl=5.0)]
 
-    def _on_penalty(self, ev: packets.Event) -> list[Callout]:
+    def _on_penalty(self, ev: packets.Event, state: RaceState, now: float) -> list[Callout]:
         ptype = ev.penalty_type
-        sec = ev.penalty_time or 0
+        sec = ev.penalty_time if ev.penalty_time is not None else 255
+        raw_b = getattr(ev, "raw_bytes", b"")
+
+        pname = packets.PENALTY_TYPES.get(ptype, f"Unknown({ptype})")
+        iname = packets.INFRINGEMENT_TYPES.get(ev.infringement_type, f"Unknown({ev.infringement_type})")
+        log_detectors.info(
+            "PENA event: type=%s (%s), infringement=%s (%s), car=%s, other=%s, time=%s, lap=%s, raw=%s",
+            ptype, pname, ev.infringement_type, iname, ev.vehicle_idx, ev.other_vehicle_idx,
+            sec, ev.lap_num, raw_b.hex() if raw_b else None
+        )
+
+        is_tt = (
+            getattr(state, "session_type", None) == 13
+            or getattr(state, "is_time_trial", False)
+            or (getattr(state, "session", None) and getattr(state.session, "session_type", None) == 13)
+            or getattr(state, "time_trial", None) is not None
+        )
+        # Time Trial: never speak penalty calls; only "Lap invalidated" (once per lap)
+        if is_tt:
+            if ptype in (10, 11, 12, 13, 14, 15):
+                if now - self._last_invalidation_time <= 1.0:
+                    return []
+                cur_lap = state.me.lap_num if state.me else 0
+                if getattr(self, "_last_tt_invalidation_lap", None) == cur_lap:
+                    return []
+                self._last_tt_invalidation_lap = cur_lap
+                return self._on_lap_invalidated(now)
+            return []
+
+        # If warning (ptype == 5): handled by track-limits warning logic (no "penalty" wording)
+        if ptype == 5:
+            if now - self._last_warning_time <= 1.0:
+                return []
+            warning_num = (state.me.corner_cutting_warnings if state.me else 1) or 1
+            return self._on_track_limits_warning(warning_num, now)
+
+        # If lap invalidated (ptype in 10..15): handled by lap-invalidated logic, merged with warning call, never as a penalty
+        if ptype in (10, 11, 12, 13, 14, 15):
+            if now - self._last_invalidation_time <= 1.0:
+                return []
+            return self._on_lap_invalidated(now)
+
+        # Real penalties:
+        # Check time anomaly: time == 255 is N/A. Any time value > 60 s is an anomaly
+        if sec == 255:
+            pass  # N/A
+        elif sec > 60:
+            log_detectors.warning("Anomaly penalty time %d > 60: raw=%s; not speaking", sec, raw_b.hex() if raw_b else None)
+            return []
+
         if ptype == 0:
             return [_c(0, "Drive-through penalty.", ttl=15.0)]
         elif ptype == 1:
-            if sec > 0:
+            if 1 <= sec <= 60:
                 return [_c(0, f"{sec}-second stop-and-go penalty.", ttl=15.0)]
-            return [_c(0, "Stop-and-go penalty.", ttl=15.0)]
-        elif ptype == 4 or sec > 0:
-            return [_c(0, f"{sec}-second time penalty.", ttl=15.0)]
-        return [_c(0, "Penalty awarded.", ttl=15.0)]
+            return [_c(0, "Stop-go penalty.", ttl=15.0)]
+        elif ptype == 4:
+            if 1 <= sec <= 60:
+                return [_c(0, f"{sec}-second time penalty.", ttl=15.0)]
+            else:
+                return []
+
+        # Anything else: log it, don't speak it unless in explicit allow-list
+        log_detectors.info("PENA unhandled/not spoken penalty type %s (%s)", ptype, pname)
+        return []
 
     def _on_lap(self, rec, st: RaceState):
         out, lap = [], rec.lap

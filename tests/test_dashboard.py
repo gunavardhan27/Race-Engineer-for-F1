@@ -237,8 +237,13 @@ def test_token_authentication():
             pass
     assert exc_info.value.code == 1008
 
-    # 6. WebSocket /ws/live with valid token -> Accepted & receives telemetry
+    # 6. WebSocket /ws/live with valid token -> Accepted & receives initial snapshot + telemetry
     with client.websocket_connect(f"/ws/live?token={token}") as ws:
+        # First message is the immediate full state snapshot on connect
+        init_text = ws.receive_text()
+        init_msg = json.loads(init_text)
+        assert "speed_kph" in init_msg or "live" in init_msg or init_msg.get("type") in ("telemetry", "initial_state")
+
         broadcaster.broadcast_radio("driver", "Box this lap?")
         msg_text = ws.receive_text()
         msg = json.loads(msg_text)

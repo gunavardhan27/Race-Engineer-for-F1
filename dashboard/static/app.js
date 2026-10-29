@@ -1136,6 +1136,19 @@
         if (payload.type === 'radio') {
           console.log('[Dashboard Radio Message]', payload);
           addRadioMessage(payload);
+        } else if (payload.type === 'initial_state') {
+          console.log('[Dashboard Initial State]', payload);
+          if (payload.radio_history && Array.isArray(payload.radio_history)) {
+            payload.radio_history.forEach(m => addRadioMessage(m));
+          }
+          if (payload.overtakes && Array.isArray(payload.overtakes)) {
+            renderOvertakes(payload.overtakes);
+          }
+          if (payload.live) {
+            updateTelemetryUI(payload.live);
+          }
+        } else if (payload.type === 'overtake') {
+          appendOvertakeRow(payload.data || payload);
         } else {
           const isLive = !!payload.session_live;
           const now = Date.now();
@@ -1450,6 +1463,23 @@
       })
       .catch((err) => {
         console.warn('[Dashboard] Could not fetch session laps:', err);
+      });
+    fetchSessionOvertakes(sessionId);
+  }
+
+  function fetchSessionOvertakes(sessionId) {
+    const token = getToken();
+    const url = `/api/sessions/${sessionId}/overtakes?token=${encodeURIComponent(token)}`;
+    fetch(url)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        renderOvertakes(data.overtakes || []);
+      })
+      .catch((err) => {
+        console.warn('[Dashboard] Could not fetch session overtakes:', err);
       });
   }
 
@@ -1918,6 +1948,67 @@
         el.stintLapsTbody.appendChild(tr);
       });
     }
+  }
+
+  function renderOvertakes(overtakes) {
+    const tbody = document.getElementById('overtakes-tbody');
+    if (!tbody) return;
+    if (!overtakes || overtakes.length === 0) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No overtakes recorded for this session.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = '';
+    overtakes.forEach((ot) => {
+      tbody.appendChild(_buildOvertakeRow(ot));
+    });
+  }
+
+  function appendOvertakeRow(ot) {
+    const tbody = document.getElementById('overtakes-tbody');
+    if (!tbody) return;
+    const emptyRow = tbody.querySelector('.empty-row');
+    if (emptyRow) emptyRow.remove();
+    tbody.insertBefore(_buildOvertakeRow(ot), tbody.firstChild);
+  }
+
+  function _buildOvertakeRow(ot) {
+    const tr = document.createElement('tr');
+    const isPass = (ot.direction === 'pass' || ot.move === 'overtake');
+    const moveColor = isPass ? 'var(--color-green)' : 'var(--color-red)';
+    const moveLabel = isPass ? 'PASS' : 'LOST';
+
+    let classBadge = '<span class="badge badge-clean">clean</span>';
+    if (ot.classification === 'brave') {
+      classBadge = '<span class="badge" style="color: #ffaa00; font-weight: 700;">brave</span>';
+    } else if (ot.classification === 'divebomb') {
+      classBadge = '<span class="badge" style="color: #ff4444; font-weight: 700;">divebomb</span>';
+    } else if (ot.classification === 'divebomb_contact') {
+      classBadge = '<span class="badge" style="color: #ff0055; font-weight: 800;">divebomb (contact)</span>';
+    } else if (ot.classification === 'overtake_switchback') {
+      classBadge = '<span class="badge" style="color: #aa44ff; font-weight: 700;">switchback</span>';
+    } else if (ot.classification === 'passed_stricken_car') {
+      classBadge = '<span class="badge" style="color: #888888; font-weight: 600;">stricken</span>';
+    }
+
+    const bDelta = (ot.braking_delta_m != null) ? `${ot.braking_delta_m > 0 ? '+' : ''}${ot.braking_delta_m.toFixed(1)}m` : '-';
+    const sGap = (ot.start_gap_m != null) ? `${ot.start_gap_m.toFixed(1)}m` : '-';
+    const driverName = ot.other_driver_name || `Car ${ot.other_vehicle_idx ?? ot.car_idx ?? '?'}`;
+    const cornerName = ot.corner_name || '-';
+
+    tr.innerHTML = `
+      <td style="font-weight: 700;">Lap ${ot.lap_num || '-'}</td>
+      <td class="bold">${driverName}</td>
+      <td class="bold" style="color: ${moveColor};">${moveLabel}</td>
+      <td>${classBadge}</td>
+      <td>${cornerName}</td>
+      <td class="mono">${bDelta}</td>
+      <td class="mono">${sGap}</td>
+      <td>${ot.overlap_at_turn_in ? '<span style="color: var(--color-green);">✓</span>' : '<span style="color: #666;">-</span>'}</td>
+      <td>${ot.ran_deep ? '<span style="color: #ffaa00;">YES</span>' : '<span style="color: #666;">-</span>'}</td>
+      <td>${ot.contact ? '<span style="color: var(--color-red); font-weight: 700;">COLL</span>' : '<span style="color: #666;">-</span>'}</td>
+      <td>${ot.forced_off ? '<span style="color: #ff4444;">YES</span>' : '<span style="color: #666;">-</span>'}</td>
+    `;
+    return tr;
   }
 
   // ==========================================================================

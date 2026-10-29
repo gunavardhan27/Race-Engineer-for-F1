@@ -87,6 +87,23 @@ persona:
 logging:
   level: "INFO"
   format: "%(asctime)s %(levelname)s %(name)s: %(message)s"
+  detectors: false                                # Enable verbose debug logging for all detector decisions
+
+overtake:
+  confirm_time_s: 2.0
+  proximity_m: 50.0
+
+finish:
+  photo_finish_margin_s: 0.5
+  close_margin_s: 3.0
+  comfortable_margin_s: 10.0
+
+defend:
+  zone_distance_min_m: 150.0
+  zone_distance_max_m: 300.0
+  close_distance_m: 15.0
+  close_time_s: 0.4
+  cooldown_overall_s: 20.0
 
 usage:
   allow_paid: false                                   # Never exceed free tier limits or incur charges

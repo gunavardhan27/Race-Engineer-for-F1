@@ -66,6 +66,23 @@ BASE_COOLDOWNS = {
     "tt_slower": 20.0,
     "ai_too_easy": 999.0,
     "ai_too_hard": 999.0,
+    # Finish and overtakes cooldowns
+    "win_photo_finish": 0.0,
+    "win_close": 0.0,
+    "win_comfortable": 0.0,
+    "win_dominant": 0.0,
+    "podium_held": 0.0,
+    "podium_missed_higher": 0.0,
+    "missed_podium": 0.0,
+    "passed_stricken_car": 10.0,
+    "overtake_clean": 10.0,
+    "overtake_brave": 10.0,
+    "overtake_divebomb": 10.0,
+    "divebomb_contact": 10.0,
+    "overtake_switchback": 5.0,
+    "defend_warning": 20.0,
+    "inside_look": 20.0,
+    "told_you": 0.0,
 }
 
 FREQ_MULTIPLIERS = {
@@ -146,6 +163,15 @@ class PersonalityEngine:
         # Spin heuristic tracker
         self._spin_entry_time: Optional[float] = None
 
+        # Finish detection tracking
+        self._finish_spoken_session_uid: Optional[int | str] = None
+        self._finish_line_pos: Optional[int] = None
+        self._finish_time: float = -999.0
+
+        # Divebomb tracking for told_you reaction
+        self._last_divebomb_time: float = -999.0
+        self._last_divebomb_driver: str = "he"
+
         # Pre-rendered audio cache: md5(text+voice) -> audio ndarray, sample_rate
         self.prerendered_audio: Dict[str, Tuple[Any, int]] = {}
 
@@ -158,6 +184,10 @@ class PersonalityEngine:
         self.bags.clear()
         self.last_fired_per_event.clear()
         self.last_reaction_time = -999.0
+        self._finish_spoken_session_uid = None
+        self._finish_line_pos = None
+        self._finish_time = -999.0
+        self._last_divebomb_time = -999.0
 
     def _filter_lines_by_profanity(self, raw_lines: List[PersonaLine]) -> List[PersonaLine]:
         prof = self.config.profanity.lower()
@@ -301,6 +331,7 @@ class PersonalityEngine:
         state: RaceState,
         extra_context: Optional[Dict[str, Any]] = None,
         now: Optional[float] = None,
+        bypass_cooldown: bool = False,
     ) -> Optional[Callout]:
         """Evaluates cooldowns, checks escalation, formats line, and returns Callout or None."""
         if self.config.name == "professional" or not self.lines:
@@ -325,7 +356,7 @@ class PersonalityEngine:
                 event_name = "escalation"
                 ctx["count"] = len(recent)
 
-        if self._is_on_cooldown(event_name, now):
+        if not bypass_cooldown and self._is_on_cooldown(event_name, now):
             return None
 
         line = self._get_next_line(event_name, ctx)
@@ -382,6 +413,10 @@ class PersonalityEngine:
         if now is None:
             now = time.monotonic()
 
+        # Suppress all other persona lines for 8 s after the finish
+        if now < self._finish_time + 8.0 and kind not in ("finished", "final_classification"):
+            return None
+
         p = state.player
         me = state.me
         current_lap = me.lap_num if me else 1
@@ -430,11 +465,8 @@ class PersonalityEngine:
             elif ev.code == "RTMT" and ev.vehicle_idx == p:
                 return self.trigger("retirement", state, {}, now=now)
 
-            elif ev.code == "RCWN" and ev.vehicle_idx == p:
-                return self.trigger("win", state, {"pos": 1}, now=now)
-
-            elif ev.code == "CHQF":
-                # Chequered flag; final classification packet will follow
+            elif ev.code in ("RCWN", "CHQF"):
+                # Result is handled deterministically via ('finished', info); do not fire a second message
                 pass
 
         elif kind == "personal_best":
@@ -495,26 +527,156 @@ class PersonalityEngine:
             return self.trigger("track_limits", state, {"count": n}, now=now)
 
         elif kind == "penalty":
+            ev = sig[1]
+            ptype = getattr(ev, "penalty_type", None)
+            sec = getattr(ev, "penalty_time", 0) or 0
+            is_tt = (getattr(state, "session_type", None) == 13) or getattr(state, "is_time_trial", False)
+            if is_tt:
+                return None
+
+            # Only real penalties: 0 (drive-through), 1 (stop-go), 4 (time penalty with 1 <= sec <= 60)
+            is_real_penalty = (ptype in (0, 1)) or (ptype == 4 and 1 <= sec <= 60)
+            if not is_real_penalty:
+                return None
+
+            # If a real penalty arrives within 10s after a divebomb -> told_you
+            if now - self._last_divebomb_time <= 10.0:
+                ctx = {"name": self._last_divebomb_driver}
+                return self.trigger("told_you", state, ctx, now=now, bypass_cooldown=True)
+
             return self.trigger("penalty", state, {}, now=now)
 
         elif kind == "purple_sector":
             sector_num = sig[1]
             return self.trigger("purple_sector", state, {"sector": sector_num}, now=now)
 
-        # 4. Final Classification (win, podium, points, no_points)
+        # 4. Finish detection signal
+        elif kind == "finished":
+            info = sig[1]
+            s_uid = info.get("session_uid")
+            if s_uid is not None and self._finish_spoken_session_uid == s_uid:
+                return None
+            self._finish_spoken_session_uid = s_uid
+            self._finish_time = now
+            pos = info.get("position", 1)
+            self._finish_line_pos = pos
+
+            gap_behind_ms = info.get("gap_behind_ms")
+            gap_ahead_ms = info.get("gap_ahead_ms")
+            gap_behind_s = (gap_behind_ms / 1000.0) if gap_behind_ms is not None else 999.0
+            gap_ahead_s = (gap_ahead_ms / 1000.0) if gap_ahead_ms is not None else 999.0
+            penalties_s = info.get("penalties_s", 0)
+
+            behind_idx = info.get("behind_idx")
+            behind_name = state.name(behind_idx).split()[-1] if (behind_idx is not None and state.name(behind_idx)) else "he"
+
+            f_cfg = getattr(self.config, "finish", None)
+            photo_m = getattr(f_cfg, "photo_finish_margin_s", 0.5) if f_cfg else 0.5
+            close_m = getattr(f_cfg, "close_margin_s", 3.0) if f_cfg else 3.0
+            comf_m = getattr(f_cfg, "comfortable_margin_s", 10.0) if f_cfg else 10.0
+            pod_held_m = getattr(f_cfg, "podium_held_behind_margin_s", 1.0) if f_cfg else 1.0
+            pod_miss_m = getattr(f_cfg, "podium_missed_higher_ahead_margin_s", 1.0) if f_cfg else 1.0
+            miss_pod_m = getattr(f_cfg, "missed_podium_ahead_margin_s", 2.0) if f_cfg else 2.0
+
+            ctx = {
+                "pos": pos,
+                "margin": f"{gap_behind_s:.1f}",
+                "gap": f"{gap_ahead_s:.1f}",
+                "name": behind_name,
+                "higher": pos - 1 if pos > 1 else 1,
+            }
+
+            if pos == 1:
+                if gap_behind_s < photo_m:
+                    line_key = "win_photo_finish"
+                elif gap_behind_s < close_m:
+                    line_key = "win_close"
+                elif gap_behind_s < comf_m:
+                    line_key = "win_comfortable"
+                else:
+                    line_key = "win_dominant"
+            elif 2 <= pos <= 3:
+                if gap_behind_s < pod_held_m:
+                    line_key = "podium_held"
+                elif gap_ahead_s < pod_miss_m:
+                    line_key = "podium_missed_higher"
+                else:
+                    line_key = "podium"
+            elif pos == 4:
+                if gap_ahead_s <= miss_pod_m:
+                    line_key = "missed_podium"
+                else:
+                    line_key = "points"
+            elif 5 <= pos <= 10:
+                line_key = "points"
+            else:
+                line_key = "no_points"
+
+            spoken = self.trigger(line_key, state, ctx, now=now, bypass_cooldown=True)
+            if not spoken:
+                fallback_key = "win" if pos == 1 else ("podium" if pos <= 3 else ("points" if pos <= 10 else "no_points"))
+                spoken = self.trigger(fallback_key, state, ctx, now=now, bypass_cooldown=True)
+
+            if penalties_s > 0 and spoken:
+                pen_word = {5: "five", 10: "ten", 3: "three"}.get(penalties_s, str(penalties_s))
+                spoken.text += f" That's provisional, pending the {pen_word}-second penalty."
+
+            return spoken
+
+        # 5. Overtakes and position changes
+        elif kind == "overtake_confirmed":
+            rec = sig[1]
+            cls_name = rec.get("classification", "clean")
+            name = rec.get("other_driver_name", "he")
+            corner = rec.get("corner_name", "the corner")
+            pos = rec.get("position", state.me.position if state.me else 0)
+
+            ctx = {"name": name, "pos": pos, "corner": corner}
+            if cls_name == "passed_stricken_car":
+                return self.trigger("passed_stricken_car", state, ctx, now=now)
+            elif cls_name == "overtake_switchback":
+                return self.trigger("overtake_switchback", state, ctx, now=now)
+            elif cls_name == "divebomb":
+                self._last_divebomb_time = now
+                self._last_divebomb_driver = name
+                return self.trigger("overtake_divebomb", state, ctx, now=now)
+            elif cls_name == "divebomb_contact":
+                self._last_divebomb_time = now
+                self._last_divebomb_driver = name
+                return self.trigger("divebomb_contact", state, ctx, now=now)
+            elif cls_name == "brave":
+                return self.trigger("overtake_brave", state, ctx, now=now)
+            else:
+                res = self.trigger("overtake_clean", state, ctx, now=now)
+                if not res:
+                    res = self.trigger("overtake_made", state, ctx, now=now)
+                return res
+
+        elif kind == "overtaken_confirmed":
+            rec = sig[1]
+            name = rec.get("other_driver_name", "he")
+            pos = rec.get("position", state.me.position if state.me else 0)
+            ctx = {"name": name, "pos": pos}
+            return self.trigger("overtaken", state, ctx, now=now)
+
+        elif kind == "defend_warning":
+            info = sig[1]
+            corner = info.get("corner", "corner")
+            name = info.get("driver", "he")
+            ctx = {"name": name, "corner": corner}
+            if info.get("inside_look"):
+                return self.trigger("inside_look", state, ctx, now=now)
+            return self.trigger("defend_warning", state, ctx, now=now)
+
+        # 6. Final Classification (correction only if classified pos != finish pos)
         elif kind == "final_classification":
             cars = sig[1]
             if cars and p < len(cars):
                 fc = cars[p]
                 pos = fc.position
-                ctx = {"pos": pos}
-                if pos == 1:
-                    return self.trigger("win", state, ctx, now=now)
-                elif 2 <= pos <= 3:
-                    return self.trigger("podium", state, ctx, now=now)
-                elif 4 <= pos <= 10 or fc.points > 0:
-                    return self.trigger("points", state, ctx, now=now)
-                else:
-                    return self.trigger("no_points", state, ctx, now=now)
+                if self._finish_line_pos is not None and pos != self._finish_line_pos:
+                    self._finish_line_pos = pos
+                    return _c(2, f"Correction: penalties applied, classified P{pos}.", ttl=10.0)
+            return None
 
         return None

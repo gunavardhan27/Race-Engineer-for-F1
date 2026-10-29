@@ -172,6 +172,43 @@ class PersonaConfig:
 class LoggingConfig:
     level: str = "INFO"
     format: str = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    detectors: bool = False
+
+
+@dataclass
+class OvertakeConfig:
+    confirm_time_s: float = 2.0
+    proximity_m: float = 50.0
+    clean_braking_delta_max_m: float = 10.0
+    brave_braking_delta_min_m: float = 10.0
+    brave_braking_delta_max_m: float = 25.0
+    brave_start_gap_min_m: float = -8.0
+    brave_start_gap_max_m: float = -4.0
+    divebomb_start_gap_max_m: float = -8.0
+    divebomb_braking_delta_min_m: float = 25.0
+    divebomb_min_speed_delta_kph: float = 15.0
+    divebomb_exit_speed_delta_kph: float = -10.0
+
+
+@dataclass
+class FinishConfig:
+    photo_finish_margin_s: float = 0.5
+    close_margin_s: float = 3.0
+    comfortable_margin_s: float = 10.0
+    podium_held_behind_margin_s: float = 1.0
+    podium_missed_higher_ahead_margin_s: float = 1.0
+    missed_podium_ahead_margin_s: float = 2.0
+
+
+@dataclass
+class DefendConfig:
+    zone_distance_min_m: float = 150.0
+    zone_distance_max_m: float = 300.0
+    close_distance_m: float = 15.0
+    close_time_s: float = 0.4
+    inside_move_threshold_m: float = 1.0
+    inside_distance_threshold_m: float = 10.0
+    cooldown_overall_s: float = 20.0
 
 
 @dataclass
@@ -238,6 +275,9 @@ class AppConfig:
     volumes: VolumesConfig = field(default_factory=VolumesConfig)
     pace: PaceConfig = field(default_factory=PaceConfig)
     quali: QualiConfig = field(default_factory=QualiConfig)
+    overtake: OvertakeConfig = field(default_factory=OvertakeConfig)
+    finish: FinishConfig = field(default_factory=FinishConfig)
+    defend: DefendConfig = field(default_factory=DefendConfig)
 
 
 def _load_dataclass(cls: type, data: Any, prefix: str = "") -> Any:

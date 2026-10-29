@@ -1,6 +1,7 @@
 """Live race state built from parsed packets, plus the derived numbers an engineer uses."""
 from __future__ import annotations
 
+import logging
 import math
 import time
 from collections import deque
@@ -9,6 +10,9 @@ from dataclasses import dataclass
 from . import packets
 from .packets import PacketId, udp_action
 from setups import compute_setup_fingerprint
+
+log = logging.getLogger("engineer.state")
+log_detectors = logging.getLogger("engineer.detectors")
 
 TYRES = ("rear left", "rear right", "front left", "front right")   # F1 wheel order
 COMPOUNDS = {16: "softs", 17: "mediums", 18: "hards", 7: "inters", 8: "wets"}
@@ -74,6 +78,7 @@ class RaceState:
         self.names: dict[int, str] = {}
         self.participants: dict[int, packets.Participant] = {}
         self.last_packet_time = 0.0
+        self.session_time = 0.0
         self.laps: deque[LapRecord] = deque(maxlen=self._history)
         self._lap_num = None
         self._lap_invalid = False
@@ -103,19 +108,29 @@ class RaceState:
         self._blunder_moment_this_lap: str | None = None
         self._player_s1_evaluated = False
         self._player_s2_evaluated = False
+        self._player_prev_result_status = 0
 
     # ---- ingestion -------------------------------------------------------
     def update(self, h: packets.Header, data) -> list[tuple]:
         """Apply one parsed packet. Returns signals: ('lap', rec), ('ptt', bool),
         ('event', Event), ('damage',), ('new_session',), ('flashback', lap_num),
         ('lap_invalidated',), ('track_limits_warning', n), ('penalty', Event),
-        ('final_classification', data)."""
+        ('final_classification', data), ('finished', info)."""
         signals = []
+        if h.session_uid == 0:
+            log_detectors.debug("Ignoring packet with session_uid == 0")
+            return signals
+
         self.last_packet_time = time.monotonic()
-        if h.session_uid != self.session_uid:
+        self.session_time = getattr(h, "session_time", 0.0)
+        if self.session_uid is None:
+            self.session_uid = h.session_uid
+        elif h.session_uid != self.session_uid:
+            log.info("Session reset: old_uid=%s, new_uid=%s", self.session_uid, h.session_uid)
+            log_detectors.info("Session reset: old_uid=%s, new_uid=%s", self.session_uid, h.session_uid)
             self._reset(h.session_uid)
             self.last_packet_time = time.monotonic()
-            signals.append(("new_session",))
+            signals.append(("new_session", h.session_uid))
         self.player = h.player_idx
         pid = h.packet_id
         if pid == PacketId.MOTION:
@@ -123,6 +138,33 @@ class RaceState:
         elif pid == PacketId.LAP_DATA:
             self.lap = data
             if data:
+                if self.player < len(data):
+                    me_c = data[self.player]
+                    prev_status = getattr(self, "_player_prev_result_status", 0)
+                    self._player_prev_result_status = me_c.result_status
+                    if prev_status == 2 and me_c.result_status == 3:
+                        pos = me_c.position
+                        gap_ahead_ms = me_c.gap_to_car_ahead_ms
+                        gap_behind_ms = None
+                        behind_idx = None
+                        for ci, c in enumerate(data):
+                            if c.position == pos + 1:
+                                gap_behind_ms = c.gap_to_car_ahead_ms
+                                behind_idx = ci
+                                break
+                        finish_info = {
+                            "position": pos,
+                            "gap_ahead_ms": gap_ahead_ms,
+                            "gap_behind_ms": gap_behind_ms,
+                            "penalties_s": getattr(me_c, "penalties_s", 0),
+                            "behind_idx": behind_idx,
+                            "session_uid": self.session_uid,
+                        }
+                        log_detectors.info(
+                            "Finish detected: status 2->3, pos=%d, gap_ahead_ms=%s, gap_behind_ms=%s, penalties_s=%d",
+                            pos, gap_ahead_ms, gap_behind_ms, finish_info["penalties_s"]
+                        )
+                        signals.append(("finished", finish_info))
                 for i, c in enumerate(data):
                     if hasattr(c, "speed_trap_kph") and c.speed_trap_kph > self.speed_traps_all_cars.get(i, 0.0):
                         self.speed_traps_all_cars[i] = c.speed_trap_kph
@@ -313,6 +355,26 @@ class RaceState:
     @property
     def me(self):
         return self._mine(self.lap)
+
+    @property
+    def track_length(self) -> float:
+        if self.session and getattr(self.session, "track_length_m", 0) > 0:
+            return float(self.session.track_length_m)
+        return getattr(self, "_track_length", 5000.0)
+
+    @track_length.setter
+    def track_length(self, val: float):
+        self._track_length = float(val)
+
+    @property
+    def safety_car(self) -> int:
+        if self.session and hasattr(self.session, "safety_car"):
+            return self.session.safety_car
+        return getattr(self, "_safety_car", 0)
+
+    @safety_car.setter
+    def safety_car(self, val: int):
+        self._safety_car = int(val)
 
     @property
     def my_status(self):

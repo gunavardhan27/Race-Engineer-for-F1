@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import hmac
 import json
 import logging
@@ -9,6 +10,7 @@ import re
 import secrets
 import socket
 import time
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -209,10 +211,14 @@ class Broadcaster:
     def __init__(self):
         self._clients: set[asyncio.Queue] = set()
         self._last_payload: dict[str, Any] | None = None
+        self._radio_history: deque[dict[str, Any]] = deque(maxlen=100)
 
     @property
     def client_count(self) -> int:
         return len(self._clients)
+
+    def get_radio_history(self) -> list[dict[str, Any]]:
+        return list(self._radio_history)
 
     def register(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=1)
@@ -245,6 +251,7 @@ class Broadcaster:
             "latency_ms": latency_ms,
             "timestamp": time.time(),
         }
+        self._radio_history.append(msg)
         self.push_message(msg)
 
     def push_message(self, msg: dict[str, Any] | str):
@@ -542,6 +549,53 @@ def create_app(
             analysis["compound_name"] = COMPOUNDS.get(compound_id, "Unknown")
             results.append(analysis)
         return results
+
+    @app.get("/api/session/timeline")
+    async def get_session_timeline(
+        session_uid: str | None = None,
+        token_param: str | None = Query(None, alias="token"),
+    ):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        uid = session_uid or str(state.session_uid or "")
+        if not uid or not storage:
+            return {"session_uid": uid, "samples": []}
+        chunks = storage.get_timeline(uid)
+        samples = []
+        for c in chunks:
+            try:
+                raw_json = zlib.decompress(c["data"]).decode("utf-8")
+                samples.extend(json.loads(raw_json))
+            except Exception as e:
+                log.warning("Failed to decompress timeline chunk: %s", e)
+        return {"session_uid": uid, "samples": samples}
+
+    @app.get("/api/session/overtakes")
+    async def get_session_overtakes(
+        session_uid: str | None = None,
+        token_param: str | None = Query(None, alias="token"),
+    ):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        uid = session_uid or str(state.session_uid or "")
+        if not uid or not storage:
+            return {"session_uid": uid, "overtakes": []}
+        return {"session_uid": uid, "overtakes": storage.get_overtakes(uid)}
+
+    @app.get("/api/sessions/{session_id}/overtakes")
+    async def get_session_overtakes_by_id(
+        session_id: int,
+        token_param: str | None = Query(None, alias="token"),
+    ):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        if not storage:
+            return {"session_id": session_id, "overtakes": []}
+        sess = storage.get_session_by_id(session_id)
+        if not sess:
+            return {"session_id": session_id, "overtakes": []}
+        uid = sess.get("session_uid", "")
+        return {"session_id": session_id, "session_uid": uid, "overtakes": storage.get_overtakes(uid)}
 
     # ==================== SETUPS API ENDPOINTS ====================
 
@@ -1340,6 +1394,34 @@ def create_app(
         await websocket.accept()
         q = broadcaster.register()
         try:
+            # Immediately send full current snapshot plus history upon connect
+            snap = build_live_payload(state, track_map)
+            laps_history = [
+                {
+                    "lap": l.lap,
+                    "lap_time_ms": l.lap_time_ms,
+                    "invalid": l.invalid,
+                    "position": l.position,
+                    "gap_ahead_ms": l.gap_ahead_ms,
+                    "gap_behind_ms": l.gap_behind_ms,
+                }
+                for l in state.laps
+            ]
+            radio_hist = broadcaster.get_radio_history()
+            overtakes_hist = []
+            if storage and state.session_uid:
+                overtakes_hist = storage.get_overtakes(state.session_uid)
+
+            snap["radio_history"] = radio_hist
+            snap["overtakes"] = overtakes_hist
+            snap["history"] = {
+                "laps": laps_history,
+                "radio_log": radio_hist,
+                "timing_tower": snap.get("timing_tower", []),
+                "overtakes": overtakes_hist,
+            }
+            await websocket.send_text(json.dumps(snap))
+
             while True:
                 msg = await q.get()
                 await websocket.send_text(msg)
@@ -1419,9 +1501,15 @@ class DashboardServer:
     async def _run_broadcast(self, hz: float):
         interval = 1.0 / hz
         last_heartbeat = 0.0
+        last_1hz_time = 0.0
+        chunk_index = 0
+        chunk_start_time = time.time()
+        timeline_samples: list[dict[str, Any]] = []
+
         try:
             while True:
                 now = time.monotonic()
+                wall_now = time.time()
                 force_push = (now - last_heartbeat) >= 1.0
                 if self.track_map:
                     self.track_map.update_from_state(self.state)
@@ -1438,6 +1526,38 @@ class DashboardServer:
                 pushed = self.broadcaster.broadcast_state(payload, force=force_push)
                 if pushed:
                     last_heartbeat = now
+
+                # 1 Hz snapshot timeline recording in compressed 10-second chunks
+                if wall_now - last_1hz_time >= 1.0:
+                    last_1hz_time = wall_now
+                    s_uid = self.state.session_uid
+                    if s_uid and s_uid != 0 and self.storage:
+                        me = self.state.me
+                        tel = self.state.my_telemetry
+                        sample = {
+                            "t": round(wall_now, 2),
+                            "lap": me.lap_num if me else 0,
+                            "pos": me.position if me else 0,
+                            "speed": tel.speed_kph if tel else 0,
+                            "throttle": tel.throttle if tel else 0.0,
+                            "brake": tel.brake if tel else 0.0,
+                            "steer": tel.steer if tel else 0.0,
+                            "gear": tel.gear if tel else 0,
+                            "rpm": tel.rpm if tel else 0,
+                            "dist": me.lap_distance if me else 0.0,
+                            "total_dist": getattr(me, "total_distance", 0.0) if me else 0.0,
+                        }
+                        timeline_samples.append(sample)
+                        if len(timeline_samples) >= 10:
+                            raw_b = json.dumps(timeline_samples).encode("utf-8")
+                            comp_b = zlib.compress(raw_b, level=6)
+                            self.storage.save_timeline_chunk(
+                                s_uid, chunk_index, chunk_start_time, wall_now, len(timeline_samples), comp_b
+                            )
+                            chunk_index += 1
+                            timeline_samples = []
+                            chunk_start_time = wall_now
+
                 await asyncio.sleep(interval)
         except asyncio.CancelledError:
             pass
