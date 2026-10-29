@@ -278,3 +278,78 @@ def get_lap_comparison_summary(
             "worst_corner": worst_corner,
         },
     }
+
+
+def format_lap_time(ms: int) -> str:
+    """Formats millisecond lap time into e.g. '1:28.4' or '59.2'."""
+    if ms <= 0:
+        return "0.0"
+    minutes = ms // 60000
+    seconds = (ms % 60000) / 1000.0
+    if minutes > 0:
+        return f"{minutes}:{seconds:04.1f}"
+    return f"{seconds:.1f}"
+
+
+def compute_lap_debrief(
+    storage: SessionStorage,
+    session_uid: int,
+    track_id: int,
+    formula: int,
+    session_type: int,
+    completed_lap_num: int,
+    lap_time_ms: int,
+    is_invalid: bool,
+    stint: int = 0,
+    corner_names: Optional[list[str]] = None,
+    reference_mode: str = "session",
+    worst_corner_threshold_s: float = 0.15,
+) -> str:
+    """Computes the end-of-lap debrief text, analyzing the worst corner against the reference lap."""
+    time_str = format_lap_time(lap_time_ms)
+    if is_invalid:
+        return f"{time_str}, lap was deleted."
+
+    sess = storage.get_session_by_uid(session_uid)
+    if not sess:
+        return f"{time_str}, that's your best lap."
+
+    session_id = sess["id"]
+    laps = storage.get_laps_for_session(session_id)
+    curr_lap = next((l for l in reversed(laps) if l["lap_num"] == completed_lap_num), None)
+    curr_lap_id = curr_lap["id"] if curr_lap else None
+
+    ref = storage.get_reference_lap(
+        session_id=session_id,
+        track_id=track_id,
+        formula=formula,
+        session_type=session_type,
+        stint=stint,
+        mode=reference_mode,
+        exclude_lap_id=curr_lap_id,
+    )
+
+    lap_time_s = lap_time_ms / 1000.0
+    if not ref or lap_time_s <= ref["lap_time_s"]:
+        return f"{time_str}, that's your best lap."
+
+    delta_s = round(lap_time_s - ref["lap_time_s"], 1)
+    text = f"{time_str}, plus {delta_s:.1f} to your best."
+
+    if curr_lap_id and ref.get("id"):
+        curr_trace = storage.get_lap_trace(curr_lap_id)
+        ref_trace = storage.get_lap_trace(ref["id"])
+        if curr_trace and ref_trace:
+            corners = analyze_corners(curr_trace, ref_trace, corner_names=corner_names)
+            if corners:
+                worst = max(corners, key=lambda c: c["time_gained_s"])
+                c_delta = worst["time_gained_s"]
+                c_spd = worst["speed_diff_kph"]
+                c_name = worst["corner"]
+                if c_delta >= worst_corner_threshold_s:
+                    if c_spd < -2.0:
+                        text += f" Lost {c_delta:.1f} in {c_name}, apex speed was {abs(c_spd):.0f} kph down."
+                    else:
+                        text += f" Lost {c_delta:.1f} in {c_name}."
+
+    return text

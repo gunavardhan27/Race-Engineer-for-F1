@@ -69,6 +69,13 @@ class CarMotion:
     g_lat: float
     g_lon: float
     g_vert: float
+    y: float = 0.0
+    fwd_x: float = 0.0
+    fwd_y: float = 0.0
+    fwd_z: float = 0.0
+    right_x: float = 0.0
+    right_y: float = 0.0
+    right_z: float = 0.0
 
 
 @dataclass(slots=True)
@@ -88,6 +95,8 @@ class LapData:
     result_status: int       # 2 active, 3 finished, 4+ out
     sector1_ms: int = 0
     sector2_ms: int = 0
+    total_warnings: int = 0
+    corner_cutting_warnings: int = 0
 
 
 @dataclass(slots=True)
@@ -182,6 +191,11 @@ class Event:
     lap_time: float | None = None
     sc_type: int | None = None
     sc_event: int | None = None
+    penalty_type: int | None = None
+    infringement_type: int | None = None
+    penalty_time: int | None = None
+    other_vehicle_idx: int | None = None
+    places_gained: int | None = None
 
 
 @dataclass(slots=True)
@@ -278,10 +292,17 @@ def parse_motion(buf: bytes, h: Header):
     cars = []
     for i in range(NUM_CARS):
         f = MOTION.unpack_from(buf, HEADER.size + i * stride)
-        # f[0]: x, f[2]: z, f[12]: g_lat, f[13]: g_lon, f[14]: g_vert, f[15]: yaw
+        # f[0]: x, f[1]: y, f[2]: z
+        # f[6..8]: worldForwardDirX, Y, Z (int16)
+        # f[9..11]: worldRightDirX, Y, Z (int16)
+        # f[12]: g_lat, f[13]: g_lon, f[14]: g_vert, f[15]: yaw
         cars.append(CarMotion(
             x=f[0], z=f[2], yaw=f[15],
-            g_lat=f[12], g_lon=f[13], g_vert=f[14]))
+            g_lat=f[12], g_lon=f[13], g_vert=f[14],
+            y=f[1],
+            fwd_x=f[6] / 32767.0, fwd_y=f[7] / 32767.0, fwd_z=f[8] / 32767.0,
+            right_x=f[9] / 32767.0, right_y=f[10] / 32767.0, right_z=f[11] / 32767.0,
+        ))
     return cars
 
 
@@ -300,7 +321,9 @@ def parse_lap_data(buf: bytes, h: Header):
             num_pit_stops=f[16], sector=f[17], lap_invalid=bool(f[18]),
             penalties_s=f[19], result_status=f[26],
             sector1_ms=f[3] * 60_000 + f[2],
-            sector2_ms=f[5] * 60_000 + f[4]))
+            sector2_ms=f[5] * 60_000 + f[4],
+            total_warnings=f[20],
+            corner_cutting_warnings=f[21]))
     return cars
 
 
@@ -397,6 +420,17 @@ def parse_event(buf: bytes, h: Header):
         ev.vehicle_idx, ev.lap_time = struct.unpack_from("<Bf", buf, p)
     elif ev.code == "SCAR":
         ev.sc_type, ev.sc_event = struct.unpack_from("<BB", buf, p)   # event: 0 deployed, 1 returning, 2 returned, 3 resume
+    elif ev.code == "PENA":
+        if len(buf) >= p + 7:
+            (
+                ev.penalty_type,
+                ev.infringement_type,
+                ev.vehicle_idx,
+                ev.other_vehicle_idx,
+                ev.penalty_time,
+                _,
+                ev.places_gained,
+            ) = struct.unpack_from("<BBBBBBB", buf, p)
     elif ev.code in ("RTMT", "TMPT", "DRSF"):
         ev.vehicle_idx = buf[p]
     return ev

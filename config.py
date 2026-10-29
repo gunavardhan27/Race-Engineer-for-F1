@@ -106,6 +106,25 @@ class DashboardConfig:
 
 
 @dataclass
+class SpotterConfig:
+    enabled: bool = True
+    lateral_distance_m: float = 3.6
+    longitudinal_distance_m: float = 4.8
+    still_there_interval_s: float = 2.5
+    min_speed_kph: float = 20.0
+    ttl_s: float = 0.6
+
+
+@dataclass
+class DebriefConfig:
+    auto_lap_debrief: bool = True
+    reference_lap: str = "session"   # "session", "stint", "all_time"
+    worst_corner_threshold_s: float = 0.15
+    track_limits_callouts: bool = True
+    track_limits_penalty_at: int | None = None
+
+
+@dataclass
 class LoggingConfig:
     level: str = "INFO"
     format: str = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -121,6 +140,8 @@ class AppConfig:
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     redis: RedisConfig = field(default_factory=RedisConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    spotter: SpotterConfig = field(default_factory=SpotterConfig)
+    debrief: DebriefConfig = field(default_factory=DebriefConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 

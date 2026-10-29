@@ -472,6 +472,55 @@ class SessionStorage:
 
             return None
 
+    def get_reference_lap(
+        self,
+        session_id: int,
+        track_id: int,
+        formula: Optional[int] = None,
+        session_type: Optional[int] = None,
+        stint: Optional[int] = None,
+        mode: str = "session",
+        exclude_lap_id: Optional[int] = None,
+    ) -> Optional[dict[str, Any]]:
+        """Retrieves reference valid lap based on mode: 'session', 'stint', or 'all_time'."""
+        with self._reader_conn() as conn:
+            cur = conn.cursor()
+            if mode == "stint" and stint is not None:
+                query = """
+                    SELECT l.*, s.track_id, s.formula, s.session_type
+                    FROM laps l
+                    JOIN sessions s ON l.session_id = s.id
+                    WHERE l.session_id = ? AND l.stint = ? AND l.is_valid = 1 AND l.lap_time_s > 0
+                """
+                params = [session_id, stint]
+                if exclude_lap_id:
+                    query += " AND l.id != ?"
+                    params.append(exclude_lap_id)
+                query += " ORDER BY l.lap_time_s ASC LIMIT 1"
+                cur.execute(query, params)
+                r = cur.fetchone()
+                if r:
+                    return dict(r)
+
+            if mode in ("session", "stint"):
+                query = """
+                    SELECT l.*, s.track_id, s.formula, s.session_type
+                    FROM laps l
+                    JOIN sessions s ON l.session_id = s.id
+                    WHERE l.session_id = ? AND l.is_valid = 1 AND l.lap_time_s > 0
+                """
+                params = [session_id]
+                if exclude_lap_id:
+                    query += " AND l.id != ?"
+                    params.append(exclude_lap_id)
+                query += " ORDER BY l.lap_time_s ASC LIMIT 1"
+                cur.execute(query, params)
+                r = cur.fetchone()
+                if r:
+                    return dict(r)
+
+            return self.get_personal_best(track_id, formula=formula, session_type=session_type)
+
 
 class LapTraceCollector:
     """Collects player telemetry throughout a lap, handles flashbacks, and produces resampled traces."""

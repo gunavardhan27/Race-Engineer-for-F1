@@ -9,7 +9,10 @@ import heapq
 import re
 import time
 from dataclasses import dataclass, field
+from typing import Optional
 
+from config import DebriefConfig
+from . import packets
 from .state import COMPOUNDS, TYRES, WEATHER, RaceState
 
 # Words that mean the driver wants judgment, not a number -> AI agent.
@@ -209,11 +212,70 @@ def _c(priority, text, ttl=20.0):
     return Callout(priority, time.monotonic(), text, ttl)
 
 
+@dataclass
+class PendingDebrief:
+    lap_num: int
+    created_at: float
+    text: str
+
+
 class Callouts:
-    def __init__(self):
+    def __init__(self, debrief_config: Optional[DebriefConfig] = None):
+        self.debrief_config = debrief_config
         self._last: dict = {}      # cooldown key -> lap last fired
         self._fired: set = set()   # one-shot keys
         self._prev_damage = None
+        self._last_warning_time: float = 0.0
+        self._last_warning_num: int = 0
+        self._last_invalidation_time: float = 0.0
+        self._last_invalidation_combined: bool = False
+        self.pending_debrief: Optional[PendingDebrief] = None
+        self.straight_start_time: Optional[float] = None
+
+    def _format_warning(self, n: int) -> str:
+        limit = self.debrief_config.track_limits_penalty_at if self.debrief_config else None
+        if limit is not None:
+            return f"{n} of {limit}"
+        return f"number {n}"
+
+    def queue_debrief(self, text: str, lap_num: int, now: Optional[float] = None) -> None:
+        """Queues a debrief to be released on a straight or after 15s. Overwrites older pending debriefs."""
+        if not text:
+            return
+        if now is None:
+            now = time.monotonic()
+        self.pending_debrief = PendingDebrief(lap_num=lap_num, created_at=now, text=text)
+        self.straight_start_time = None
+
+    def check_debrief_release(self, st: RaceState, now: Optional[float] = None) -> list[Callout]:
+        """Releases queued debrief when speed > 200 kph and |steer| < 0.1 for 1s, or after 15s."""
+        if self.pending_debrief is None:
+            return []
+        if now is None:
+            now = time.monotonic()
+
+        elapsed = now - self.pending_debrief.created_at
+        if elapsed >= 15.0:
+            text = self.pending_debrief.text
+            self.pending_debrief = None
+            self.straight_start_time = None
+            return [_c(2, text, ttl=15.0)]
+
+        p_tel = st.my_telemetry
+        if p_tel is not None:
+            speed = p_tel.speed_kph
+            steer = p_tel.steer
+            if speed > 200.0 and abs(steer) < 0.1:
+                if self.straight_start_time is None:
+                    self.straight_start_time = now
+                elif now - self.straight_start_time >= 1.0:
+                    text = self.pending_debrief.text
+                    self.pending_debrief = None
+                    self.straight_start_time = None
+                    return [_c(2, text, ttl=15.0)]
+            else:
+                self.straight_start_time = None
+        return []
 
     def _due(self, key, lap, every):
         last = self._last.get(key)
@@ -230,15 +292,62 @@ class Callouts:
 
     def process(self, sig, st: RaceState) -> list[Callout]:
         kind = sig[0]
+        now = time.monotonic()
         if kind == "new_session":
-            self.__init__()
+            self.__init__(self.debrief_config)
         elif kind == "lap":
+            # Drop older pending debrief if a newer lap completes
+            self.pending_debrief = None
+            self.straight_start_time = None
             return self._on_lap(sig[1], st)
         elif kind == "damage":
             return self._on_damage(st)
         elif kind == "event":
             return self._on_event(sig[1], st)
+        elif kind == "lap_invalidated":
+            return self._on_lap_invalidated(now)
+        elif kind == "track_limits_warning":
+            return self._on_track_limits_warning(sig[1], now)
+        elif kind == "penalty":
+            return self._on_penalty(sig[1])
+        elif kind == "flashback":
+            if self.pending_debrief and self.pending_debrief.lap_num > sig[1]:
+                self.pending_debrief = None
+                self.straight_start_time = None
         return []
+
+    def _on_lap_invalidated(self, now: float) -> list[Callout]:
+        self._last_invalidation_time = now
+        # If warning occurred within 1 s, speak combined message
+        if now - self._last_warning_time <= 1.0:
+            self._last_invalidation_combined = True
+            msg = f"Track limits, lap invalidated. Warning {self._format_warning(self._last_warning_num)}."
+            return [_c(0, msg, ttl=5.0)]
+        self._last_invalidation_combined = False
+        return [_c(1, "Lap invalidated.", ttl=5.0)]
+
+    def _on_track_limits_warning(self, n: int, now: float) -> list[Callout]:
+        self._last_warning_time = now
+        self._last_warning_num = n
+        # If invalidation occurred within 1 s, speak combined message
+        if now - self._last_invalidation_time <= 1.0:
+            self._last_invalidation_combined = True
+            msg = f"Track limits, lap invalidated. Warning {self._format_warning(n)}."
+            return [_c(0, msg, ttl=5.0)]
+        return [_c(1, f"Track limits warning, {self._format_warning(n)}.", ttl=5.0)]
+
+    def _on_penalty(self, ev: packets.Event) -> list[Callout]:
+        ptype = ev.penalty_type
+        sec = ev.penalty_time or 0
+        if ptype == 0:
+            return [_c(0, "Drive-through penalty.", ttl=15.0)]
+        elif ptype == 1:
+            if sec > 0:
+                return [_c(0, f"{sec}-second stop-and-go penalty.", ttl=15.0)]
+            return [_c(0, "Stop-and-go penalty.", ttl=15.0)]
+        elif ptype == 4 or sec > 0:
+            return [_c(0, f"{sec}-second time penalty.", ttl=15.0)]
+        return [_c(0, "Penalty awarded.", ttl=15.0)]
 
     def _on_lap(self, rec, st: RaceState):
         out, lap = [], rec.lap

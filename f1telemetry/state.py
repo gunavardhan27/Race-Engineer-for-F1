@@ -43,6 +43,8 @@ class LapRecord:
     sector1_ms: int = 0
     sector2_ms: int = 0
     sector3_ms: int = 0
+    total_warnings: int = 0
+    corner_cutting_warnings: int = 0
 
 
 class RaceState:
@@ -66,6 +68,7 @@ class RaceState:
         self.laps: deque[LapRecord] = deque(maxlen=self._history)
         self._lap_num = None
         self._lap_invalid = False
+        self._corner_cutting_warnings = None
         self._buttons = 0
         self.personal_best = None
         self.last_lap_vs_best = None
@@ -73,7 +76,8 @@ class RaceState:
     # ---- ingestion -------------------------------------------------------
     def update(self, h: packets.Header, data) -> list[tuple]:
         """Apply one parsed packet. Returns signals: ('lap', rec), ('ptt', bool),
-        ('event', Event), ('damage',), ('new_session',), ('flashback', lap_num)."""
+        ('event', Event), ('damage',), ('new_session',), ('flashback', lap_num),
+        ('lap_invalidated',), ('track_limits_warning', n), ('penalty', Event)."""
         signals = []
         self.last_packet_time = time.monotonic()
         if h.session_uid != self.session_uid:
@@ -114,6 +118,8 @@ class RaceState:
                 self._buttons = data.buttons
                 if now != was:
                     signals.append(("ptt", now))
+            elif data.code == "PENA" and data.vehicle_idx == self.player:
+                signals.append(("penalty", data))
             else:
                 signals.append(("event", data))
         return signals
@@ -127,12 +133,24 @@ class RaceState:
             while self.laps and self.laps[-1].lap >= me.lap_num:
                 self.laps.pop()
             self._lap_num, self._lap_invalid = me.lap_num, me.lap_invalid
+            self._corner_cutting_warnings = me.corner_cutting_warnings
             if was_flashback:
                 return [("flashback", me.lap_num)]
             return []
         if me.lap_num == self._lap_num:
-            self._lap_invalid |= me.lap_invalid
-            return []
+            signals = []
+            if not self._lap_invalid and me.lap_invalid:
+                self._lap_invalid = True
+                signals.append(("lap_invalidated",))
+            if self._corner_cutting_warnings is None:
+                self._corner_cutting_warnings = me.corner_cutting_warnings
+            elif me.corner_cutting_warnings < self._corner_cutting_warnings:
+                self._corner_cutting_warnings = me.corner_cutting_warnings
+            elif me.corner_cutting_warnings > self._corner_cutting_warnings:
+                signals.append(("track_limits_warning", me.corner_cutting_warnings))
+                self._corner_cutting_warnings = me.corner_cutting_warnings
+            return signals
+
         ahead_idx, gap_ahead = self.gap_ahead()
         behind_idx, gap_behind = self.gap_behind()
         st, dmg = self.my_status, self.my_damage
@@ -145,9 +163,12 @@ class RaceState:
             behind_idx=behind_idx, gap_behind_ms=gap_behind,
             fuel_kg=st.fuel_in_tank if st else None,
             tyre_wear=dmg.tyre_wear if dmg else None, stint=me.num_pit_stops,
-            sector1_ms=s1, sector2_ms=s2, sector3_ms=s3)
+            sector1_ms=s1, sector2_ms=s2, sector3_ms=s3,
+            total_warnings=me.total_warnings,
+            corner_cutting_warnings=me.corner_cutting_warnings)
         self.laps.append(rec)
         self._lap_num, self._lap_invalid = me.lap_num, me.lap_invalid
+        self._corner_cutting_warnings = me.corner_cutting_warnings
         return [("lap", rec)]
 
     # ---- accessors -------------------------------------------------------
@@ -170,6 +191,10 @@ class RaceState:
 
     @property
     def my_tel(self):
+        return self._mine(self.tel)
+
+    @property
+    def my_telemetry(self):
         return self._mine(self.tel)
 
     @property

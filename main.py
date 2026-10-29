@@ -32,6 +32,7 @@ from audio_player import AudioPlayer
 from config import AppConfig, load_config
 from f1telemetry import packets
 from f1telemetry.deterministic import Callout, Callouts, RadioQueue, route
+from f1telemetry.spotter import Spotter, SPOTTER_PHRASES
 from f1telemetry.state import RaceState
 from knowledge import KnowledgeBase
 from latency import LatencyTracker
@@ -40,7 +41,7 @@ from radio_fx import apply_radio_fx
 from stt import SpeechToText, build_initial_prompt
 from tts import TTSProvider, create_tts_engine
 from storage import SessionStorage, LapTraceCollector
-from analysis import get_lap_comparison_summary
+from analysis import get_lap_comparison_summary, compute_lap_debrief
 from setups import SetupsStorage, import_from_json, import_from_csv, export_as_sheet, export_as_json, validate_setup_params
 
 log = logging.getLogger("engineer")
@@ -79,7 +80,9 @@ class Engineer:
     ):
         self.config = config or AppConfig()
         self.state = RaceState(ptt_action=ptt_action)
-        self.callouts = Callouts()
+        self.callouts = Callouts(debrief_config=self.config.debrief)
+        self.spotter = Spotter(self.config.spotter)
+        self.spotter_audio: dict[str, tuple[np.ndarray, int]] = {}
         self.radio = RadioQueue()
         self.recorder = recorder
         self.latency = latency or LatencyTracker()
@@ -103,6 +106,69 @@ class Engineer:
                 joystick_index=self.config.stt.joystick_index,
                 button_index=self.config.stt.joystick_button,
             )
+
+    async def prerender_spotter(self):
+        """Pre-renders spotter audio clips to bypass TTS latency during wheel-to-wheel battles."""
+        if not self.tts:
+            return
+        log.info("Pre-rendering spotter phrases for instant zero-latency playback...")
+        for phrase in SPOTTER_PHRASES:
+            try:
+                audio, sr = await self.tts.synth(phrase)
+                if self.config.tts.radio_fx:
+                    audio = apply_radio_fx(audio, sr, enable_clicks=True)
+                self.spotter_audio[phrase] = (audio, sr)
+            except Exception as e:
+                log.warning("Failed to pre-render spotter phrase %r: %s", phrase, e)
+        log.info("Pre-rendered %d spotter phrases", len(self.spotter_audio))
+
+    def _play_spotter(self, phrase: str):
+        if self.broadcaster:
+            self.broadcaster.broadcast_radio("engineer", phrase)
+        if phrase in self.spotter_audio and self.player:
+            audio, sr = self.spotter_audio[phrase]
+            threading.Thread(target=self.player.play_direct, args=(audio, sr), daemon=True).start()
+        elif self.player:
+            self.radio.push(Callout(0, time.monotonic(), phrase, ttl=self.config.spotter.ttl_s))
+        else:
+            print(f"[SPOTTER] {phrase}", flush=True)
+
+    def _on_lap_completed_debrief(self, rec):
+        """Asynchronously calculates worst-corner analysis and queues debrief."""
+        if not self.config.debrief.auto_lap_debrief or not self.storage or not self.state.session:
+            return
+
+        async def _run():
+            try:
+                s = self.state.session
+                corners = self.knowledge.get_corner_names() if self.knowledge else []
+                text = await asyncio.to_thread(
+                    compute_lap_debrief,
+                    self.storage,
+                    self.state.session_uid,
+                    s.track_id,
+                    s.formula,
+                    s.session_type,
+                    rec.lap,
+                    rec.lap_time_ms,
+                    rec.invalid,
+                    rec.stint,
+                    corners,
+                    self.config.debrief.reference_lap,
+                    self.config.debrief.worst_corner_threshold_s,
+                )
+                self.callouts.queue_debrief(text, rec.lap)
+            except Exception as e:
+                log.debug("Error computing lap debrief: %s", e)
+
+        if self.loop and self.loop.is_running():
+            asyncio.run_coroutine_threadsafe(_run(), self.loop)
+        else:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_run())
+            except RuntimeError:
+                pass
 
     def _update_lap_analysis(self):
         """Updates personal_best and last_lap_vs_best in RaceState from storage."""
@@ -149,12 +215,23 @@ class Engineer:
                     if self.trace_collector:
                         self.trace_collector.on_lap_completed(rec, self.state)
                     self._update_lap_analysis()
+                    self._on_lap_completed_debrief(rec)
                 elif sig[0] == "flashback":
                     lap_num = sig[1]
                     if self.trace_collector:
                         self.trace_collector.on_flashback(lap_num, self.state.session_uid)
                 for c in self.callouts.process(sig, self.state):
                     self.radio.push(c)
+
+            # Check spotter on motion update
+            if h.packet_id == packets.PacketId.MOTION and self.spotter:
+                phrase = self.spotter.process(self.state)
+                if phrase:
+                    self._play_spotter(phrase)
+
+            # Check debrief release on telemetry ticks
+            for c in self.callouts.check_debrief_release(self.state):
+                self.radio.push(c)
 
             # Check track loading & session ingestion on session packet
             if h.packet_id == packets.PacketId.SESSION and self.state.session:
@@ -468,6 +545,8 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
         audio_capture.on_audio_recorded = engineer.on_audio_recorded
     engineer.agent = RaceEngineerAgent(llm=llm_client, radio=engineer.radio, latency=latency)
 
+    if tts_engine and not args.selftest:
+        await engineer.prerender_spotter()
 
     tasks = [asyncio.create_task(engineer.speaker())]
 

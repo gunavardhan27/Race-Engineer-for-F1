@@ -63,6 +63,20 @@ dashboard:
   hz: 10.0
   token: "xlQvJBOipAGFjQbTXmdOhA"                 # Auto-generated shared secret token on first run if null
 
+spotter:
+  enabled: true
+  lateral_distance_m: 3.6
+  longitudinal_distance_m: 4.8
+  still_there_interval_s: 2.5
+  min_speed_kph: 20.0
+
+debrief:
+  auto_lap_debrief: true
+  reference_lap: "session"                        # "session" | "stint" | "all_time"
+  worst_corner_threshold_s: 0.15
+  track_limits_callouts: true
+  track_limits_penalty_at: null                   # e.g. 3 -> "Track limits warning, 2 of 3."
+
 logging:
   level: "INFO"
   format: "%(asctime)s %(levelname)s %(name)s: %(message)s"
