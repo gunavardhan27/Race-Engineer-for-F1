@@ -31,6 +31,19 @@ class VolumesConfig:
 
 
 @dataclass
+class PaceConfig:
+    slower_lap_threshold_s: float = 0.5   # Gap vs previous valid lap before calling driver slower
+    fuel_effect_s_per_kg: float = 0.03    # Expected lap time improvement in seconds per kg of fuel burned
+    expectation_margin: int = 3           # Places delta vs expected position before calling above/below expectation
+
+
+@dataclass
+class QualiConfig:
+    eliminated_per_segment: int | None = None  # None = derive from car count (e.g. 6 for 22 cars, 5 for 20 cars)
+    large_gap_s: float = 1.0                   # Gap to pole in seconds before triggering quali_gap_large
+
+
+@dataclass
 class RadioCheckConfig:
     on_session_start: bool = True # Automatic check 3s after session start
 
@@ -223,6 +236,8 @@ class AppConfig:
     radio_check: RadioCheckConfig = field(default_factory=RadioCheckConfig)
     sound_test: SoundTestConfig = field(default_factory=SoundTestConfig)
     volumes: VolumesConfig = field(default_factory=VolumesConfig)
+    pace: PaceConfig = field(default_factory=PaceConfig)
+    quali: QualiConfig = field(default_factory=QualiConfig)
 
 
 def _load_dataclass(cls: type, data: Any, prefix: str = "") -> Any:

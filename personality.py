@@ -26,7 +26,7 @@ from f1telemetry.state import RaceState
 
 log = logging.getLogger("engineer.personality")
 
-BIG_MOMENTS = {"win", "podium", "points", "no_points", "retirement"}
+BIG_MOMENTS = {"win", "podium", "points", "no_points", "retirement", "beat_teammate", "lost_to_teammate"}
 BLUNDER_EVENTS = {"spin", "collision", "flashback", "penalty", "lost_positions"}
 
 BASE_COOLDOWNS = {
@@ -51,6 +51,21 @@ BASE_COOLDOWNS = {
     "clean_stint": 120.0,
     "retirement": 0.0,
     "radio_check": 10.0,
+    # Pace and expectation cooldowns
+    "slower_lap": 30.0,
+    "slower_lap_explained": 30.0,
+    "quali_gap_large": 30.0,
+    "quali_danger_zone": 20.0,
+    "quali_safe": 30.0,
+    "purple_sector": 15.0,
+    "below_expectation": 60.0,
+    "above_expectation": 60.0,
+    "beat_teammate": 0.0,
+    "lost_to_teammate": 0.0,
+    "tt_personal_best": 20.0,
+    "tt_slower": 20.0,
+    "ai_too_easy": 999.0,
+    "ai_too_hard": 999.0,
 }
 
 FREQ_MULTIPLIERS = {
@@ -481,6 +496,10 @@ class PersonalityEngine:
 
         elif kind == "penalty":
             return self.trigger("penalty", state, {}, now=now)
+
+        elif kind == "purple_sector":
+            sector_num = sig[1]
+            return self.trigger("purple_sector", state, {"sector": sector_num}, now=now)
 
         # 4. Final Classification (win, podium, points, no_points)
         elif kind == "final_classification":

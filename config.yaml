@@ -131,4 +131,13 @@ volumes:
   spotter: 1.0                                        # Volume factor for spotter calls (0.0 to 1.0)
   menu_beeps: 1.0                                     # Volume factor for radio beeps / clicks (0.0 to 1.0)
 
+pace:
+  slower_lap_threshold_s: 0.5                         # Gap vs previous valid lap before calling driver slower
+  fuel_effect_s_per_kg: 0.03                          # Expected gain in s per kg of fuel burned
+  expectation_margin: 3                               # Positions delta vs expected performance before calling out
+
+quali:
+  eliminated_per_segment: null                        # Null = auto-derived from car count (6 for 22 cars, 5 for 20 cars)
+  large_gap_s: 1.0                                    # Gap to pole in seconds for quali_gap_large
+
 

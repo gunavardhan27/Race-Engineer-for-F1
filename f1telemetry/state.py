@@ -1,6 +1,7 @@
 """Live race state built from parsed packets, plus the derived numbers an engineer uses."""
 from __future__ import annotations
 
+import math
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -46,6 +47,13 @@ class LapRecord:
     total_warnings: int = 0
     corner_cutting_warnings: int = 0
     grid_position: int = 0
+    traffic_pct: float = 0.0
+    had_safety_car: bool = False
+    new_damage: bool = False
+    pit_status: int = 0
+    weather_changed: bool = False
+    blunder_moment: str | None = None
+    excess_deg: bool = False
 
 
 class RaceState:
@@ -75,6 +83,27 @@ class RaceState:
         self.last_lap_vs_best = None
         self.final_classification = None
 
+        # Pace, qualifying and time trial tracking
+        self.time_trial: packets.TimeTrialData | None = None
+        self.best_sectors_session = [0, 0, 0]  # S1, S2, S3 in ms across all cars
+        self.best_laps_all_cars: dict[int, int] = {}  # car_idx -> best lap time ms
+        self.speed_traps_all_cars: dict[int, float] = {}  # car_idx -> max speed kph
+        self.last_lap_vs_previous: dict | None = None
+        self.expected_performance: dict = {"position": None, "basis": "none", "confidence": 0.0}
+
+        # Per-lap tracking accumulators
+        self._lap_start_time = time.monotonic()
+        self._last_traffic_sample_time = time.monotonic()
+        self._lap_traffic_time_s = 0.0
+        self._had_safety_car_this_lap = False
+        self._new_damage_this_lap = False
+        self._damage_at_lap_start: dict = {}
+        self._weather_at_lap_start: int | None = None
+        self._weather_changed_this_lap = False
+        self._blunder_moment_this_lap: str | None = None
+        self._player_s1_evaluated = False
+        self._player_s2_evaluated = False
+
     # ---- ingestion -------------------------------------------------------
     def update(self, h: packets.Header, data) -> list[tuple]:
         """Apply one parsed packet. Returns signals: ('lap', rec), ('ptt', bool),
@@ -93,6 +122,30 @@ class RaceState:
             self.motion = data
         elif pid == PacketId.LAP_DATA:
             self.lap = data
+            if data:
+                for i, c in enumerate(data):
+                    if hasattr(c, "speed_trap_kph") and c.speed_trap_kph > self.speed_traps_all_cars.get(i, 0.0):
+                        self.speed_traps_all_cars[i] = c.speed_trap_kph
+                    if c.last_lap_ms > 0 and not getattr(c, "lap_invalid", False):
+                        prev_best = self.best_laps_all_cars.get(i)
+                        if prev_best is None or c.last_lap_ms < prev_best:
+                            self.best_laps_all_cars[i] = c.last_lap_ms
+                    if c.sector1_ms > 0 and not getattr(c, "lap_invalid", False):
+                        if self.best_sectors_session[0] == 0 or c.sector1_ms < self.best_sectors_session[0]:
+                            self.best_sectors_session[0] = c.sector1_ms
+                    if c.sector2_ms > 0 and not getattr(c, "lap_invalid", False):
+                        if self.best_sectors_session[1] == 0 or c.sector2_ms < self.best_sectors_session[1]:
+                            self.best_sectors_session[1] = c.sector2_ms
+
+                now = time.monotonic()
+                dt = now - self._last_traffic_sample_time
+                self._last_traffic_sample_time = now
+                if dt > 0 and self.player < len(data):
+                    me_c = data[self.player]
+                    if me_c.position > 1 and me_c.gap_to_car_ahead_ms is not None:
+                        if 0 <= me_c.gap_to_car_ahead_ms <= 1500:
+                            self._lap_traffic_time_s += dt
+
             signals += self._check_lap()
         elif pid == PacketId.CAR_TELEMETRY:
             self.tel = data
@@ -101,8 +154,19 @@ class RaceState:
         elif pid == PacketId.CAR_DAMAGE:
             self.damage = data
             signals.append(("damage",))
+            if data and self.player < len(data):
+                parts = self.damage_parts()
+                if any(parts.get(k, 0) > self._damage_at_lap_start.get(k, 0) for k in parts):
+                    self._new_damage_this_lap = True
         elif pid == PacketId.SESSION:
             self.session = data
+            if data:
+                if data.safety_car in (1, 2):
+                    self._had_safety_car_this_lap = True
+                if self._weather_at_lap_start is None:
+                    self._weather_at_lap_start = data.weather
+                elif data.weather != self._weather_at_lap_start:
+                    self._weather_changed_this_lap = True
         elif pid == PacketId.PARTICIPANTS:
             self.participants = {i: p for i, p in enumerate(data) if p.name}
             self.names = {i: p.name for i, p in enumerate(data) if p.name}
@@ -117,6 +181,9 @@ class RaceState:
         elif pid == PacketId.FINAL_CLASSIFICATION:
             self.final_classification = data
             signals.append(("final_classification", data))
+        elif pid == PacketId.TIME_TRIAL:
+            self.time_trial = data
+            signals.append(("time_trial", data))
         elif pid == PacketId.EVENT:
             if data.code == "BUTN":
                 was = bool(self._buttons & self.ptt_mask)
@@ -126,6 +193,10 @@ class RaceState:
                     signals.append(("ptt", now))
             elif data.code == "PENA" and data.vehicle_idx == self.player:
                 signals.append(("penalty", data))
+                self._blunder_moment_this_lap = "penalty"
+            elif data.code == "COLL" and (data.vehicle_1_idx == self.player or data.vehicle_2_idx == self.player):
+                signals.append(("event", data))
+                self._blunder_moment_this_lap = "contact"
             else:
                 signals.append(("event", data))
         return signals
@@ -155,6 +226,19 @@ class RaceState:
             elif me.corner_cutting_warnings > self._corner_cutting_warnings:
                 signals.append(("track_limits_warning", me.corner_cutting_warnings))
                 self._corner_cutting_warnings = me.corner_cutting_warnings
+
+            # Purple sector checks during lap
+            if not self._lap_invalid:
+                if me.sector1_ms > 0 and not self._player_s1_evaluated:
+                    self._player_s1_evaluated = True
+                    if self.best_sectors_session[0] == 0 or me.sector1_ms <= self.best_sectors_session[0]:
+                        self.best_sectors_session[0] = me.sector1_ms
+                        signals.append(("purple_sector", 1))
+                if me.sector2_ms > 0 and not self._player_s2_evaluated:
+                    self._player_s2_evaluated = True
+                    if self.best_sectors_session[1] == 0 or me.sector2_ms <= self.best_sectors_session[1]:
+                        self.best_sectors_session[1] = me.sector2_ms
+                        signals.append(("purple_sector", 2))
             return signals
 
         ahead_idx, gap_ahead = self.gap_ahead()
@@ -163,6 +247,20 @@ class RaceState:
         s1 = me.sector1_ms
         s2 = me.sector2_ms
         s3 = max(0, me.last_lap_ms - s1 - s2) if (me.last_lap_ms > 0 and s1 > 0 and s2 > 0) else 0
+
+        now = time.monotonic()
+        lap_duration = max(1.0, (now - self._lap_start_time))
+        traffic_pct = min(1.0, self._lap_traffic_time_s / lap_duration)
+
+        excess_deg = False
+        if dmg and dmg.tyre_wear and self.laps:
+            wear_rate = self.wear_per_lap()
+            prev_lap = self.laps[-1]
+            if wear_rate and prev_lap.tyre_wear:
+                current_wear_delta = max(dmg.tyre_wear) - max(prev_lap.tyre_wear)
+                if current_wear_delta > (wear_rate * 1.5):
+                    excess_deg = True
+
         rec = LapRecord(
             lap=self._lap_num, lap_time_ms=me.last_lap_ms, invalid=self._lap_invalid,
             position=me.position, ahead_idx=ahead_idx, gap_ahead_ms=gap_ahead,
@@ -172,11 +270,39 @@ class RaceState:
             sector1_ms=s1, sector2_ms=s2, sector3_ms=s3,
             total_warnings=me.total_warnings,
             corner_cutting_warnings=me.corner_cutting_warnings,
-            grid_position=me.grid_position)
+            grid_position=me.grid_position,
+            traffic_pct=traffic_pct,
+            had_safety_car=self._had_safety_car_this_lap,
+            new_damage=self._new_damage_this_lap,
+            pit_status=me.pit_status,
+            weather_changed=self._weather_changed_this_lap,
+            blunder_moment=self._blunder_moment_this_lap,
+            excess_deg=excess_deg)
+
+        lap_signals = [("lap", rec)]
+        if not self._lap_invalid and s3 > 0:
+            if self.best_sectors_session[2] == 0 or s3 <= self.best_sectors_session[2]:
+                self.best_sectors_session[2] = s3
+                lap_signals.append(("purple_sector", 3))
+
         self.laps.append(rec)
         self._lap_num, self._lap_invalid = me.lap_num, me.lap_invalid
         self._corner_cutting_warnings = me.corner_cutting_warnings
-        return [("lap", rec)]
+
+        # Reset per-lap accumulators
+        self._lap_start_time = now
+        self._last_traffic_sample_time = now
+        self._lap_traffic_time_s = 0.0
+        self._had_safety_car_this_lap = False
+        self._new_damage_this_lap = False
+        self._damage_at_lap_start = self.damage_parts()
+        self._weather_at_lap_start = self.session.weather if self.session else None
+        self._weather_changed_this_lap = False
+        self._blunder_moment_this_lap = None
+        self._player_s1_evaluated = False
+        self._player_s2_evaluated = False
+
+        return lap_signals
 
     # ---- accessors -------------------------------------------------------
     def _mine(self, cars):
@@ -333,6 +459,92 @@ class RaceState:
                 })
         cars.sort(key=lambda x: x["position"])
         return cars
+    def teammate_idx(self) -> int | None:
+        """Index of the player's teammate in the session, or None."""
+        if self.player is None or not self.participants:
+            return None
+        tid = self.my_team_id
+        if not tid:
+            return None
+        for i, p in self.participants.items():
+            if i != self.player and p.team_id == tid:
+                return i
+        return None
+
+    def teammate_name(self) -> str | None:
+        """Surname of the player's teammate, or None."""
+        idx = self.teammate_idx()
+        if idx is None:
+            return None
+        return self.name(idx)
+
+    def get_car_best_lap_s(self, car_idx: int | None) -> float | None:
+        """Returns best lap time in seconds for a car in this session, or None."""
+        if car_idx is None:
+            return None
+        ms = self.best_laps_all_cars.get(car_idx)
+        return round(ms / 1000.0, 3) if ms else None
+
+    def gap_to_pole_s(self) -> float | None:
+        """Gap in seconds between player's best lap and session fastest lap (pole)."""
+        if not self.best_laps_all_cars:
+            return None
+        my_best = self.best_laps_all_cars.get(self.player)
+        if not my_best:
+            return None
+        pole_ms = min(self.best_laps_all_cars.values())
+        return round((my_best - pole_ms) / 1000.0, 3)
+
+    def quali_position(self) -> int | None:
+        """Player's current qualifying timesheet position."""
+        if not self.me:
+            return None
+        return self.me.position
+
+    def elimination_cutoff(self, eliminated_per_segment: int | None = None) -> int | None:
+        """Calculates elimination cutoff position for current qualifying segment."""
+        s = self.session
+        if not s:
+            return None
+        stype = s.session_type
+        # Q1 = 5, Q2 = 6, Q3 = 7, Short = 8, One-shot = 9
+        if stype == 5:  # Q1
+            running = len([c for c in (self.lap or ()) if c.result_status in RUNNING])
+            if running == 0:
+                running = 20
+            if eliminated_per_segment is not None:
+                elim = eliminated_per_segment
+            else:
+                elim = 6 if running >= 22 else 5
+            return max(1, running - elim)
+        elif stype == 6:  # Q2
+            return 10
+        return None
+
+    def speed_trap_ranking(self) -> tuple[float, int, int, str | None]:
+        """Returns (speed_kph, rank, total_cars, hint)."""
+        my_speed = self.speed_traps_all_cars.get(self.player, 0.0)
+        if not self.speed_traps_all_cars or my_speed <= 0.0:
+            return (0.0, 0, 0, None)
+        sorted_speeds = sorted(self.speed_traps_all_cars.values(), reverse=True)
+        total_cars = len(sorted_speeds)
+        try:
+            rank = sorted_speeds.index(my_speed) + 1
+        except ValueError:
+            rank = total_cars
+        hint = None
+        top_third_cutoff = math.ceil(total_cars / 3.0) if total_cars > 0 else 1
+        if rank <= top_third_cutoff:
+            losing_time = False
+            if self.last_lap_vs_previous and self.last_lap_vs_previous.get("slower"):
+                losing_time = True
+            elif self.last_lap_vs_best and self.last_lap_vs_best.get("delta_s", 0) > 0.3:
+                losing_time = True
+            elif self.me and self.me.position > (self.expected_performance.get("position") or 5):
+                losing_time = True
+            if losing_time:
+                hint = "car's quick on straights, you're losing in corners"
+        return (my_speed, rank, total_cars, hint)
 
     # ---- compact state for Redis / the LLM prompt ------------------------
     def snapshot(self) -> dict:
@@ -341,6 +553,14 @@ class RaceState:
         bi, gb = self.gap_behind()
         rain = self.next_rain()
         fpl, wpl = self.fuel_per_lap(), self.wear_per_lap()
+
+        st_spd, st_rank, st_total, st_hint = self.speed_trap_ranking()
+        t_idx = self.teammate_idx()
+        t_name = self.teammate_name()
+        t_best = self.get_car_best_lap_s(t_idx)
+        my_best = self.get_car_best_lap_s(self.player)
+        t_gap = round((my_best - t_best), 3) if (my_best and t_best) else None
+
         return {
             "track": TRACKS.get(s.track_id, f"track {s.track_id}") if s else None,
             "lap": me.lap_num if me else None,
@@ -377,4 +597,22 @@ class RaceState:
                 } if self.my_setup else None,
                 "best": self.best_setup_info,
             } if (self.my_setup or self.best_setup_info) else None,
+
+            # Pace & expectation snapshot additions (Prompt 18)
+            "gap_to_pole": self.gap_to_pole_s(),
+            "quali_position": self.quali_position(),
+            "elimination_cutoff": self.elimination_cutoff(),
+            "teammate": {
+                "name": t_name,
+                "best_lap_s": t_best,
+                "gap_s": t_gap,
+            } if t_idx is not None else None,
+            "expected_position": self.expected_performance,
+            "last_lap_vs_previous": self.last_lap_vs_previous,
+            "speed_trap": {
+                "speed_kph": st_spd,
+                "rank": st_rank,
+                "total_cars": st_total,
+                "hint": st_hint,
+            } if st_spd > 0 else None,
         }

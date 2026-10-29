@@ -159,7 +159,8 @@ class SessionStorage:
                     track_id INTEGER NOT NULL,
                     session_type INTEGER NOT NULL,
                     team_id INTEGER NOT NULL DEFAULT 0,
-                    weather_at_start INTEGER NOT NULL DEFAULT 0
+                    weather_at_start INTEGER NOT NULL DEFAULT 0,
+                    ai_difficulty INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS laps (
@@ -194,6 +195,10 @@ class SessionStorage:
                 CREATE INDEX IF NOT EXISTS idx_laps_session ON laps(session_id, lap_num);
                 CREATE INDEX IF NOT EXISTS idx_laps_time ON laps(lap_time_s, is_valid);
             """)
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN ai_difficulty INTEGER NOT NULL DEFAULT 0;")
+            except Exception:
+                pass
             conn.commit()
 
     def _writer_worker(self):
@@ -232,13 +237,14 @@ class SessionStorage:
     def _exec_save_session(self, conn: sqlite3.Connection, data: dict[str, Any]):
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO sessions (session_uid, started_at, game_format, formula, track_id, session_type, team_id, weather_at_start)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO sessions (session_uid, started_at, game_format, formula, track_id, session_type, team_id, weather_at_start, ai_difficulty)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_uid) DO UPDATE SET
                 formula = excluded.formula,
                 track_id = excluded.track_id,
                 session_type = excluded.session_type,
-                team_id = excluded.team_id;
+                team_id = excluded.team_id,
+                ai_difficulty = excluded.ai_difficulty;
         """, (
             str(data["session_uid"]),
             data.get("started_at", time.time()),
@@ -248,6 +254,7 @@ class SessionStorage:
             data.get("session_type", 0),
             data.get("team_id", 0),
             data.get("weather_at_start", 0),
+            data.get("ai_difficulty", 0),
         ))
 
     def _exec_save_lap(self, conn: sqlite3.Connection, data: dict[str, Any]):
@@ -521,6 +528,62 @@ class SessionStorage:
 
             return self.get_personal_best(track_id, formula=formula, session_type=session_type)
 
+    def get_historical_team_sessions(
+        self, track_id: int, formula: int, team_id: int, ai_difficulty: int
+    ) -> list[dict[str, Any]]:
+        """Look up past sessions at this track in this formula with this team at this AI difficulty."""
+        with self._reader_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT s.id, s.session_uid, s.track_id, s.formula, s.team_id, s.ai_difficulty,
+                       (SELECT l.position FROM laps l WHERE l.session_id = s.id ORDER BY l.lap_num DESC LIMIT 1) as position
+                FROM sessions s
+                WHERE s.track_id = ? AND s.formula = ? AND s.team_id = ? AND s.ai_difficulty = ?
+                ORDER BY s.started_at DESC
+            """, (track_id, formula, team_id, ai_difficulty))
+            rows = cur.fetchall()
+            return [dict(r) for r in rows if r["position"] is not None]
+
+    def record_session_teammate_delta(self, session_uid: str, ai_difficulty: int, team_id: int, delta_s: float):
+        """Records average teammate delta for AI difficulty tracking."""
+        with self._reader_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS session_teammate_deltas (
+                    session_uid TEXT PRIMARY KEY,
+                    ai_difficulty INTEGER NOT NULL,
+                    team_id INTEGER NOT NULL,
+                    delta_s REAL NOT NULL,
+                    created_at REAL NOT NULL
+                );
+            """)
+            cur.execute("""
+                INSERT INTO session_teammate_deltas (session_uid, ai_difficulty, team_id, delta_s, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(session_uid) DO UPDATE SET delta_s = excluded.delta_s;
+            """, (str(session_uid), ai_difficulty, team_id, delta_s, time.time()))
+            conn.commit()
+
+    def get_ai_difficulty_history(self, ai_difficulty: int, team_id: int) -> list[dict[str, Any]]:
+        """Returns past sessions' teammate lap deltas for the specified AI difficulty and team."""
+        with self._reader_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS session_teammate_deltas (
+                    session_uid TEXT PRIMARY KEY,
+                    ai_difficulty INTEGER NOT NULL,
+                    team_id INTEGER NOT NULL,
+                    delta_s REAL NOT NULL,
+                    created_at REAL NOT NULL
+                );
+            """)
+            cur.execute("""
+                SELECT * FROM session_teammate_deltas
+                WHERE ai_difficulty = ? AND team_id = ?
+                ORDER BY created_at DESC
+            """, (ai_difficulty, team_id))
+            return [dict(r) for r in cur.fetchall()]
+
 
 class LapTraceCollector:
     """Collects player telemetry throughout a lap, handles flashbacks, and produces resampled traces."""
@@ -546,6 +609,7 @@ class LapTraceCollector:
                 "session_type": s.session_type,
                 "team_id": state.my_team_id,
                 "weather_at_start": s.weather,
+                "ai_difficulty": getattr(s, "ai_difficulty", 0),
                 "started_at": time.time(),
             })
 

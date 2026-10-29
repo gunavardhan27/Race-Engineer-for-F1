@@ -133,11 +133,80 @@ retirement:
     level: strong
 
 radio_check:
-  - text: "Quit messing with the radio and drive."
-  - text: "Five by five. Now focus on the track."
-  - text: "Hearing you loud and clear. Stop playing with the buttons."
+  - text: "Loud and clear. Now go drive."
+  - text: "Loud and clear. I hear you, unfortunately."
+  - text: "Loud and bloody clear."
     level: mild
-  - text: "Five by five, bloody crystal clear."
+
+# ---- Pace and expectation (Prompt 18) ----
+# Extra placeholders: {delta} seconds, {gap} seconds, {expected} expected position,
+# {teammate} teammate surname, {sector} sector number, {reason} why a lap was slow.
+
+slower_lap:            # slower than the previous lap with no traffic/deg/SC/damage excuse
+  - text: "Plus {delta} on the last lap. No traffic, no excuses."
+  - text: "That lap was {delta} slower. Did you stop for a coffee?"
+  - text: "Plus {delta}. Tyres are fine, car is fine. So it's you."
+  - text: "Plus {delta}, what the hell happened there?"
     level: mild
-  - text: "Yeah I hear you loud and clear, now shut up and drive."
+
+slower_lap_explained:  # slower, but there's a reason — neutral, no mocking
+  - text: "Plus {delta}, that's the {reason}. Nothing you could do."
+  - text: "Lost {delta} to {reason}. Reset and go again."
+
+quali_gap_large:
+  - text: "Plus {gap} to pole. That's a lifetime."
+  - text: "{gap} off pole. Somewhere there's a lap in that car. Find it."
+  - text: "{gap} off pole. Bloody hell, were you sightseeing?"
+    level: mild
+
+quali_danger_zone:
+  - text: "P{pos}, you're in the drop zone. Need a lap now."
+  - text: "P{pos}, that's elimination. Push."
+
+quali_safe:
+  - text: "P{pos}, you're through. Good job."
+  - text: "Safe in P{pos}. Tyres saved, nicely done."
+
+purple_sector:
+  - text: "Purple sector {sector}. Keep going."
+  - text: "Purple in sector {sector}. Don't lift now."
+
+below_expectation:     # car is clearly faster than the result
+  - text: "P{pos}. {teammate}'s P{expected} in the same car. Just saying."
+  - text: "The car's a P{expected} car. You're P{pos}. Draw your own conclusions."
+  - text: "P{pos} in a car that's quick enough for P{expected}? Come on."
+  - text: "{teammate}'s P{expected} in the same bloody car. P{pos}. Sort it out."
+    level: mild
+  - text: "Same car as {teammate}, he's P{expected}, you're P{pos}. What the fuck?"
     level: strong
+
+above_expectation:     # result better than the car should allow
+  - text: "P{pos} in that car? That's witchcraft. Well done."
+  - text: "Car's worth P{expected}, you've stuck it P{pos}. Mega."
+  - text: "P{pos} in that shitbox? Bloody hero."
+    level: strong
+
+beat_teammate:
+  - text: "Ahead of {teammate} by {gap}. Bragging rights."
+  - text: "{teammate}'s {gap} behind you. He'll be sulking."
+
+lost_to_teammate:
+  - text: "{teammate}'s {gap} quicker in the same car. Have a look at his data."
+  - text: "{gap} down on {teammate}. Same car, mate."
+  - text: "{gap} down on {teammate}. Embarrassing, frankly."
+    level: mild
+
+tt_personal_best:
+  - text: "Personal best, {gap} quicker. Lovely."
+  - text: "New PB. Go again, there's more."
+
+tt_slower:
+  - text: "Plus {delta} to your best. Sector {sector} is where it went."
+  - text: "Plus {delta}. Not this one."
+
+ai_too_easy:           # consistently far ahead of AI teammate
+  - text: "You're a second clear of {teammate} every lap. Turn the AI up, coward."
+  - text: "This is too easy for you. Bump the AI difficulty."
+
+ai_too_hard:
+  - text: "Consistently over a second off {teammate}. No shame in dropping the AI a few notches."

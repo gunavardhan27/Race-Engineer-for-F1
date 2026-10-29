@@ -39,6 +39,7 @@ from f1telemetry.state import RaceState, TRACKS
 from knowledge import KnowledgeBase
 from latency import LatencyTracker
 from llm import LLMClient
+from pace import PaceAnalyzer
 from personality import PersonalityEngine
 from radio_check import RadioCheckManager
 from radio_fx import apply_radio_fx
@@ -109,6 +110,7 @@ class Engineer:
         self.storage = storage or SessionStorage()
         self.setups_storage = setups_storage or SetupsStorage()
         self.trace_collector = LapTraceCollector(self.storage)
+        self.pace = PaceAnalyzer(config=self.config, state=self.state, personality=self.personality, storage=self.storage)
         self._agent_task: asyncio.Task | None = None
         self._joystick_thread = None
 
@@ -336,6 +338,7 @@ class Engineer:
                 if sig[0] == "ptt":
                     self.on_ptt(sig[1])
                 elif sig[0] == "new_session":
+                    self.pace.reset_session()
                     if self.state.my_setup:
                         self._on_setup_change(self.state.my_setup, self.state.current_setup_fingerprint)
                     if self.state.session and self.state.session.track_id is not None:
@@ -348,6 +351,9 @@ class Engineer:
                         self.trace_collector.on_lap_completed(rec, self.state)
                     self._update_lap_analysis()
                     self._on_lap_completed_debrief(rec)
+                    self.pace.quiet_mode = self.quiet_mode
+                    for c_pace in self.pace.on_lap(rec):
+                        self.radio.push(c_pace)
                 elif sig[0] == "flashback":
                     lap_num = sig[1]
                     if self.trace_collector:
@@ -365,6 +371,8 @@ class Engineer:
                 # Post-race trigger on final classification
                 if sig[0] == "final_classification":
                     self._on_final_classification(sig[1])
+                    for c_pace in self.pace.on_final_classification(sig[1]):
+                        self.radio.push(c_pace)
 
             # Check spotter and personality spin on motion update
             if h.packet_id == packets.PacketId.MOTION:

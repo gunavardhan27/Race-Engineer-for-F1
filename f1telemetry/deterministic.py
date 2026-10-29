@@ -29,7 +29,11 @@ _INTENTS = [(name, re.compile(p, re.I)) for name, p in [
     ("laps", r"\blaps?\b.*\b(left|remaining|to go)\b|\bhow many laps\b"),
     ("position", r"\b(position|where am i|what p)\b"),
     ("gap_behind", r"\b(behind|gap back)\b"),
+    ("gap_to_pole", r"\b(gap to pole|how far off pole|gap to p1|time to pole)\b"),
     ("gap_ahead", r"\b(ahead|in front|gap)\b"),
+    ("am_i_through", r"\b(am i through|are we through|am i safe|are we safe|in the drop zone|eliminated)\b"),
+    ("teammate", r"\b(where('s| is) my teammate|where('s| is) (the )?other car|how am i doing vs teammate|how('s| is) my teammate doing|teammate pace|vs teammate)\b"),
+    ("car_capability", r"\b(what('s| is) the car capable of|what can the car do|what should we be doing|car potential|expected position)\b"),
     ("delta_best", r"\b(where am i losing time|where am i slow|losing time|how was my (last )?lap|pace vs best|delta to best)\b"),
     ("setup", r"\b(what('s| is)? (my )?setup|what setup am i (on|running)|current setup|best setup( here)?|setup info)\b"),
     ("radio_check", r"\b(radio check|comms check|can you hear me|do you copy)\b"),
@@ -184,10 +188,66 @@ def _radio_check(st: RaceState, text: str = "") -> str:
     return "Loud and clear. No telemetry yet."
 
 
+def _gap_to_pole(st: RaceState):
+    gap = st.gap_to_pole_s()
+    if gap is None:
+        return "No pole time set yet."
+    if gap <= 0.001:
+        return "You're on pole."
+    return f"Gap to pole is {gap:.1f}."
+
+
+def _am_i_through(st: RaceState):
+    pos = st.quali_position()
+    cutoff = st.elimination_cutoff()
+    if pos is None:
+        return NO_DATA
+    if cutoff is None:
+        return f"You're P{pos}. No elimination in this session."
+    status = "Safe" if pos <= cutoff else "Danger"
+    return f"You're P{pos}, cutoff is P{cutoff}. {status}."
+
+
+def _teammate(st: RaceState):
+    t_idx = st.teammate_idx()
+    if t_idx is None:
+        return "No teammate in this session."
+    t_name = st.teammate_name()
+    t_pos = st.lap[t_idx].position if st.lap and t_idx < len(st.lap) else None
+    t_best = st.get_car_best_lap_s(t_idx)
+    my_best = st.get_car_best_lap_s(st.player)
+    msg = f"{t_name} is P{t_pos}." if t_pos else f"{t_name}."
+    if my_best and t_best:
+        diff = my_best - t_best
+        if abs(diff) < 0.05:
+            msg += " You're matching his lap times."
+        elif diff < 0:
+            msg += f" You're {abs(diff):.1f} quicker."
+        else:
+            msg += f" He's {diff:.1f} quicker."
+    elif t_best:
+        msg += f" His best is {t_best:.2f}."
+    return msg
+
+
+def _car_capability(st: RaceState):
+    t_idx = st.teammate_idx()
+    if t_idx is not None:
+        t_best = st.get_car_best_lap_s(t_idx)
+        if t_best:
+            t_name = st.teammate_name()
+            return f"{t_name} did a {t_best:.2f}. That's what the car can do."
+    exp = getattr(st, "expected_performance", None)
+    if exp and exp.get("position") is not None and exp.get("basis") != "none":
+        return f"Based on {exp['basis']} data, the car is capable of P{exp['position']}."
+    return "Not enough data yet."
+
+
 ANSWERS = {"gap_ahead": _gap_ahead, "gap_behind": _gap_behind, "fuel": _fuel, "tyres": _tyres,
            "damage": _damage, "weather": _weather, "position": _position, "laps": _laps,
            "pit_window": _pit_window, "delta_best": _delta_best, "setup": _setup,
-           "radio_check": _radio_check}
+           "radio_check": _radio_check, "gap_to_pole": _gap_to_pole, "am_i_through": _am_i_through,
+           "teammate": _teammate, "car_capability": _car_capability}
 
 
 @dataclass(slots=True)

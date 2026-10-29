@@ -43,6 +43,7 @@ class PacketId:
     CAR_STATUS = 7
     FINAL_CLASSIFICATION = 8
     CAR_DAMAGE = 10
+    TIME_TRIAL = 14
 
 
 def udp_action(n: int) -> int:
@@ -102,6 +103,7 @@ class LapData:
     total_warnings: int = 0
     corner_cutting_warnings: int = 0
     grid_position: int = 0
+    speed_trap_kph: float = 0.0
 
 
 @dataclass(slots=True)
@@ -178,6 +180,7 @@ class Session:
     pit_latest_lap: int
     pit_rejoin_pos: int
     formula: int = 0
+    ai_difficulty: int = 0
 
 
 @dataclass(slots=True)
@@ -279,6 +282,29 @@ class CarSetup:
         }
 
 
+@dataclass(slots=True)
+class TimeTrialDataSet:
+    car_idx: int
+    team_id: int
+    lap_time_ms: int
+    sector1_ms: int
+    sector2_ms: int
+    sector3_ms: int
+    traction_control: int
+    gearbox_assist: int
+    anti_lock_brakes: int
+    equal_car_performance: bool
+    custom_setup: bool
+    valid: bool
+
+
+@dataclass(slots=True)
+class TimeTrialData:
+    player_session_best: TimeTrialDataSet
+    personal_best: TimeTrialDataSet
+    rival: TimeTrialDataSet
+
+
 _warned: set = set()
 
 
@@ -350,7 +376,8 @@ def parse_lap_data(buf: bytes, h: Header):
             sector2_ms=f[5] * 60_000 + f[4],
             total_warnings=f[20],
             corner_cutting_warnings=f[21],
-            grid_position=f[24]))
+            grid_position=f[24],
+            speed_trap_kph=float(f[28]) if len(f) > 28 and f[28] is not None else 0.0))
     return cars
 
 
@@ -416,12 +443,14 @@ def parse_session(buf: bytes, h: Header):
         if f[0] == s[5]:   # only samples for the current session
             forecast.append(ForecastSample(f[0], f[1], f[2], f[3], f[5], f[7]))
     pit = off + 3 + FORECAST_SLOTS * FORECAST.size + 2 + 12   # skip accuracy, AI level, 3 link ids
+    ai_off = off + 3 + FORECAST_SLOTS * FORECAST.size + 1
+    ai_diff = buf[ai_off] if len(buf) > ai_off else 0
     return Session(
         weather=s[0], track_temp=s[1], air_temp=s[2], total_laps=s[3], track_length_m=s[4],
         session_type=s[5], track_id=s[6], time_left_s=s[8], pit_speed_limit=s[10],
         paused=bool(s[11]), safety_car=buf[off], forecast=sorted(forecast, key=lambda x: x.minutes_ahead),
         pit_ideal_lap=buf[pit], pit_latest_lap=buf[pit + 1], pit_rejoin_pos=buf[pit + 2],
-        formula=s[7])
+        formula=s[7], ai_difficulty=ai_diff)
 
 
 def parse_participants(buf: bytes, h: Header):
@@ -546,6 +575,35 @@ def parse_car_setups(buf: bytes, h: Header):
     return cars
 
 
+TIME_TRIAL_DATASET = struct.Struct("<BHIIIIBBBBBB")     # 25 bytes
+TIME_TRIAL_DATASET_24 = struct.Struct("<BBIIIIBBBBBB")  # 24 bytes
+
+
+def parse_time_trial(buf: bytes, h: Header):
+    stride = _stride(buf, "TimeTrial", 24, ok=(24, 25))
+    if stride is None:
+        return None
+    use_25 = (stride >= 25)
+    dsets = []
+    for i in range(3):
+        off = HEADER.size + i * stride
+        if use_25:
+            car_idx, team_id, lap_ms, s1, s2, s3, tc, gb, abs_b, eq, setup, val = TIME_TRIAL_DATASET.unpack_from(buf, off)
+        else:
+            car_idx, team_id, lap_ms, s1, s2, s3, tc, gb, abs_b, eq, setup, val = TIME_TRIAL_DATASET_24.unpack_from(buf, off)
+        dsets.append(TimeTrialDataSet(
+            car_idx=car_idx, team_id=team_id, lap_time_ms=lap_ms,
+            sector1_ms=s1, sector2_ms=s2, sector3_ms=s3,
+            traction_control=tc, gearbox_assist=gb, anti_lock_brakes=abs_b,
+            equal_car_performance=bool(eq), custom_setup=bool(setup), valid=bool(val),
+        ))
+    return TimeTrialData(
+        player_session_best=dsets[0],
+        personal_best=dsets[1],
+        rival=dsets[2],
+    )
+
+
 _PARSERS = {
     PacketId.MOTION: parse_motion,
     PacketId.SESSION: parse_session,
@@ -557,6 +615,7 @@ _PARSERS = {
     PacketId.CAR_STATUS: parse_car_status,
     PacketId.FINAL_CLASSIFICATION: parse_final_classification,
     PacketId.CAR_DAMAGE: parse_car_damage,
+    PacketId.TIME_TRIAL: parse_time_trial,
 }
 
 
