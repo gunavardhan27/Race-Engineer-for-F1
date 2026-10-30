@@ -79,6 +79,7 @@
           <span id="tyre-chip-text">Medium · 0 laps</span>
         </span>
         <span class="chip bad hidden" id="safety-car-banner">⚠️ <span id="safety-car-text">SAFETY CAR</span></span>
+        <span class="chip bad hidden" id="engine-error-banner">❌ <span id="engine-error-text">Engine error</span></span>
         
         <div class="end seg" role="group" aria-label="Layout">
           <button aria-pressed="true" data-layout="full" id="btn-layout-full">Full</button>
@@ -266,26 +267,64 @@
             </div>
 
             <!-- Interactive Track Map & Radar -->
+            <!-- Interactive Track Map & Radar (Prompt 23) -->
             <div class="card" id="map-card">
-              <div class="card-head">
+              <div class="card-head" style="flex-wrap:wrap; gap:8px;">
                 <h2>Track Telemetry</h2>
-                <div class="end"><button class="btn sm ghost" id="btn-rebuild-outline" title="Re-sample outline on next clean lap">Rebuild outline</button></div>
+                <div class="end" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                  <div class="map-tools-group" id="view-mode-group">
+                    <button class="map-tool-btn active" id="btn-view-whole" title="Whole Track View">Whole Track</button>
+                    <button class="map-tool-btn" id="btn-view-follow" title="Follow Player View">Follow Me</button>
+                  </div>
+                  <div id="following-car-chip" class="chip sm hidden" style="background:var(--accent); color:#000; font-weight:600; cursor:pointer;" title="Click to unfollow"></div>
+                  <div class="map-tools-group">
+                    <button class="map-tool-btn active" id="toggle-battles" title="Highlight cars within 1.0s with gap">⚔️ Battles</button>
+                    <button class="map-tool-btn active" id="toggle-yellows" title="Shade yellow marshal zones">🚩 Flags</button>
+                    <button class="map-tool-btn active" id="toggle-gaps" title="Show gap bubbles ahead and behind me">💬 Gaps</button>
+                    <button class="map-tool-btn active" id="toggle-aero" title="Highlight active aero / DRS zones">💨 Aero</button>
+                    <button class="map-tool-btn" id="toggle-replay" title="Toggle Race Replay Mode">🎥 Replay</button>
+                  </div>
+                  <button class="btn sm ghost" id="btn-rebuild-outline" title="Re-sample outline on next clean lap">Rebuild</button>
+                </div>
               </div>
+
+              <!-- Safety Car / VSC Banner -->
+              <div id="safety-car-banner" class="safety-car-banner hidden"></div>
+
               <div class="map-card">
                 <div>
-                  <svg class="map" id="track-map-svg" viewBox="0 0 640 360" role="img" aria-label="Track map with car positions">
-                    <path id="track-path" class="outline" d="M180,318 L330,330 C360,333 378,318 372,292 L360,250 C354,228 368,210 392,212 L470,220 C500,223 520,205 515,178 L505,120 C500,92 520,72 548,78 L590,88 C614,94 622,72 604,58 L540,30 C510,18 480,26 462,48 L400,128 C385,148 360,150 342,136 L262,72 C240,55 210,58 196,80 L120,200 C100,232 92,262 110,290 C124,310 150,316 180,318 Z"/>
-                    <use href="#track-path" class="center"/>
-                    <g id="markers"></g>
-                    <g id="cars"></g>
-                  </svg>
-                  <canvas id="track-map-canvas" class="hidden" width="640" height="360"></canvas>
-                  
+                  <div id="live-map-container">
+                    <canvas id="track-static-canvas" width="640" height="360"></canvas>
+                    <canvas id="track-dynamic-canvas" width="640" height="360"></canvas>
+                    <div id="car-popover" class="car-popover hidden"></div>
+                  </div>
+
+                  <!-- Replay Control Panel -->
+                  <div id="replay-panel" class="replay-panel hidden">
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                      <select id="replay-session-select" class="input sm" style="max-width:200px; padding:3px 6px; font-size:11px;"></select>
+                      <button class="btn sm" id="btn-replay-load">Load</button>
+                      <button class="btn sm primary" id="btn-replay-play">▶ Play</button>
+                      <div class="btn-group" id="replay-speed-group">
+                        <button class="btn sm ghost speed-btn active" data-speed="1">1×</button>
+                        <button class="btn sm ghost speed-btn" data-speed="2">2×</button>
+                        <button class="btn sm ghost speed-btn" data-speed="4">4×</button>
+                        <button class="btn sm ghost speed-btn" data-speed="8">8×</button>
+                      </div>
+                      <span id="replay-time-display" style="font-family:monospace; font-size:12px; margin-left:auto; color:var(--text-1);">00:00 / 00:00</span>
+                    </div>
+                    <div style="position:relative; width:100%; height:20px; display:flex; align-items:center;">
+                      <input type="range" id="replay-scrubber" min="0" max="100" value="0" step="0.1" style="width:100%; z-index:2; background:transparent; cursor:pointer;">
+                      <div id="replay-markers-track" style="position:absolute; inset:0; pointer-events:none; z-index:1;"></div>
+                    </div>
+                  </div>
+
                   <div class="legend">
-                    <span><i style="background:var(--accent)"></i>You</span>
-                    <span><i style="background:var(--yellow)"></i>Ahead & behind</span>
-                    <span><i style="background:var(--text-3)"></i>Field</span>
-                    <span><i style="background:transparent;border:1.5px dashed var(--accent)"></i>Rejoin window</span>
+                    <span><i style="background:var(--accent); box-shadow:0 0 6px var(--accent);"></i>You</span>
+                    <span><i style="background:#ff3d00;"></i>Battles (&lt;1s)</span>
+                    <span><i style="background:#ffd600;"></i>Yellow Zone</span>
+                    <span><i style="background:var(--text-3); opacity:0.35;"></i>Pit (Dimmed)</span>
+                    <span><i style="background:transparent; border:1px dashed #fff;"></i>Estimated (~)</span>
                   </div>
                 </div>
 
@@ -450,25 +489,106 @@
         </div>
 
         <div class="stack">
-          <!-- Where Time Went Delta Map -->
-          <div class="card">
-            <div class="card-head"><h2>Where Time Went</h2></div>
-            <svg class="map" viewBox="0 0 640 360" role="img" aria-label="Track map colored by time delta">
-              <g id="delta-map"></g>
-            </svg>
-            <div class="legend">
-              <span><i style="background:var(--green)"></i>Faster than best</span>
-              <span><i style="background:var(--red)"></i>Slower than best</span>
+          <!-- Mini-Sector Track Map & Mode Selection (Prompt 22) -->
+          <div class="card" id="card-track-map-container">
+            <div class="card-head">
+              <h2>Track Map & Sectors</h2>
+              <div class="end">
+                <div class="seg-btn-group" role="tablist" id="map-mode-tabs">
+                  <button type="button" class="seg-btn active" data-mode="lap-lap" id="btn-mode-lap-lap">Lap vs Lap</button>
+                  <button type="button" class="seg-btn" data-mode="me-ref" id="btn-mode-me-ref">Me vs Ref</button>
+                  <button type="button" class="seg-btn" data-mode="field" id="btn-mode-field">Field View</button>
+                  <button type="button" class="seg-btn" data-mode="f1-colors" id="btn-mode-f1-colors">F1 Sectors</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Dynamic Sub-controls -->
+            <div class="map-sub-controls" id="map-sub-controls">
+              <div class="sub-ctrl" id="ctrl-lap-lap">
+                <div class="field-row">
+                  <label>Car A: <select class="select select-sm" id="ms-car-a"></select></label>
+                  <label>Lap: <select class="select select-sm" id="ms-lap-a"></select></label>
+                  <label>Car B: <select class="select select-sm" id="ms-car-b"></select></label>
+                  <label>Lap: <select class="select select-sm" id="ms-lap-b"></select></label>
+                </div>
+              </div>
+              <div class="sub-ctrl hidden" id="ctrl-me-ref">
+                <div class="field-row">
+                  <label>Ref: 
+                    <select class="select select-sm" id="ms-ref-target">
+                      <option value="my_best">My Personal Best</option>
+                      <option value="session_fastest">Session Fastest Lap</option>
+                      <option value="pole">Pole Lap</option>
+                      <option value="teammate">Teammate Best</option>
+                      <option value="ahead">Car Ahead Last Lap</option>
+                    </select>
+                  </label>
+                  <label>My Lap: <select class="select select-sm" id="ms-my-lap"></select></label>
+                </div>
+              </div>
+              <div class="sub-ctrl hidden" id="ctrl-f1-colors">
+                <div class="field-row">
+                  <label>Driver: <select class="select select-sm" id="ms-f1-car"></select></label>
+                  <label>Lap: <select class="select select-sm" id="ms-f1-lap"></select></label>
+                </div>
+              </div>
+              <div class="flag-toggle-row">
+                <label><input type="checkbox" id="chk-include-flagged"> Include flagged laps (SC, Pit, Invalid, Traffic)</label>
+              </div>
+            </div>
+
+            <!-- Canvas Track Map with Popover -->
+            <div class="track-map-wrapper" style="position:relative;">
+              <canvas id="laps-map-canvas" width="640" height="360" style="width:100%; height:auto; display:block; border-radius:var(--radius-sm); background:rgba(0,0,0,0.2);"></canvas>
+              <div id="minisector-popover" class="minisector-popover hidden"></div>
+            </div>
+
+            <!-- Mini-Sector Delta Strip Below Map -->
+            <div class="delta-strip-container">
+              <div class="delta-strip-label"><span>Start (0m)</span><span>Mini-Sector Delta Strip (25 Segments)</span><span>Finish</span></div>
+              <div class="minisector-delta-strip" id="minisector-delta-strip"></div>
+            </div>
+
+            <!-- Dynamic Legend (Field Wins or Comparison delta) -->
+            <div id="map-legend-container" class="map-legend-box" style="margin-top:10px;">
+              <div class="legend" id="standard-legend">
+                <span><i style="background:var(--green)"></i>Driver A / Faster</span>
+                <span><i style="background:#2979ff"></i>Driver B / Slower</span>
+              </div>
             </div>
           </div>
 
-          <!-- Sector Breakdown -->
+          <!-- Theoretical Best Lap Card -->
+          <div class="card" id="card-theoretical-best">
+            <div class="card-head">
+              <h2>Theoretical Best Lap</h2>
+              <div class="end"><span class="chip" id="ideal-gain-badge">--</span></div>
+            </div>
+            <div style="padding:4px 0 8px 0;">
+              <div style="font-size:18px; font-weight:700; color:var(--purple);" id="ideal-lap-time">--:--.---</div>
+              <div style="font-size:11px; color:var(--text-3); margin-top:2px;" id="ideal-lap-sub">Calculated from personal best mini-sectors.</div>
+            </div>
+          </div>
+
+          <!-- Where I Lose Most Card -->
+          <div class="card" id="card-where-lose-most">
+            <div class="card-head">
+              <h2>Where Time is Lost</h2>
+              <div class="end"><span class="chip">Top 3 Loss Zones</span></div>
+            </div>
+            <div class="loss-list" id="loss-list-body">
+              <div class="empty">Compare laps to view loss diagnoses.</div>
+            </div>
+          </div>
+
+          <!-- Sector Breakdown with F1 Purple/Green/Yellow Colors -->
           <div class="card">
-            <div class="card-head"><h2>Sectors</h2></div>
+            <div class="card-head"><h2>Official Sectors</h2></div>
             <div class="rows" id="sectors-comp" style="margin-top:0">
-              <div><span>Sector 1</span><span id="sec-1-val">--</span></div>
-              <div><span>Sector 2</span><span id="sec-2-val">--</span></div>
-              <div><span>Sector 3</span><span id="sec-3-val">--</span></div>
+              <div><span>Sector 1</span><span id="sec-1-val" class="f1-badge">--</span></div>
+              <div><span>Sector 2</span><span id="sec-2-val" class="f1-badge">--</span></div>
+              <div><span>Sector 3</span><span id="sec-3-val" class="f1-badge">--</span></div>
             </div>
           </div>
         </div>
@@ -769,6 +889,8 @@
           <a href="#settings-engineer" class="active" id="subnav-engineer">Engineer</a>
           <a href="#settings-audio" id="subnav-audio">Audio</a>
           <a href="#settings-wheel" id="subnav-wheel">Wheel buttons</a>
+          <a href="#settings-cache" id="subnav-cache">Audio Cache</a>
+          <a href="#settings-seed" id="subnav-seed">Seed Data</a>
           <a href="#settings-network" id="subnav-network">Network</a>
         </nav>
 
@@ -913,6 +1035,61 @@
               <button class="btn primary" id="btn-save-ports" type="button">Save Ports</button>
             </div>
           </form>
+
+          <!-- 5. TTS Audio Cache -->
+          <div class="card form-section" id="sec-cache">
+            <h2>TTS Audio Cache</h2>
+            <p class="muted">Pre-rendered static audio clips (spotter calls, menu labels, fixed radio lines) cached for instant zero-latency playback.</p>
+            <div class="grid-2">
+              <div class="field">
+                <span class="label" style="font-size:12px;font-weight:550;color:var(--text-2)">Cached Audio Files</span>
+                <div class="stat-val mono" id="cache-file-count" style="font-size:20px;font-weight:600;margin-top:4px">0 files</div>
+              </div>
+              <div class="field">
+                <span class="label" style="font-size:12px;font-weight:550;color:var(--text-2)">Cache Storage Used</span>
+                <div class="stat-val mono" id="cache-size-mb" style="font-size:20px;font-weight:600;margin-top:4px">0.0 MB / 100 MB</div>
+              </div>
+            </div>
+            <div class="form-foot">
+              <span class="help" id="cache-feedback-msg" style="margin-right:auto;align-self:center">LRU eviction active at size cap. Live numbers/gaps are never cached.</span>
+              <button class="btn danger" id="btn-clear-cache" type="button">Clear Audio Cache</button>
+            </div>
+          </div>
+
+          <!-- Seed Reference Data Section (Prompt 25) -->
+          <div class="card form-section" id="sec-seed">
+            <div class="card-head">
+              <h2>Seed Reference Data</h2>
+              <span class="chip wait"><span class="dot"></span>Imported &amp; Untested</span>
+            </div>
+            <p class="muted">Imported from F1 2026 reference spreadsheets. Never presented as verified in-game.</p>
+            <div class="grid-2">
+              <div class="field">
+                <span class="label" style="font-size:12px;font-weight:550;color:var(--text-2)">Imported Setups</span>
+                <div class="stat-val mono" id="seed-setups-count" style="font-size:20px;font-weight:600;margin-top:4px">275 team + 25 base</div>
+              </div>
+              <div class="field">
+                <span class="label" style="font-size:12px;font-weight:550;color:var(--text-2)">Circuits &amp; Turns</span>
+                <div class="stat-val mono" id="seed-tracks-count" style="font-size:20px;font-weight:600;margin-top:4px">25 tracks / 181 key turns</div>
+              </div>
+            </div>
+            <div class="field" style="margin-top:12px">
+              <span class="label" style="font-size:12px;font-weight:550;color:var(--text-2)">Validation Flags</span>
+              <div class="dim" id="seed-flags-desc" style="font-size:13px;margin-top:4px">Tyre pressures below game minimums flagged (values preserved, not changed).</div>
+            </div>
+
+            <div class="field" style="margin-top:12px" id="unconfirmed-mappings-wrap">
+              <span class="label" style="font-size:12px;font-weight:550;color:var(--text-2)">Unconfirmed Track &amp; Team Mappings</span>
+              <div id="unconfirmed-mappings-list" style="margin-top:6px;font-size:13px">
+                <span class="dim">All known track mappings confirmed.</span>
+              </div>
+            </div>
+
+            <div class="form-foot" style="margin-top:16px">
+              <span class="help" id="seed-feedback-msg" style="margin-right:auto;align-self:center">Last import: Ready</span>
+              <button class="btn secondary" id="btn-reimport-seed" type="button">Re-run Seed Import</button>
+            </div>
+          </div>
         </div>
       </div>
     </section>

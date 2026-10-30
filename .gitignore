@@ -25,6 +25,8 @@ models/
 .pytest_cache/
 .coverage
 htmlcov/
+cache/
+*.lock
 
 # Secrets & local config
 .env

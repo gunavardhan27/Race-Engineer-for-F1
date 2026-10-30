@@ -178,16 +178,21 @@ class LoggingConfig:
 @dataclass
 class OvertakeConfig:
     confirm_time_s: float = 2.0
-    proximity_m: float = 50.0
+    confirm_distance_m: float = 80.0
+    proximity_m: float = 60.0
     clean_braking_delta_max_m: float = 10.0
     brave_braking_delta_min_m: float = 10.0
     brave_braking_delta_max_m: float = 25.0
-    brave_start_gap_min_m: float = -8.0
-    brave_start_gap_max_m: float = -4.0
-    divebomb_start_gap_max_m: float = -8.0
+    brave_start_gap_min_m: float = -10.0
+    brave_start_gap_max_m: float = -5.0
+    divebomb_start_gap_max_m: float = -10.0
     divebomb_braking_delta_min_m: float = 25.0
     divebomb_min_speed_delta_kph: float = 15.0
     divebomb_exit_speed_delta_kph: float = -10.0
+    contact_window_s: float = 2.0
+    forced_off_speed_drop_kph: float = 25.0
+    ran_deep_min_speed_delta_kph: float = 15.0
+    ran_deep_exit_speed_delta_kph: float = 10.0
 
 
 @dataclass
@@ -256,11 +261,17 @@ class UsageConfig:
 
 
 @dataclass
+class CacheConfig:
+    audio_max_mb: float = 100.0
+
+
+@dataclass
 class AppConfig:
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
     stt: STTConfig = field(default_factory=STTConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
+    cache: CacheConfig = field(default_factory=CacheConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     redis: RedisConfig = field(default_factory=RedisConfig)

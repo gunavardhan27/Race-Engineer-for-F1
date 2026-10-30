@@ -157,4 +157,7 @@ quali:
   eliminated_per_segment: null                        # Null = auto-derived from car count (6 for 22 cars, 5 for 20 cars)
   large_gap_s: 1.0                                    # Gap to pole in seconds for quali_gap_large
 
+cache:
+  audio_max_mb: 100                                   # Maximum disk cache size in MB for static TTS audio clips
+
 

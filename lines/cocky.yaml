@@ -1,324 +1,335 @@
-# Reaction lines for the "cocky" persona. Edit freely.
-# level: omit for clean lines, "mild" or "strong" for swearing.
-# config persona.profanity (none | mild | strong) sets the maximum level used.
-# Placeholders: {name} other driver's surname, {pos} position, {gained} / {lost} positions,
-# {laptime} lap time, {count} how many times this happened this race.
-
 overtake_made:
-  - text: "Lovely. {name} didn't see that coming."
-  - text: "That's how it's done. P{pos}."
-  - text: "Textbook. Next one."
-  - text: "Send it! Bloody brilliant move on {name}."
-    level: mild
-  - text: "Fucking mega! {name}'s still wondering where you came from."
-    level: strong
-
+- text: Lovely. {name} didn't see that coming.
+- text: That's how it's done. P{pos}.
+- text: Textbook. Next one.
+- text: Send it! Bloody brilliant move on {name}.
+  level: mild
+- text: Fucking mega! {name}'s still wondering where you came from.
+  level: strong
 overtaken:
-  - text: "{name} got you. Get it back."
-  - text: "Door was wide open there. Close it next time."
-  - text: "That's P{pos} gone. Wake up."
-  - text: "Bloody hell, you just let {name} walk past."
-    level: mild
-  - text: "What the fuck was that? {name} just strolled by."
-    level: strong
-
+- text: '{name} got you. Get it back.'
+- text: Door was wide open there. Close it next time.
+- text: That's P{pos} gone. Wake up.
+- text: Bloody hell, you just let {name} walk past.
+  level: mild
+- text: What the fuck was that? {name} just strolled by.
+  level: strong
 defended:
-  - text: "Held {name} off for {count} laps. Proper racecraft."
-  - text: "{name}'s given up. Good defending."
-  - text: "Brick wall. {name} can't find a way past, damn good work."
-    level: mild
-
+- text: Held {name} off for {count} laps. Proper racecraft.
+- text: '{name}''s given up. Good defending.'
+- text: Brick wall. {name} can't find a way past, damn good work.
+  level: mild
 good_start:
-  - text: "Great launch, up {gained}. Keep it tidy."
-  - text: "Plus {gained} off the line. Love it."
-  - text: "Holy hell, what a start. Up {gained}."
-    level: mild
-
+- text: Great launch, up {gained}. Keep it tidy.
+- text: Plus {gained} off the line. Love it.
+- text: Holy hell, what a start. Up {gained}.
+  level: mild
 bad_start:
-  - text: "Down {lost} at the start. Plenty of race left, settle in."
-  - text: "Bogged it. Down {lost}. Let's earn them back."
-  - text: "Shit start, down {lost}. Shake it off."
-    level: strong
-
+- text: Down {lost} at the start. Plenty of race left, settle in.
+- text: Bogged it. Down {lost}. Let's earn them back.
+- text: Shit start, down {lost}. Shake it off.
+  level: strong
 fastest_lap:
-  - text: "Purple lap. {laptime}. Show-off."
-  - text: "Fastest lap of the race, {laptime}. That's my driver."
-  - text: "Fastest lap, {laptime}. Bloody rapid."
-    level: mild
-
+- text: Purple lap. {laptime}. Show-off.
+- text: Fastest lap of the race, {laptime}. That's my driver.
+- text: Fastest lap, {laptime}. Bloody rapid.
+  level: mild
 personal_best:
-  - text: "{laptime}, personal best. More of that."
-  - text: "Best lap yet. Keep pushing."
-
+- text: '{laptime}, personal best. More of that.'
+- text: Best lap yet. Keep pushing.
 win:
-  - text: "P1! You've won it! Absolutely mega!"
-  - text: "Winner! That's the one. What a drive."
-  - text: "Get in there! P1! Bloody incredible!"
-    level: mild
-  - text: "You fucking legend! P1! Champagne's on you!"
-    level: strong
-
+- text: P1! You've won it! Absolutely mega!
+- text: Winner! That's the one. What a drive.
+- text: Get in there! P1! Bloody incredible!
+  level: mild
+- text: You fucking legend! P1! Champagne's on you!
+  level: strong
 podium:
-  - text: "P{pos}! On the podium. Great job."
-  - text: "Podium, P{pos}. Smashed it today."
-  - text: "P{pos}, on the bloody podium! Proud of you."
-    level: mild
-  - text: "Fucking yes! P{pos}, podium!"
-    level: strong
-
+- text: P{pos}! On the podium. Great job.
+- text: Podium, P{pos}. Smashed it today.
+- text: P{pos}, on the bloody podium! Proud of you.
+  level: mild
+- text: Fucking yes! P{pos}, podium!
+  level: strong
 points:
-  - text: "P{pos}, in the points. Solid day."
-  - text: "P{pos}. Points in the bag."
-
+- text: P{pos}, in the points. Solid day.
+- text: P{pos}. Points in the bag.
 no_points:
-  - text: "P{pos}. Not our day. We go again."
-  - text: "P{pos}. We'll look at the data and come back stronger."
-  - text: "P{pos}. Bit of a crap one. We go again."
-    level: mild
-
+- text: P{pos}. Not our day. We go again.
+- text: P{pos}. We'll look at the data and come back stronger.
+- text: P{pos}. Bit of a crap one. We go again.
+  level: mild
 spin:
-  - text: "Did you just spin? Get it pointed the right way."
-  - text: "Round and round. Feet in, get going."
-  - text: "Bloody hell. Gather it up, keep going."
-    level: mild
-  - text: "Oh for fuck's sake. Get it facing forwards."
-    level: strong
-
+- text: Did you just spin? Get it pointed the right way.
+- text: Round and round. Feet in, get going.
+- text: Bloody hell. Gather it up, keep going.
+  level: mild
+- text: Oh for fuck's sake. Get it facing forwards.
+  level: strong
 collision:
-  - text: "Contact with {name}. Check your mirrors next time."
-  - text: "Was that necessary? Keep it clean."
-  - text: "Ouch. Bloody hell, give him some room."
-    level: mild
-  - text: "Jesus Christ, what the hell was that?"
-    level: strong
-
+- text: Contact with {name}. Check your mirrors next time.
+- text: Was that necessary? Keep it clean.
+- text: Ouch. Bloody hell, give him some room.
+  level: mild
+- text: Jesus Christ, what the hell was that?
+  level: strong
 flashback:
-  - text: "Flashback? We'll pretend that never happened."
-  - text: "Rewinding time now, are we? Fine."
-  - text: "Flashback. Yeah, I saw that cock-up too."
-    level: strong
-
+- text: Flashback? We'll pretend that never happened.
+- text: Rewinding time now, are we? Fine.
+- text: Flashback. Yeah, I saw that cock-up too.
+  level: strong
 track_limits:
-  - text: "Track limits again. The white line is there for a reason."
-  - text: "That's {count} warnings. Keep it on the black stuff."
-  - text: "Track limits, {count}. Bloody hell, stay inside the lines."
-    level: mild
-
+- text: Track limits again. The white line is there for a reason.
+- text: That's {count} warnings. Keep it on the black stuff.
+- text: Track limits, {count}. Bloody hell, stay inside the lines.
+  level: mild
 penalty:
-  - text: "Penalty. Brilliant. Just brilliant."
-  - text: "We've picked up a penalty. Let's not do that again."
-  - text: "Penalty. For fuck's sake."
-    level: strong
-
+- text: Penalty. Brilliant. Just brilliant.
+- text: We've picked up a penalty. Let's not do that again.
+- text: Penalty. For fuck's sake.
+  level: strong
 lost_positions:
-  - text: "Lost {lost} places that lap. What happened?"
-  - text: "Down {lost}. Get your head in the game."
-  - text: "Down {lost} places. What the hell was that lap?"
-    level: mild
-
+- text: Lost {lost} places that lap. What happened?
+- text: Down {lost}. Get your head in the game.
+- text: Down {lost} places. What the hell was that lap?
+  level: mild
 escalation:
-  - text: "That's {count} mistakes this race. Reset, breathe, drive."
-  - text: "{count} cock-ups now. Bring it home in one piece, yeah?"
-    level: mild
-  - text: "{count} fuck-ups and counting. Seriously, calm down."
-    level: strong
-
+- text: That's {count} mistakes this race. Reset, breathe, drive.
+- text: '{count} cock-ups now. Bring it home in one piece, yeah?'
+  level: mild
+- text: '{count} fuck-ups and counting. Seriously, calm down.'
+  level: strong
 clean_stint:
-  - text: "Ten clean laps. Metronomic."
-  - text: "Lovely rhythm. Keep doing exactly that."
-
+- text: Ten clean laps. Metronomic.
+- text: Lovely rhythm. Keep doing exactly that.
 retirement:
-  - text: "That's it, we're out. Bring it back to the garage."
-  - text: "Race over. Shit happens. We go again."
-    level: strong
-
+- text: That's it, we're out. Bring it back to the garage.
+- text: Race over. Shit happens. We go again.
+  level: strong
 radio_check:
-  - text: "Loud and clear. Now go drive."
-  - text: "Loud and clear. I hear you, unfortunately."
-  - text: "Loud and bloody clear."
-    level: mild
-
-# ---- Pace and expectation (Prompt 18) ----
-# Extra placeholders: {delta} seconds, {gap} seconds, {expected} expected position,
-# {teammate} teammate surname, {sector} sector number, {reason} why a lap was slow.
-
-slower_lap:            # slower than the previous lap with no traffic/deg/SC/damage excuse
-  - text: "Plus {delta} on the last lap. No traffic, no excuses."
-  - text: "That lap was {delta} slower. Did you stop for a coffee?"
-  - text: "Plus {delta}. Tyres are fine, car is fine. So it's you."
-  - text: "Plus {delta}, what the hell happened there?"
-    level: mild
-
-slower_lap_explained:  # slower, but there's a reason — neutral, no mocking
-  - text: "Plus {delta}, that's the {reason}. Nothing you could do."
-  - text: "Lost {delta} to {reason}. Reset and go again."
-
+- text: Loud and clear. Now go drive.
+- text: Loud and clear. I hear you, unfortunately.
+- text: Loud and bloody clear.
+  level: mild
+slower_lap:
+- text: Plus {delta} on the last lap. No traffic, no excuses.
+- text: That lap was {delta} slower. Did you stop for a coffee?
+- text: Plus {delta}. Tyres are fine, car is fine. So it's you.
+- text: Plus {delta}, what the hell happened there?
+  level: mild
+slower_lap_explained:
+- text: Plus {delta}, that's the {reason}. Nothing you could do.
+- text: Lost {delta} to {reason}. Reset and go again.
 quali_gap_large:
-  - text: "Plus {gap} to pole. That's a lifetime."
-  - text: "{gap} off pole. Somewhere there's a lap in that car. Find it."
-  - text: "{gap} off pole. Bloody hell, were you sightseeing?"
-    level: mild
-
+- text: Plus {gap} to pole. That's a lifetime.
+- text: '{gap} off pole. Somewhere there''s a lap in that car. Find it.'
+- text: '{gap} off pole. Bloody hell, were you sightseeing?'
+  level: mild
 quali_danger_zone:
-  - text: "P{pos}, you're in the drop zone. Need a lap now."
-  - text: "P{pos}, that's elimination. Push."
-
+- text: P{pos}, you're in the drop zone. Need a lap now.
+- text: P{pos}, that's elimination. Push.
 quali_safe:
-  - text: "P{pos}, you're through. Good job."
-  - text: "Safe in P{pos}. Tyres saved, nicely done."
-
+- text: P{pos}, you're through. Good job.
+- text: Safe in P{pos}. Tyres saved, nicely done.
 purple_sector:
-  - text: "Purple sector {sector}. Keep going."
-  - text: "Purple in sector {sector}. Don't lift now."
-
-below_expectation:     # car is clearly faster than the result
-  - text: "P{pos}. {teammate}'s P{expected} in the same car. Just saying."
-  - text: "The car's a P{expected} car. You're P{pos}. Draw your own conclusions."
-  - text: "P{pos} in a car that's quick enough for P{expected}? Come on."
-  - text: "{teammate}'s P{expected} in the same bloody car. P{pos}. Sort it out."
-    level: mild
-  - text: "Same car as {teammate}, he's P{expected}, you're P{pos}. What the fuck?"
-    level: strong
-
-above_expectation:     # result better than the car should allow
-  - text: "P{pos} in that car? That's witchcraft. Well done."
-  - text: "Car's worth P{expected}, you've stuck it P{pos}. Mega."
-  - text: "P{pos} in that shitbox? Bloody hero."
-    level: strong
-
+- text: Purple sector {sector}. Keep going.
+- text: Purple in sector {sector}. Don't lift now.
+below_expectation:
+- text: P{pos}. {teammate}'s P{expected} in the same car. Just saying.
+- text: The car's a P{expected} car. You're P{pos}. Draw your own conclusions.
+- text: P{pos} in a car that's quick enough for P{expected}? Come on.
+- text: '{teammate}''s P{expected} in the same bloody car. P{pos}. Sort it out.'
+  level: mild
+- text: Same car as {teammate}, he's P{expected}, you're P{pos}. What the fuck?
+  level: strong
+above_expectation:
+- text: P{pos} in that car? That's witchcraft. Well done.
+- text: Car's worth P{expected}, you've stuck it P{pos}. Mega.
+- text: P{pos} in that shitbox? Bloody hero.
+  level: strong
 beat_teammate:
-  - text: "Ahead of {teammate} by {gap}. Bragging rights."
-  - text: "{teammate}'s {gap} behind you. He'll be sulking."
-
+- text: Ahead of {teammate} by {gap}. Bragging rights.
+- text: '{teammate}''s {gap} behind you. He''ll be sulking.'
 lost_to_teammate:
-  - text: "{teammate}'s {gap} quicker in the same car. Have a look at his data."
-  - text: "{gap} down on {teammate}. Same car, mate."
-  - text: "{gap} down on {teammate}. Embarrassing, frankly."
-    level: mild
-
+- text: '{teammate}''s {gap} quicker in the same car. Have a look at his data.'
+- text: '{gap} down on {teammate}. Same car, mate.'
+- text: '{gap} down on {teammate}. Embarrassing, frankly.'
+  level: mild
 tt_personal_best:
-  - text: "Personal best, {gap} quicker. Lovely."
-  - text: "New PB. Go again, there's more."
-
+- text: Personal best, {gap} quicker. Lovely.
+- text: New PB. Go again, there's more.
 tt_slower:
-  - text: "Plus {delta} to your best. Sector {sector} is where it went."
-  - text: "Plus {delta}. Not this one."
-
-ai_too_easy:           # consistently far ahead of AI teammate
-  - text: "You're a second clear of {teammate} every lap. Turn the AI up, coward."
-  - text: "This is too easy for you. Bump the AI difficulty."
-
+- text: Plus {delta} to your best. Sector {sector} is where it went.
+- text: Plus {delta}. Not this one.
+ai_too_easy:
+- text: You're a second clear of {teammate} every lap. Turn the AI up, coward.
+- text: This is too easy for you. Bump the AI difficulty.
 ai_too_hard:
-  - text: "Consistently over a second off {teammate}. No shame in dropping the AI a few notches."
-
-# ---- Finish and overtakes ----
+- text: Consistently over a second off {teammate}. No shame in dropping the AI a few
+    notches.
 win_photo_finish:
-  - text: "Photo finish! You took it by {margin}s! Incredible!"
-  - text: "By a whisker! {margin} seconds at the line! Bloody heart attack finish!"
-    level: mild
-  - text: "Fuck me, that was close! Won by {margin}s! Absolute scenes!"
-    level: strong
-
+- text: Photo finish! You took it by {margin}s! Incredible!
+- text: By a whisker! {margin} seconds at the line! Bloody heart attack finish!
+  level: mild
+- text: Fuck me, that was close! Won by {margin}s! Absolute scenes!
+  level: strong
+- text: P1! By {margin}! I can't breathe! What a finish!
+- text: P1 by {margin}! Photo finish! Bloody hell, my heart!
+  level: mild
 win_close:
-  - text: "P1! Kept your cool with {name} right on your gearbox. Great drive."
-  - text: "Winner! Squeaked it home by {margin}s. Mega drive."
-  - text: "Get in! P1 by {margin}s! Bloody fantastic defence at the end."
-    level: mild
-  - text: "You fucking beauty! P1, held him off by {margin}s!"
-    level: strong
-
+- text: P1! Kept your cool with {name} right on your gearbox. Great drive.
+- text: Winner! Squeaked it home by {margin}s. Mega drive.
+- text: Get in! P1 by {margin}s! Bloody fantastic defence at the end.
+  level: mild
+- text: You fucking beauty! P1, held him off by {margin}s!
+  level: strong
+- text: P1! {margin} clear. Held your nerve. Brilliant.
+- text: Winner by {margin}! Get in there!
+  level: mild
 win_comfortable:
-  - text: "P1! Controlled that beautifully. {margin}s in hand at the flag."
-  - text: "Winner! Comfortable gap of {margin}s at the finish. Top job."
-  - text: "Bloody dominant, {margin}s clear! Drink it in."
-    level: mild
-
+- text: P1! Controlled that beautifully. {margin}s in hand at the flag.
+- text: Winner! Comfortable gap of {margin}s at the finish. Top job.
+- text: Bloody dominant, {margin}s clear! Drink it in.
+  level: mild
+- text: P1! {margin} clear. Controlled it from the front. Lovely.
 win_dominant:
-  - text: "P1! Pure class. {margin} seconds clear of the rest."
-  - text: "Annihilation. {margin} seconds up the road. In a league of your own."
-  - text: "Bloody hell, were the others even in the same race? {margin}s clear!"
-    level: mild
-  - text: "Fucking destroyed them. {margin} seconds. Unbelievable drive."
-    level: strong
-
+- text: P1! Pure class. {margin} seconds clear of the rest.
+- text: Annihilation. {margin} seconds up the road. In a league of your own.
+- text: Bloody hell, were the others even in the same race? {margin}s clear!
+  level: mild
+- text: Fucking destroyed them. {margin} seconds. Unbelievable drive.
+  level: strong
+- text: P1, and by {margin}! Absolute demolition job.
+- text: P1 by {margin}. Did the others even turn up? Fucking dominant.
+  level: strong
 podium_held:
-  - text: "P{pos}! Held off {name} by {margin}s at the flag! Proper grit."
-  - text: "Podium, P{pos}! Gritted your teeth and kept {name} behind. Good stuff."
-  - text: "Bloody brilliant defence for P{pos}! {name} threw everything at you."
-    level: mild
-
+- text: P{pos}! Held off {name} by {margin}s at the flag! Proper grit.
+- text: Podium, P{pos}! Gritted your teeth and kept {name} behind. Good stuff.
+- text: Bloody brilliant defence for P{pos}! {name} threw everything at you.
+  level: mild
+- text: P{pos}! Held on by {margin}! Podium!
 podium_missed_higher:
-  - text: "P{pos}, only {gap}s off P{higher}! So close to that second step."
-  - text: "P{pos}, on the podium! Another lap and P{higher} was yours."
-  - text: "P{pos}! Agonisingly close to P{higher}, but that's a bloody good podium."
-    level: mild
-
+- text: P{pos}, only {gap}s off P{higher}! So close to that second step.
+- text: P{pos}, on the podium! Another lap and P{higher} was yours.
+- text: P{pos}! Agonisingly close to P{higher}, but that's a bloody good podium.
+  level: mild
+- text: P{pos}, podium. Just {margin} off P{higher}. So close.
 missed_podium:
-  - text: "P4, just {gap}s off the podium! Heartbreaking, but fantastic drive."
-  - text: "P4, so close to silverware. Great race today."
-  - text: "P4, {gap}s off the rostrum. Bloody good effort mate."
-    level: mild
-
+- text: P4, just {gap}s off the podium! Heartbreaking, but fantastic drive.
+- text: P4, so close to silverware. Great race today.
+- text: P4, {gap}s off the rostrum. Bloody good effort mate.
+  level: mild
+- text: P4, {margin} off the podium. Painful.
+- text: P4, {margin} off the podium. Bollocks.
+  level: mild
 passed_stricken_car:
-  - text: "{name}'s crawling, easy pass."
-  - text: "{name}'s got an issue. Past him, keep focused."
-  - text: "Freebie. {name}'s car is broken."
-
+- text: '{name}''s crawling, easy pass.'
+- text: '{name}''s got an issue. Past him, keep focused.'
+- text: Freebie. {name}'s car is broken.
+- text: Passed {name}, he's in trouble. Free place.
 overtake_clean:
-  - text: "Clinical. Beautiful move on {name} into {corner}."
-  - text: "Textbook pass on {name}. P{pos}."
-  - text: "Clean as a whistle on {name}. Lovely stuff."
-  - text: "Bloody surgical move on {name} into {corner}."
-    level: mild
-
+- text: Clinical. Beautiful move on {name} into {corner}.
+- text: Textbook pass on {name}. P{pos}.
+- text: Clean as a whistle on {name}. Lovely stuff.
+- text: Bloody surgical move on {name} into {corner}.
+  level: mild
+- text: Clean as you like on {name}. P{pos}.
+- text: Beautiful move. Fair and square. P{pos}.
 overtake_brave:
-  - text: "Brave move on {name}! Stuck it right on the edge into {corner}."
-  - text: "Late on the brakes! Ballsy pass on {name}."
-  - text: "Huge commitment into {corner}! Love that."
-  - text: "Bloody hell, you didn't give {name} an inch there!"
-    level: mild
-  - text: "Fucking balls of steel into {corner}! Brilliant pass on {name}."
-    level: strong
-
+- text: Brave move on {name}! Stuck it right on the edge into {corner}.
+- text: Late on the brakes! Ballsy pass on {name}.
+- text: Huge commitment into {corner}! Love that.
+- text: Bloody hell, you didn't give {name} an inch there!
+  level: mild
+- text: Fucking balls of steel into {corner}! Brilliant pass on {name}.
+  level: strong
+- text: Ooh, late on the brakes there! Made it stick. P{pos}.
+- text: Brave move on {name}! Bloody hell, made it stick!
+  level: mild
+- text: That took balls! P{pos}!
+  level: strong
 overtake_divebomb:
-  - text: "Full send into {corner}! Surprised you made that stick on {name}."
-  - text: "Sent it from downtown! Proper divebomb on {name}."
-  - text: "Bloody hell, that was a lunge and a half on {name}!"
-    level: mild
-  - text: "Holy shit, what a divebomb on {name}! You got away with that one."
-    level: strong
-
+- text: Full send into {corner}! Surprised you made that stick on {name}.
+- text: Sent it from downtown! Proper divebomb on {name}.
+- text: Bloody hell, that was a lunge and a half on {name}!
+  level: mild
+- text: Holy shit, what a divebomb on {name}! You got away with that one.
+  level: strong
+- text: That was a divebomb. You got away with it. Careful.
+- text: He had to jump out of the way there. Stewards are watching.
+- text: Bit of a fucking lunge, that. Dial it back.
+  level: strong
 divebomb_contact:
-  - text: "Banged wheels with {name} into {corner}. Bit messy that."
-  - text: "Contact with {name} on the dive. Watch out for stewards."
-  - text: "Rubbing is racing, but that was bloody close with {name}."
-    level: mild
-  - text: "Clattered right into {name}! Watch the bloody penalties!"
-    level: strong
-
+- text: Banged wheels with {name} into {corner}. Bit messy that.
+- text: Contact with {name} on the dive. Watch out for stewards.
+- text: Rubbing is racing, but that was bloody close with {name}.
+  level: mild
+- text: Clattered right into {name}! Watch the bloody penalties!
+  level: strong
 overtake_switchback:
-  - text: "{name} gets the switchback straight away. Sold you a dummy."
-  - text: "{name} cut right back underneath you. Got to protect the exit."
-  - text: "Lost it on the exit. {name} switched back on you."
-
+- text: '{name} gets the switchback straight away. Sold you a dummy.'
+- text: '{name} cut right back underneath you. Got to protect the exit.'
+- text: Lost it on the exit. {name} switched back on you.
+- text: '{name} switched back on you. Protect the exit next time.'
 defend_warning:
-  - text: "{name} is right behind into {corner}, defend."
-  - text: "Watch your mirrors into {corner}, {name}'s closing."
-  - text: "{name}'s right on your gearbox into {corner}. Cover the line."
-  - text: "Car behind is closing fast. Cover the line."
-  - text: "Defend into the corner."
-
+- text: '{name} is right behind into {corner}, defend.'
+- text: Watch your mirrors into {corner}, {name}'s closing.
+- text: '{name}''s right on your gearbox into {corner}. Cover the line.'
+- text: Car behind is closing fast. Cover the line.
+- text: Defend into the corner.
+- text: Car close behind into {corner}.
+- text: '{name} right behind into {corner}.'
 inside_look:
-  - text: "Inside look from {name}! Cover the inside."
-  - text: "{name}'s having a look up the inside into {corner}!"
-  - text: "Door closed on the inside! {name}'s looking."
-  - text: "Inside look! Cover the inside."
-  - text: "Inside look into the corner."
-
+- text: Inside look from {name}! Cover the inside.
+- text: '{name}''s having a look up the inside into {corner}!'
+- text: Door closed on the inside! {name}'s looking.
+- text: Inside look! Cover the inside.
+- text: Inside look into the corner.
+- text: He's looking up the inside.
+- text: Inside, inside!
 told_you:
-  - text: "Penalty for that divebomb on {name}. Told you."
-  - text: "And there's the penalty. I told you that was over the line."
-  - text: "Stewards didn't like that lunge on {name}. Told you so."
-    level: mild
-  - text: "And there's the fucking penalty. Told you that divebomb was reckless."
-    level: strong
+- text: Penalty for that divebomb on {name}. Told you.
+- text: And there's the penalty. I told you that was over the line.
+- text: Stewards didn't like that lunge on {name}. Told you so.
+  level: mild
+- text: And there's the fucking penalty. Told you that divebomb was reckless.
+  level: strong
+- text: And there's the penalty. Told you.
+overtake_mode_pass:
+- text: Overtake mode did its job. Clean pass on {name}.
+- text: Battery deployed nicely, straight past {name}.
+- text: Overtake button pressed, {name} smoked down the straight.
+  level: mild
+- text: Fucking roasted {name} with overtake mode! See ya.
+  level: strong
+around_the_outside:
+- text: Around the outside of {name}! Sensational move into {corner}.
+- text: Hung it around the outside of {name}. Absolutely stunning.
+- text: What a bloody move around the outside of {name} into {corner}!
+  level: mild
+- text: Round the outside! What a fucking move into {corner}!
+  level: strong
+divebombed_by:
+- text: '{name} just divebombed you into {corner}. Stewards need to look at that.'
+- text: Desperate lunge from {name} into {corner}. That wasn't on.
+- text: Bloody divebomb from {name}! Completely out of control.
+  level: mild
+- text: What a fucking joke of a divebomb from {name}! Stewards better penalize that.
+  level: strong
+fair_pass_against:
+- text: Fair move from {name}, he was alongside into {corner}.
+- text: Clean pass from {name}. Stay with him, get it back.
+- text: '{name} got that done cleanly. Regroup and fight back.'
+- text: Damn good move by {name}, but don't let him get away.
+  level: mild
+forced_off_by:
+- text: '{name} forced you right off the track into {corner}. Not giving you racing
+    room.'
+- text: Pushed off by {name}. Report that to the stewards.
+- text: Bloody shoved off the circuit by {name}! Stewards on that now.
+  level: mild
+- text: '{name} literally drove you off the fucking road! What an idiot!'
+  level: strong
+overtake_divebomb_contact:
+- text: You hit him. That's a divebomb, expect the stewards to look at it.
+- text: Contact on that move. Not clever. Give the place back if they ask.

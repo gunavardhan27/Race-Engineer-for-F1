@@ -1065,9 +1065,20 @@ class SetupsStorage:
         for s in setups:
             sid = str(s["id"])
             fp = s["fingerprint"]
-            # Look up laps under setup_id or fingerprint
-            valid_times = laps_by_setup.get(sid) or laps_by_setup.get(fp) or []
+            valid_times = list(laps_by_setup.get(sid) or laps_by_setup.get(fp) or [])
             total_laps = all_laps_count.get(sid) or all_laps_count.get(fp) or len(valid_times)
+
+            # If imported/derived has no laps directly under its fingerprint, check if any
+            # captured setup in storage matches all present parameters
+            if not valid_times and s.get("source") in ("imported", "derived"):
+                s_params = s.get("params", {})
+                for cap_sid, cap_times in laps_by_setup.items():
+                    cap_setup = self.get_setup(cap_sid) or self.get_setup_by_fingerprint(cap_sid)
+                    if cap_setup and cap_setup.get("source") == "captured":
+                        c_params = cap_setup.get("params", {})
+                        if all(c_params.get(k) == v for k, v in s_params.items()):
+                            valid_times.extend(cap_times)
+                            total_laps += all_laps_count.get(cap_sid, len(cap_times))
 
             best_s = min(valid_times) if valid_times else None
             median_s = statistics.median(valid_times) if len(valid_times) >= 3 else None

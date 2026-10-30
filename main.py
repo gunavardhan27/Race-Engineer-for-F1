@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import faulthandler
 import hashlib
 import json
 import logging
+import os
+import signal
 import socket
 import struct
 import sys
@@ -26,6 +29,10 @@ import time
 from pathlib import Path
 
 import numpy as np
+
+from single_instance import SingleInstanceLock
+from port_checker import format_port_conflict_message
+from audio_cache import AudioCacheManager
 
 from agent import RaceEngineerAgent
 from audio_devices import print_audio_devices
@@ -37,6 +44,7 @@ from f1telemetry.deterministic import Callout, Callouts, RadioQueue, route
 from f1telemetry.spotter import Spotter, SPOTTER_PHRASES, SpotterState
 from f1telemetry.state import RaceState, TRACKS, LapRecord
 from f1telemetry.overtakes import BrakingZoneDetector, OvertakeDetector, DefendWarningDetector
+from trackmodel import TrackModel, TrackModelBuilder, TrackModelStorage
 from knowledge import KnowledgeBase
 from latency import LatencyTracker
 from llm import LLMClient
@@ -51,6 +59,11 @@ from storage import SessionStorage, LapTraceCollector
 from analysis import get_lap_comparison_summary, compute_lap_debrief
 from setups import SetupsStorage, import_from_json, import_from_csv, export_as_sheet, export_as_json, validate_setup_params
 from usage import UsageGuard
+from seed_import import SeedImporter
+from minisectors import MiniSectorTracker, MiniSectorStorage
+from trackmap import TrackMapManager
+from positions import PositionsBroadcaster, encode_positions_frame, extract_car_positions
+from replay_manager import ReplayController
 
 log = logging.getLogger("engineer")
 FRAME = struct.Struct("<dI")   # recording: seconds since start, payload length
@@ -134,6 +147,14 @@ class ExplainTracker:
         iname = packets.INFRINGEMENT_TYPES.get(ev.infringement_type, f"infringement_{ev.infringement_type}")
         text = f"{pname} ({iname}), time={ev.penalty_time}s"
         self._get_lap_list(lap).append({"type": "PENALTY", "text": text, "data": ev})
+
+    def on_invalidation(self):
+        lap = self.current_lap
+        self._get_lap_list(lap).append({"type": "INVALIDATION", "text": "Lap invalidated (track limits)"})
+
+    def on_warning(self, count: int):
+        lap = self.current_lap
+        self._get_lap_list(lap).append({"type": "WARNING", "text": f"Track limits warning {count}"})
 
     def print_report(self, path: str):
         print("\n" + "=" * 80)
@@ -227,17 +248,49 @@ class Engineer:
         )
 
         self.braking_zones = BrakingZoneDetector(knowledge_base=self.knowledge)
+        self.track_model_storage = TrackModelStorage()
+        self.track_model: TrackModel | None = None
+        self.track_model_builder: TrackModelBuilder | None = None
+        self._last_model_build_time: float = 0.0
+
         self.overtake_detector = OvertakeDetector(
             config=self.config.overtake,
             storage=self.storage,
             braking_zones=self.braking_zones,
+            track_model=self.track_model,
         )
         self.defend_detector = DefendWarningDetector(
             config=self.config.defend,
             braking_zones=self.braking_zones,
             spotter=self.spotter,
+            track_model=self.track_model,
         )
         self.tracker: ExplainTracker | None = None
+        self.stopping: bool = False
+        self.engine_error: str | None = None
+        self._stop_event: asyncio.Event | None = None
+        self.track_map = TrackMapManager()
+        self.positions_broadcaster = PositionsBroadcaster()
+        self._last_pos_time: float = 0.0
+        self.replay_controller = ReplayController(self)
+        self.seed_importer = SeedImporter()
+        try:
+            st = self.seed_importer.get_status()
+            if st.get("setups_total", 0) == 0:
+                log.info("Importing initial seed reference data (Prompt 25)...")
+                self.seed_importer.import_all(reimport=False)
+        except Exception as e:
+            log.warning("Could not auto-import seed data at startup: %s", e)
+
+        db_path = getattr(self.storage, "db_path", "storage.db") if self.storage else "storage.db"
+        self.minisector_tracker = MiniSectorTracker(storage=MiniSectorStorage(db_path))
+
+        voice_str = getattr(self.config.tts, "voice", "en-GB-RyanNeural")
+        max_mb = getattr(self.config.cache, "audio_max_mb", 100.0) if hasattr(self.config, "cache") else 100.0
+        self.audio_cache = getattr(self.tts, "cache_manager", None) or AudioCacheManager(
+            voice=voice_str,
+            max_mb=max_mb,
+        )
 
         if self.config.stt.ptt_source == "joystick":
             self._joystick_thread = start_joystick_listener(
@@ -245,6 +298,41 @@ class Engineer:
                 joystick_index=self.config.stt.joystick_index,
                 button_index=self.config.stt.joystick_button,
             )
+
+    def request_shutdown(self):
+        """Signals graceful shutdown across console and desktop GUI."""
+        self.stopping = True
+        if self._stop_event:
+            if self.loop and self.loop.is_running():
+                self.loop.call_soon_threadsafe(self._stop_event.set)
+            else:
+                self._stop_event.set()
+
+    async def stop(self) -> None:
+        """Stops and cleans up all Engineer-owned resources and background tasks."""
+        self.stopping = True
+        if self._agent_task and not self._agent_task.done():
+            self._agent_task.cancel()
+        if self.player:
+            try:
+                self.player.stop()
+            except Exception:
+                pass
+        if self.audio_capture:
+            try:
+                self.audio_capture.stop()
+            except Exception:
+                pass
+        if self.storage:
+            try:
+                self.storage.close()
+            except Exception:
+                pass
+        if self.recorder:
+            try:
+                self.recorder.close()
+            except Exception:
+                pass
 
     def _reload_session_if_resumed(self):
         """Reload the current session from the database on app restart if the same session_uid resumes."""
@@ -302,11 +390,17 @@ class Engineer:
         if not self.tts:
             return
         log.info("Pre-rendering spotter phrases for instant zero-latency playback...")
+        self.audio_cache.register_static_phrases(SPOTTER_PHRASES)
         for phrase in SPOTTER_PHRASES:
+            cached = self.audio_cache.load(phrase)
+            if cached is not None:
+                self.spotter_audio[phrase] = cached
+                continue
             try:
                 audio, sr = await self.tts.synth(phrase)
                 if self.config.tts.radio_fx:
                     audio = apply_radio_fx(audio, sr, enable_clicks=True)
+                self.audio_cache.save(phrase, audio, sr)
                 self.spotter_audio[phrase] = (audio, sr)
             except Exception as e:
                 log.warning("Failed to pre-render spotter phrase %r: %s", phrase, e)
@@ -317,32 +411,26 @@ class Engineer:
         if not self.tts or not self.personality or not self.personality.lines:
             return
         log.info("Pre-rendering static persona lines...")
-        voice = getattr(self.config.tts, "voice_name", "default")
-        cache_dir = Path("cache/audio")
-        cache_dir.mkdir(parents=True, exist_ok=True)
+        static_texts = [
+            line.text for lines in self.personality.lines.values()
+            for line in lines if not line.has_placeholders
+        ]
+        self.audio_cache.register_static_phrases(static_texts)
+        self.audio_cache.cleanup_orphans(static_texts)
 
-        for event_name, lines in self.personality.lines.items():
-            for line in lines:
-                if line.has_placeholders:
-                    continue
-                text = line.text
-                key = hashlib.sha256(f"{voice}:{text}".encode("utf-8")).hexdigest()
-                cache_file = cache_dir / f"{key}.npz"
-                if cache_file.is_file():
-                    try:
-                        data = np.load(cache_file)
-                        self.personality.prerendered_audio[text] = (data["audio"], int(data["sr"]))
-                        continue
-                    except Exception as e:
-                        log.debug("Cache read error for %r: %s", text, e)
-                try:
-                    audio, sr = await self.tts.synth(text)
-                    if self.config.tts.radio_fx:
-                        audio = apply_radio_fx(audio, sr, enable_clicks=True)
-                    np.savez_compressed(cache_file, audio=audio, sr=sr)
-                    self.personality.prerendered_audio[text] = (audio, sr)
-                except Exception as e:
-                    log.warning("Failed to pre-render persona line %r: %s", text, e)
+        for text in static_texts:
+            cached = self.audio_cache.load(text)
+            if cached is not None:
+                self.personality.prerendered_audio[text] = cached
+                continue
+            try:
+                audio, sr = await self.tts.synth(text)
+                if self.config.tts.radio_fx:
+                    audio = apply_radio_fx(audio, sr, enable_clicks=True)
+                self.audio_cache.save(text, audio, sr)
+                self.personality.prerendered_audio[text] = (audio, sr)
+            except Exception as e:
+                log.warning("Failed to pre-render persona line %r: %s", text, e)
         log.info("Pre-rendered %d static persona lines", len(self.personality.prerendered_audio))
 
     def _play_spotter(self, phrase: str):
@@ -387,6 +475,7 @@ class Engineer:
             "penalties_s": self.state.me.penalties_s if self.state.me else 0,
             "blunder_count": blunders,
             "best_lap": f"{best_lap_s:.2f}s" if best_lap_s else "N/A",
+            "biggest_loss_segment": self.state.biggest_loss_segment,
         }
 
         async def _run_post_race():
@@ -402,7 +491,11 @@ class Engineer:
                 if c_fallback:
                     msg = c_fallback.text
             if not msg:
-                msg = f"P{pos} across the line. That's the chequered flag."
+                loss = self.state.biggest_loss_segment
+                if loss and loss.get("name") and loss.get("delta_s"):
+                    msg = f"P{pos} across the line. Main time loss was {loss['name']}, {loss['delta_s']:.1f}s off the fastest driver."
+                else:
+                    msg = f"P{pos} across the line. That's the chequered flag."
 
             self.radio.push(Callout(1, time.monotonic(), msg, ttl=15.0))
 
@@ -476,10 +569,65 @@ class Engineer:
             )
             self.state.personal_best = summary["personal_best"]
             self.state.last_lap_vs_best = summary["last_lap_vs_best"]
+            self._update_minisector_analysis()
         except Exception as e:
             log.debug("Could not update lap analysis: %s", e)
 
+    def _update_minisector_analysis(self):
+        """Updates snapshot fields for mini-sectors, theoretical best, and biggest loss."""
+        if not hasattr(self, "minisector_tracker") or not self.minisector_tracker:
+            return
+        if not self.state.session_uid or not self.state.session:
+            return
+        try:
+            track_len = float(getattr(self.state, "track_length", 5000.0) or 5000.0)
+            my_car = self.state.player
+            uid = str(self.state.session_uid)
+
+            # 1. Theoretical best for player
+            ideal = self.minisector_tracker.get_theoretical_best(uid, my_car, track_len)
+            self.state.my_theoretical_best = ideal
+
+            # 2. Fastest sectors across session
+            laps = self.minisector_tracker.storage.list_session_laps(uid, include_flagged=False)
+            if laps:
+                s_bests = {}
+                for s_num, key in [(1, "s1_ms"), (2, "s2_ms"), (3, "s3_ms")]:
+                    valid_s = [l for l in laps if l.get(key, 0) > 0]
+                    if valid_s:
+                        best_l = min(valid_s, key=lambda l: l[key])
+                        driver_name = self.state.name(best_l["car_idx"])
+                        s_bests[s_num] = {
+                            "driver": driver_name,
+                            "car_idx": best_l["car_idx"],
+                            "time_ms": best_l[key],
+                            "time_s": round(best_l[key] / 1000.0, 3),
+                        }
+                self.state.fastest_sectors = s_bests
+
+            # 3. Biggest loss segment vs session fastest lap
+            if laps:
+                fastest_lap = min(laps, key=lambda l: l["lap_time_ms"])
+                rec_fastest = self.minisector_tracker.storage.get_lap_timing(uid, fastest_lap["car_idx"], fastest_lap["lap_num"])
+                my_laps = [l for l in laps if l["car_idx"] == my_car]
+                if my_laps and rec_fastest:
+                    my_best_lap = min(my_laps, key=lambda l: l["lap_time_ms"])
+                    rec_my_best = self.minisector_tracker.storage.get_lap_timing(uid, my_car, my_best_lap["lap_num"])
+                    if rec_my_best:
+                        track_model = getattr(self, "track_model", None)
+                        comp = self.minisector_tracker.compare_laps(
+                            rec_my_best, rec_fastest, track_len, track_model=track_model,
+                            driver_a_name=self.state.name(my_car),
+                            driver_b_name=self.state.name(fastest_lap["car_idx"]),
+                        )
+                        if comp.get("top_losses"):
+                            self.state.biggest_loss_segment = comp["top_losses"][0]
+        except Exception as e:
+            log.debug("Could not update minisector analysis: %s", e)
+
     def on_packet(self, buf: bytes):
+        if self.stopping:
+            return
         if self.recorder:
             self.recorder.write(buf)
         try:
@@ -498,7 +646,15 @@ class Engineer:
                     if self.state.my_setup:
                         self._on_setup_change(self.state.my_setup, self.state.current_setup_fingerprint)
                     if self.state.session and self.state.session.track_id is not None:
-                        self.knowledge.load_track(self.state.session.track_id)
+                        t_id = self.state.session.track_id
+                        self.knowledge.load_track(t_id)
+                        t_len = self.state.track_length
+                        loaded_m = self.track_model_storage.load_model(t_id, t_len)
+                        if loaded_m:
+                            self.track_model = loaded_m
+                            self.overtake_detector.set_track_model(loaded_m)
+                            self.defend_detector.set_track_model(loaded_m)
+                        self.track_model_builder = TrackModelBuilder(t_id, t_len, knowledge_base=self.knowledge)
                 elif sig[0] == "setup_change":
                     self._on_setup_change(sig[1], sig[2])
                 elif sig[0] == "lap":
@@ -508,6 +664,13 @@ class Engineer:
                     if self.trace_collector:
                         self.trace_collector.on_lap_completed(rec, self.state)
                     self._update_lap_analysis()
+                    if self.broadcaster:
+                        self.broadcaster.broadcast("lap_minisectors_update", {
+                            "car_idx": rec.car_idx,
+                            "lap_num": rec.lap,
+                            "theoretical_best": self.state.my_theoretical_best,
+                            "biggest_loss": self.state.biggest_loss_segment,
+                        })
                     self._on_lap_completed_debrief(rec)
                     self.pace.quiet_mode = self.quiet_mode
                     for c_pace in self.pace.on_lap(rec):
@@ -535,6 +698,12 @@ class Engineer:
                 elif sig[0] == "penalty":
                     if self.tracker:
                         self.tracker.on_penalty(sig[1])
+                elif sig[0] == "lap_invalidated":
+                    if self.tracker:
+                        self.tracker.on_invalidation()
+                elif sig[0] == "track_limits_warning":
+                    if self.tracker:
+                        self.tracker.on_warning(sig[1])
                 elif sig[0] == "event":
                     ev = sig[1]
                     if getattr(ev, "code", "") == "COLL":
@@ -564,6 +733,36 @@ class Engineer:
             # Check overtakes and defend warnings on motion and lap data updates
             if h.packet_id in (packets.PacketId.LAP_DATA, packets.PacketId.MOTION):
                 now_ts = self.state.session_time if self.state.session_time > 0 else time.monotonic()
+
+                if self.track_map:
+                    self.track_map.update_from_state(self.state)
+
+                # Broadcast live 20Hz binary positions frame
+                wall_now = time.monotonic()
+                if wall_now - self._last_pos_time >= 0.045:
+                    self._last_pos_time = wall_now
+                    if self.positions_broadcaster and self.positions_broadcaster.client_count > 0:
+                        t_id = self.state.session.track_id if self.state.session else 0
+                        seq = self.positions_broadcaster.next_seq()
+                        ts_ms = int(now_ts * 1000) & 0xFFFFFFFF
+                        outline = self.track_map.current_outline if self.track_map else None
+                        cars = extract_car_positions(self.state, self.track_model, outline)
+                        frame = encode_positions_frame(seq, ts_ms, t_id, cars)
+                        self.positions_broadcaster.broadcast_frame(frame)
+
+                # Update track model from multi-car telemetry
+                if self.track_model_builder:
+                    self.track_model_builder.feed_race_state(self.state)
+                    if wall_now - self._last_model_build_time >= 5.0:
+                        self._last_model_build_time = wall_now
+                        new_m = self.track_model_builder.build_model()
+                        if new_m and (new_m.coverage_pct >= 20.0 or len(new_m.corners) > 0):
+                            self.track_model = new_m
+                            self.overtake_detector.set_track_model(new_m)
+                            self.defend_detector.set_track_model(new_m)
+                            if new_m.is_ready:
+                                self.track_model_storage.save_model(new_m)
+
                 # 1. Overtake detection
                 ot_records = self.overtake_detector.update(self.state, now=now_ts)
                 for ot in ot_records:
@@ -642,6 +841,8 @@ class Engineer:
 
             if self.trace_collector:
                 self.trace_collector.on_tick(self.state)
+            if hasattr(self, "minisector_tracker") and self.minisector_tracker:
+                self.minisector_tracker.on_tick(self.state, now)
         except Exception:
             log.exception("packet handling failed")
 
@@ -787,7 +988,7 @@ class Engineer:
         self.radio.push(Callout(-1, time.monotonic(), text))
 
     async def speaker(self):
-        while True:
+        while not self.stopping:
             c = self.radio.pop()
             if c:
                 if self.broadcaster:
@@ -1093,26 +1294,75 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
     if engineer.sound_test and not engineer.is_session_live() and not args.selftest and not args.replay:
         await engineer.sound_test.play_startup_sound()
 
+    if stop_event is None:
+        stop_event = asyncio.Event()
+    engineer._stop_event = stop_event
+
+    # Install signal handlers on Python's main thread (SIGINT, SIGBREAK on Windows, SIGTERM)
+    sig_count = 0
+
+    def _sig_handler(sig, frame):
+        nonlocal sig_count
+        sig_count += 1
+        if sig_count == 1:
+            log.info("Received exit signal (%s); initiating graceful shutdown...", sig)
+            loop.call_soon_threadsafe(stop_event.set)
+        else:
+            log.warning("Received repeated signal (%s); forcing immediate exit.", sig)
+            os._exit(1)
+
+    old_handlers = {}
+    for sig_name in ("SIGINT", "SIGBREAK", "SIGTERM"):
+        if hasattr(signal, sig_name):
+            s = getattr(signal, sig_name)
+            try:
+                old_handlers[s] = signal.signal(s, _sig_handler)
+            except (ValueError, OSError):
+                pass
+
+    # Log active ports in use at startup
+    dash_port_str = f"{cfg.dashboard.host}:{cfg.dashboard.port}" if cfg.dashboard.enabled and not args.selftest else "disabled"
+    log.info("Active ports: UDP telemetry=%d, Dashboard HTTP=%s", port, dash_port_str)
+    print(f"  Ports in use: UDP Telemetry={port} | Dashboard HTTP={dash_port_str}")
+
+    transport = None
     try:
         if args.replay:
-            await replay(args.replay, engineer, args.speed)
-            await asyncio.sleep(1)
-            print(json.dumps(engineer.state.snapshot(), indent=2))
+            replay_task = asyncio.create_task(replay(args.replay, engineer, args.speed))
+            stop_task = asyncio.create_task(stop_event.wait())
+            done, _ = await asyncio.wait([replay_task, stop_task], return_when=asyncio.FIRST_COMPLETED)
+            if replay_task in done:
+                await asyncio.sleep(0.5)
+                print(json.dumps(engineer.state.snapshot(), indent=2))
+            else:
+                replay_task.cancel()
         else:
             listener_instance = Listener(engineer.on_packet)
             try:
                 transport, _ = await loop.create_datagram_endpoint(
                     lambda: listener_instance, local_addr=(host, port))
             except OSError as e:
-                if e.errno == 48 or "Address already in use" in str(e):
-                    log.error("UDP port %d is already in use by another process.", port)
-                    print(f"\n❌ Port Conflict: UDP port {port} is already in use by another process.")
+                is_addr_in_use = (
+                    (getattr(e, "errno", None) in (48, 98, 10048))
+                    or ("Address already in use" in str(e))
+                    or ("WinError 10048" in str(e))
+                )
+                if is_addr_in_use:
+                    conflict_msg = format_port_conflict_message(port, proto="udp")
+                    log.error("UDP Port conflict: %s", conflict_msg)
+                    print(f"\n❌ Port Conflict: {conflict_msg}")
                     print(f"   Another instance of Race Engineer (or another telemetry app) is running.")
                     print(f"   To fix this:")
-                    print(f"     • Kill the existing process: kill $(lsof -t -i UDP:{port})")
-                    print(f"     • Or start with a different port: python main.py --port {port + 1} (or --ask-port)\n")
+                    print(f"     • Close the conflicting application")
+                    print(f"     • Or start with a different port: python main.py --port {port + 1} (or --ask-port)\n", flush=True)
+                    engineer.state.engine_error = conflict_msg
+                    engineer.engine_error = conflict_msg
+                    if dashboard_server:
+                        print("   Web dashboard remains active to display engine error status.")
+                        await stop_event.wait()
                     return
                 raise
+
             local_ip = get_local_ip()
             log.info("listening on %s:%d (PTT = UDP Action %d)", host, port, ptt_action)
             print(f"\n==============================================================")
@@ -1142,25 +1392,98 @@ async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, red
             watchdog_task = asyncio.create_task(_telemetry_watchdog())
             tasks.append(watchdog_task)
 
-            try:
-                await asyncio.Event().wait()
-            finally:
-                transport.close()
+            # Await stop_event
+            await stop_event.wait()
+
     finally:
-        for t in tasks:
-            t.cancel()
-        if dashboard_server:
-            await dashboard_server.stop()
-        if recorder:
-            recorder.close()
-        if audio_capture:
-            audio_capture.stop()
-        if player:
-            player.stop()
-        if llm_client:
-            await llm_client.aclose()
-        if engineer.storage:
-            engineer.storage.close()
+        # Ordered shutdown with hang diagnosis and 5-second watchdog
+        log.info("Shutting down Race Engineer...")
+        try:
+            faulthandler.dump_traceback_later(8, exit=False)
+        except Exception:
+            pass
+
+        def _watchdog_timeout():
+            log.warning("Shutdown watchdog expired (5s timeout). Forcing process exit.")
+            pending_threads = [t.name for t in threading.enumerate() if not t.daemon]
+            log.warning("Remaining non-daemon threads: %s", pending_threads)
+            os._exit(0)
+
+        watchdog_handle = loop.call_later(5.0, _watchdog_timeout)
+
+        try:
+            # 1. Stop accepting new radio/LLM work
+            engineer.stopping = True
+
+            # 2. Cancel in-flight agent tasks & background tasks
+            if engineer._agent_task and not engineer._agent_task.done():
+                engineer._agent_task.cancel()
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
+            # 3. Close the UDP transport
+            if transport:
+                try:
+                    transport.close()
+                except Exception as e:
+                    log.debug("Error closing UDP transport: %s", e)
+
+            # 4. Stop uvicorn and await its task
+            if dashboard_server:
+                try:
+                    await dashboard_server.stop()
+                except Exception as e:
+                    log.debug("Error stopping dashboard server: %s", e)
+
+            # 5. Stop and close audio streams
+            if audio_capture:
+                try:
+                    audio_capture.stop()
+                except Exception as e:
+                    log.debug("Error stopping audio capture: %s", e)
+            if player:
+                try:
+                    player.stop()
+                except Exception as e:
+                    log.debug("Error stopping player: %s", e)
+
+            # 6. Flush and close SQLite and recordings
+            if recorder:
+                try:
+                    recorder.close()
+                except Exception as e:
+                    log.debug("Error closing recorder: %s", e)
+            if engineer.storage:
+                try:
+                    engineer.storage.close()
+                except Exception as e:
+                    log.debug("Error closing storage: %s", e)
+
+            # 7. Close httpx clients
+            if llm_client:
+                try:
+                    await llm_client.aclose()
+                except Exception as e:
+                    log.debug("Error closing LLM client: %s", e)
+
+            # Brief grace period for cancelled tasks
+            pending = [t for t in tasks if not t.done()]
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
+        finally:
+            watchdog_handle.cancel()
+            try:
+                faulthandler.cancel_dump_traceback_later()
+            except Exception:
+                pass
+            for s, h in old_handlers.items():
+                try:
+                    signal.signal(s, h)
+                except Exception:
+                    pass
+            log.info("Shutdown completed cleanly.")
 
 
 def parse_args(argv=None):
@@ -1188,14 +1511,22 @@ def parse_args(argv=None):
     p.add_argument("--usage", action="store_true", help="print today's cloud AI usage and limits and exit")
     p.add_argument("--sound-test", action="store_true", help="run offline speaker sound test and exit")
     p.add_argument("--ask-port", action="store_true", default=None, help="ask interactively for UDP and dashboard ports on startup")
+    p.add_argument("--clear-cache", action="store_true", help="clear static TTS audio cache and exit")
     return p.parse_args(argv)
 
 
 def main(argv=None):
     args = parse_args(argv)
+
+    if args.clear_cache:
+        mgr = AudioCacheManager()
+        count, freed = mgr.clear()
+        print(f"TTS Audio Cache cleared: {count} files removed ({freed / (1024 * 1024):.2f} MB freed).")
+        sys.exit(0)
+
     if args.sound_test:
         cfg = load_config(args.config)
-        tts = create_tts_engine(cfg.tts)
+        tts = create_tts_engine(cfg.tts, cache_config=getattr(cfg, "cache", None))
         player = AudioPlayer(device=cfg.audio.output_device, volume=cfg.volumes.engineer)
         st_mgr = SoundTestManager(tts=tts, player=player, config=cfg)
         print("Running Speaker Sound Test...")
@@ -1326,12 +1657,31 @@ def main(argv=None):
             det_log.addHandler(ch)
             det_log.propagate = False
 
+    # Single-instance lock: covers main.py, run.bat, app.py
+    skip_lock = (
+        args.selftest
+        or args.list_devices
+        or args.print_setup_ranges
+        or args.sound_test
+        or args.usage
+        or args.clear_cache
+        or bool(args.import_setup)
+        or bool(args.export_setup)
+    )
+
+    instance_lock = None
+    if not skip_lock:
+        instance_lock = SingleInstanceLock()
+        acquired, running_pid = instance_lock.acquire()
+        if not acquired:
+            print(f"Race Engineer is already running (PID {running_pid})")
+            sys.exit(1)
+
     try:
         asyncio.run(amain(args, cfg, host, port, ptt_action, redis_url, redis_hz))
     except KeyboardInterrupt:
         pass
-
-
-if __name__ == "__main__":
-    main()
+    finally:
+        if instance_lock:
+            instance_lock.release()
 

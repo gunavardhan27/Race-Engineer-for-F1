@@ -223,6 +223,8 @@ class TrackMapManager:
         x: float,
         z: float,
         track_length_m: float,
+        s2_start_m: float = 0.0,
+        s3_start_m: float = 0.0,
     ) -> TrackOutline | None:
         """Processes one telemetry frame for outline sampling. Returns TrackOutline when finalized."""
         if self.current_outline is not None:
@@ -277,9 +279,9 @@ class TrackMapManager:
 
                 if self._finish_point is None and lap_distance < 25.0:
                     self._finish_point = [round(x, 2), round(z, 2)]
-                if sector == 1 and self._s2_point is None:
+                if (sector == 1 or (s2_start_m > 0 and lap_distance >= s2_start_m)) and self._s2_point is None:
                     self._s2_point = [round(x, 2), round(z, 2)]
-                if sector == 2 and self._s3_point is None:
+                if (sector == 2 or (s3_start_m > 0 and lap_distance >= s3_start_m)) and self._s3_point is None:
                     self._s3_point = [round(x, 2), round(z, 2)]
 
         return None
@@ -299,6 +301,8 @@ class TrackMapManager:
             return
 
         track_len = state.session.track_length_m if state.session else 5000.0
+        s2_dist = getattr(state.session, "sector2_distance_start", 0.0) if state.session else 0.0
+        s3_dist = getattr(state.session, "sector3_distance_start", 0.0) if state.session else 0.0
         self.sample_step(
             lap_num=me.lap_num,
             lap_distance=me.lap_distance,
@@ -308,6 +312,8 @@ class TrackMapManager:
             x=motion.x,
             z=motion.z,
             track_length_m=track_len,
+            s2_start_m=s2_dist,
+            s3_start_m=s3_dist,
         )
 
     def extract_car_positions(self, state: RaceState) -> list[dict[str, Any]]:

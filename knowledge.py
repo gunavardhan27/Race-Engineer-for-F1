@@ -161,16 +161,28 @@ class KnowledgeBase:
             line_str = line.strip()
             if not line_str:
                 continue
-            # Matches: "9. Copse (T9): ..." or "1. Abbey: ..."
-            m = re.match(r"^\d+\.\s*([A-Za-z0-9\s'-]+?)(?:\s*\([A-Za-z0-9]+\))?\s*:", line_str)
+            # Matches: "9. Copse (T9): ...", "1. Abbey: ...", "- T1 (sector 1): ...", "- Copse: ..."
+            m = re.match(r"^(?:-|\d+\.)\s*([A-Za-z0-9\s'/-]+?)(?:\s*\([A-Za-z0-9\s]+\))?\s*:", line_str)
             if m:
                 c_name = m.group(1).strip()
-                self.corner_names.append(c_name)
+                if c_name and c_name not in self.corner_names:
+                    self.corner_names.append(c_name)
                 self.corner_lines[c_name.lower()] = line_str
 
     def get_corner_names(self) -> list[str]:
         """Returns corner names for STT initial_prompt biasing."""
-        return list(self.corner_names)
+        names = list(self.corner_names)
+        # Also query named corners from tracks.db track_turns if available
+        try:
+            import sqlite3
+            with sqlite3.connect("tracks.db") as conn:
+                rows = conn.execute("SELECT DISTINCT name FROM track_turns WHERE name IS NOT NULL AND name != ''").fetchall()
+                for r in rows:
+                    if r[0] and r[0] not in names:
+                        names.append(r[0])
+        except Exception:
+            pass
+        return names
 
     def list_available_tracks(self) -> list[dict[str, Any]]:
         """Lists all known tracks and whether they have markdown notes."""

@@ -956,6 +956,170 @@ tr.me td:first-child {
   margin-top: 8px;
 }
 
+/* Live Track Map Enhancements (Prompt 23) */
+.map-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.map-tools-group {
+  display: inline-flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.map-tool-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.map-tool-btn:hover {
+  color: var(--text-0);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.map-tool-btn.active {
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.35);
+}
+
+.safety-car-banner {
+  width: 100%;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  animation: pulse-banner 1.5s infinite;
+}
+
+.safety-car-banner.full-sc {
+  background: #ffab00;
+  color: #000;
+  box-shadow: 0 0 16px rgba(255, 171, 0, 0.6);
+}
+
+.safety-car-banner.vsc {
+  background: #ff6d00;
+  color: #fff;
+  box-shadow: 0 0 16px rgba(255, 109, 0, 0.6);
+}
+
+@keyframes pulse-banner {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.88; transform: scale(0.995); }
+}
+
+#live-map-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #080b11;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.6);
+}
+
+#track-static-canvas,
+#track-dynamic-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#track-static-canvas {
+  z-index: 1;
+  pointer-events: none;
+}
+
+#track-dynamic-canvas {
+  z-index: 2;
+  cursor: pointer;
+}
+
+.car-popover {
+  position: absolute;
+  z-index: 20;
+  background: rgba(13, 17, 23, 0.94);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 11px;
+  color: var(--text-1);
+  min-width: 190px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+  pointer-events: auto;
+  transform: translate(-50%, -100%);
+  margin-top: -12px;
+}
+
+.car-popover::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 6px 6px 0;
+  border-style: solid;
+  border-color: rgba(13, 17, 23, 0.94) transparent transparent;
+}
+
+.replay-panel {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.replay-marker-pin {
+  position: absolute;
+  top: 4px;
+  width: 4px;
+  height: 12px;
+  border-radius: 2px;
+  cursor: pointer;
+  transform: translateX(-50%);
+  transition: transform 0.1s ease;
+}
+
+.replay-marker-pin:hover {
+  transform: translateX(-50%) scaleY(1.4);
+  z-index: 10;
+}
+
 .legend span {
   display: inline-flex;
   align-items: center;
@@ -1705,3 +1869,234 @@ tr.me td:first-child {
     display: none;
   }
 }
+
+/* -------------------------------------------------------------------------
+   Prompt 22: Mini-Sectors, Delta Strip, Popovers & Comparison Styles
+   ------------------------------------------------------------------------- */
+.seg-btn-group {
+  display: inline-flex;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+.seg-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 550;
+  padding: 4px 8px;
+  border-radius: calc(var(--radius-sm) - 2px);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.seg-btn:hover {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.05);
+}
+.seg-btn.active {
+  background: var(--accent);
+  color: #000;
+  font-weight: 650;
+}
+.map-sub-controls {
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+.map-sub-controls .field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.select-sm {
+  height: 26px;
+  font-size: 11px;
+  padding: 2px 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  color: var(--text-1);
+  border-radius: 4px;
+}
+.flag-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.flag-toggle-row input {
+  accent-color: var(--accent);
+}
+.delta-strip-container {
+  margin-top: 10px;
+}
+.delta-strip-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-3);
+  margin-bottom: 4px;
+}
+.minisector-delta-strip {
+  display: flex;
+  height: 18px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--line);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
+}
+.strip-segment {
+  flex: 1;
+  height: 100%;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+  position: relative;
+}
+.strip-segment:hover, .strip-segment.highlight {
+  filter: brightness(1.35);
+  transform: scaleY(1.2);
+  z-index: 2;
+}
+.minisector-popover {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: rgba(18, 24, 38, 0.94);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--text-1);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  z-index: 10;
+  pointer-events: none;
+  min-width: 180px;
+  max-width: 280px;
+}
+.minisector-popover .p-head {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--accent);
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 2px;
+}
+.minisector-popover .p-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+.minisector-popover .p-delta {
+  font-weight: 650;
+  font-size: 12px;
+}
+.minisector-popover .p-delta.faster { color: var(--green); }
+.minisector-popover .p-delta.slower { color: var(--red); }
+.minisector-popover .p-diag {
+  margin-top: 5px;
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  background: rgba(255, 171, 0, 0.18);
+  color: #ffab00;
+  font-weight: 600;
+}
+.minisector-popover .p-restr {
+  color: var(--text-3);
+  font-style: italic;
+  font-size: 10px;
+}
+
+/* F1 Sector badges */
+.f1-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 650;
+  font-size: 11px;
+}
+.f1-purple {
+  background: var(--purple-soft);
+  color: var(--purple);
+  border: 1px solid rgba(192, 132, 252, 0.4);
+}
+.f1-green {
+  background: var(--green-soft);
+  color: var(--green);
+  border: 1px solid rgba(0, 230, 118, 0.35);
+}
+.f1-yellow {
+  background: rgba(255, 214, 0, 0.15);
+  color: #ffd600;
+  border: 1px solid rgba(255, 214, 0, 0.35);
+}
+
+/* Top losses card list */
+.loss-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.loss-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 3px solid var(--red);
+}
+.loss-item .loss-name {
+  font-weight: 600;
+  font-size: 12px;
+}
+.loss-item .loss-diag {
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 1px;
+}
+.loss-item .loss-val {
+  font-weight: 700;
+  color: var(--red);
+  font-size: 12px;
+}
+
+/* Field View Wins Legend */
+.field-wins-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.field-wins-table th, .field-wins-table td {
+  padding: 4px 6px;
+  text-align: left;
+}
+.field-wins-table tr.clickable {
+  cursor: pointer;
+}
+.field-wins-table tr.clickable:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.team-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+

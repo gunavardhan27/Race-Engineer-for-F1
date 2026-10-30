@@ -31,6 +31,9 @@ _INTENTS = [(name, re.compile(p, re.I)) for name, p in [
     ("damage", r"\bdamage\w*\b"),
     ("tyres", r"\b(tyres?|tires?|wear|deg)\b"),
     ("laps", r"\blaps?\b.*\b(left|remaining|to go)\b|\bhow many laps\b"),
+    ("where_slow", r"\b(where am i slow|where am i losing time|where am i losing the most|biggest loss|where am i losing)\b"),
+    ("fastest_sector", r"\b(who('s| is) fastest in sector\s*([123])|fastest in (?:sector|s)\s*([123])|who has (?:the )?purple sector\s*([123]))\b"),
+    ("ideal_lap", r"\b(what('s| is)? (?:my )?(?:ideal|theoretical) lap|ideal lap|theoretical best)\b"),
     ("position", r"\b(position|where am i|what p)\b"),
     ("gap_behind", r"\b(behind|gap back)\b"),
     ("gap_to_pole", r"\b(gap to pole|how far off pole|gap to p1|time to pole)\b"),
@@ -38,9 +41,10 @@ _INTENTS = [(name, re.compile(p, re.I)) for name, p in [
     ("am_i_through", r"\b(am i through|are we through|am i safe|are we safe|in the drop zone|eliminated)\b"),
     ("teammate", r"\b(where('s| is) my teammate|where('s| is) (the )?other car|how am i doing vs teammate|how('s| is) my teammate doing|teammate pace|vs teammate)\b"),
     ("car_capability", r"\b(what('s| is) the car capable of|what can the car do|what should we be doing|car potential|expected position)\b"),
-    ("delta_best", r"\b(where am i losing time|where am i slow|losing time|how was my (last )?lap|pace vs best|delta to best)\b"),
+    ("delta_best", r"\b(losing time|how was my (?:last )?lap|pace vs best|delta to best)\b"),
     ("setup", r"\b(what('s| is)? (my )?setup|what setup am i (on|running)|current setup|best setup( here)?|setup info)\b"),
     ("radio_check", r"\b(radio check|comms check|can you hear me|do you copy)\b"),
+    ("drs", r"\b(drs|overtake mode|active aero)\b"),
 ]]
 
 NO_DATA = "No data on that yet."
@@ -247,11 +251,62 @@ def _car_capability(st: RaceState):
     return "Not enough data yet."
 
 
+def _drs(st: RaceState):
+    tel2 = st.my_tel2
+    regs_2026 = (tel2.regs_2026 if tel2 else False) or (getattr(st.session, "formula", 0) == 13)
+    if regs_2026:
+        if not tel2:
+            return "2026 aero active. Straight mode and overtake mode replace DRS."
+        mode = "Straight mode active" if tel2.active_aero_mode == 1 else "Corner mode"
+        ot = "Overtake mode available." if tel2.overtake_available else ("Overtake active." if tel2.overtake_active else "Overtake not available.")
+        return f"{mode}. {ot}"
+    st_status = st.my_status
+    if not st_status:
+        return NO_DATA
+    return "DRS is available." if st_status.drs_allowed else "DRS not available."
+
+
+def _where_slow(st: RaceState, text: str = ""):
+    loss = getattr(st, "biggest_loss_segment", None)
+    if loss:
+        name = loss.get("name", "that section")
+        delta = loss.get("delta_s", 0.0)
+        diag = loss.get("diagnosis", "")
+        diag_part = f", {diag.lower()}" if diag else ""
+        return f"You're losing the most time in {name}, {delta:.2f} down{diag_part}."
+    return _delta_best(st)
+
+
+def _fastest_sector(st: RaceState, text: str = ""):
+    m = re.search(r"\b(?:sector|s)\s*([123])\b", text, re.I)
+    s_num = int(m.group(1)) if m else 2
+    f_sectors = getattr(st, "fastest_sectors", {}) or {}
+    if s_num in f_sectors:
+        info = f_sectors[s_num]
+        driver = info.get("driver", f"Car {info.get('car_idx')}")
+        t_s = info.get("time_s")
+        if t_s is not None:
+            return f"{driver} is fastest in Sector {s_num} with a {t_s:.3f}."
+        elif "time_ms" in info:
+            return f"{driver} is fastest in Sector {s_num} with a {info['time_ms'] / 1000.0:.3f}."
+    return f"No fastest time recorded for Sector {s_num} yet."
+
+
+def _ideal_lap(st: RaceState, text: str = ""):
+    ideal = getattr(st, "my_theoretical_best", None)
+    if ideal and ideal.get("has_data"):
+        t_str = ideal.get("theoretical_best_str", "")
+        gain = ideal.get("potential_gain_s", 0.0)
+        return f"Your ideal lap is {t_str}, {gain:.2f} faster than your best."
+    return "No ideal lap calculated yet."
+
+
 ANSWERS = {"gap_ahead": _gap_ahead, "gap_behind": _gap_behind, "fuel": _fuel, "tyres": _tyres,
            "damage": _damage, "weather": _weather, "position": _position, "laps": _laps,
            "pit_window": _pit_window, "delta_best": _delta_best, "setup": _setup,
            "radio_check": _radio_check, "gap_to_pole": _gap_to_pole, "am_i_through": _am_i_through,
-           "teammate": _teammate, "car_capability": _car_capability}
+           "teammate": _teammate, "car_capability": _car_capability, "drs": _drs,
+           "where_slow": _where_slow, "fastest_sector": _fastest_sector, "ideal_lap": _ideal_lap}
 
 
 @dataclass(slots=True)
@@ -265,7 +320,7 @@ def route(text: str, st: RaceState) -> Reply:
     """Answer from telemetry if it's a lookup; otherwise hand off to the AI agent."""
     for intent, pat in _INTENTS:
         if pat.search(text):
-            ans = ANSWERS[intent](st, text) if intent == "setup" else ANSWERS[intent](st)
+            ans = ANSWERS[intent](st, text) if intent in ("setup", "fastest_sector", "where_slow", "ideal_lap") else ANSWERS[intent](st)
             return Reply("answer", intent, ans)
     if _AI.search(text):
         return Reply("ai")
@@ -385,7 +440,14 @@ class Callouts:
         elif kind == "track_limits_warning":
             if now - self._last_warning_time <= 1.0:
                 return []
-            return self._on_track_limits_warning(sig[1], now)
+            return self._on_track_limits_warning(sig[1], now, state=st)
+        elif kind == "wrong_way":
+            return [_c(0, "Wrong way!", ttl=3.0)]
+        elif kind == "overtake_available":
+            dist = sig[1] if len(sig) > 1 else 0
+            if dist and dist > 0:
+                return [_c(1, f"Overtake mode available in {dist} metres.", ttl=5.0)]
+            return [_c(1, "Overtake mode available.", ttl=5.0)]
         elif kind == "penalty":
             return self._on_penalty(sig[1], st, now)
         elif kind == "defend_warning":
@@ -412,15 +474,18 @@ class Callouts:
         self._last_invalidation_combined = False
         return [_c(1, "Lap invalidated.", ttl=5.0)]
 
-    def _on_track_limits_warning(self, n: int, now: float) -> list[Callout]:
+    def _on_track_limits_warning(self, n: int, now: float, state: Optional[RaceState] = None) -> list[Callout]:
         self._last_warning_time = now
         self._last_warning_num = n
+        strict_note = ""
+        if state and state.session and getattr(state.session, "corner_cutting_stringency", 0) == 1:
+            strict_note = " Strict track limits."
         # If invalidation occurred within 1 s, speak combined message
         if now - self._last_invalidation_time <= 1.0:
             self._last_invalidation_combined = True
-            msg = f"Track limits, lap invalidated. Warning {self._format_warning(n)}."
+            msg = f"Track limits, lap invalidated. Warning {self._format_warning(n)}.{strict_note}"
             return [_c(0, msg, ttl=5.0)]
-        return [_c(1, f"Track limits warning, {self._format_warning(n)}.", ttl=5.0)]
+        return [_c(1, f"Track limits warning, {self._format_warning(n)}.{strict_note}", ttl=5.0)]
 
     def _on_penalty(self, ev: packets.Event, state: RaceState, now: float) -> list[Callout]:
         ptype = ev.penalty_type

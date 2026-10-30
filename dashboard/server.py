@@ -14,6 +14,7 @@ import zlib
 from pathlib import Path
 from typing import Any
 
+import contextlib
 import qrcode
 import uvicorn
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
@@ -35,6 +36,10 @@ from setups import (
     parse_free_text_setup, validate_setup_input, validate_setup_params,
     compute_setup_fingerprint,
 )
+from seed_import import SeedImporter
+from minisectors import MiniSectorTracker, MiniSectorStorage
+from positions import PositionsBroadcaster, encode_positions_frame, extract_car_positions
+from replay_manager import ReplayController
 
 FORMULAS = {
     0: "F1 Modern",
@@ -139,22 +144,32 @@ class PortsUpdateRequest(BaseModel):
     ask_port: bool | None = None
 
 
-def build_live_payload(state: RaceState, track_map: TrackMapManager | None = None) -> dict[str, Any]:
+def build_live_payload(
+    state: RaceState,
+    track_map: TrackMapManager | None = None,
+    engine_error: str | None = None,
+) -> dict[str, Any]:
     """Combines snapshot(), timing_tower(), motion/car positions, and telemetry extras."""
     payload = state.snapshot()
     is_live = (state.last_packet_time > 0 and (time.monotonic() - state.last_packet_time) < 4.0 and state.session is not None)
     payload["session_live"] = is_live
     payload["timing_tower"] = state.timing_tower()
 
-    # Extra telemetry fields (speed, gear, rpm, drs) for HUD gauges
+    # Extra telemetry fields (speed, gear, rpm, drs, active aero, overtake mode) for HUD gauges
     tel = state.my_tel
+    tel2 = getattr(state, "my_tel2", None)
+    regs_2026 = (tel2.regs_2026 if tel2 else False) or (getattr(state.session, "formula", 0) == 13)
+    payload["regs_2026"] = regs_2026
     if tel is not None:
         payload["speed_kph"] = tel.speed_kph
         payload["gear"] = tel.gear
         payload["rpm"] = tel.rpm
-        payload["drs"] = tel.drs
         payload["throttle"] = round(tel.throttle, 2)
         payload["brake"] = round(tel.brake, 2)
+        if regs_2026 and tel2:
+            payload["drs"] = (tel2.active_aero_mode == 1)
+        else:
+            payload["drs"] = tel.drs
     else:
         payload["speed_kph"] = None
         payload["gear"] = None
@@ -162,6 +177,22 @@ def build_live_payload(state: RaceState, track_map: TrackMapManager | None = Non
         payload["drs"] = False
         payload["throttle"] = 0.0
         payload["brake"] = 0.0
+
+    if tel2 is not None:
+        payload["active_aero"] = {
+            "mode": "straight" if tel2.active_aero_mode == 1 else "corner",
+            "mode_id": tel2.active_aero_mode,
+            "available": tel2.active_aero_available,
+            "in_m": tel2.active_aero_in_m,
+        }
+        payload["overtake_mode"] = {
+            "available": tel2.overtake_available,
+            "active": tel2.overtake_active,
+            "in_m": tel2.overtake_in_m,
+        }
+    else:
+        payload["active_aero"] = None
+        payload["overtake_mode"] = None
 
     # Motion & G-forces for friction circle
     motion = state.my_motion
@@ -185,6 +216,22 @@ def build_live_payload(state: RaceState, track_map: TrackMapManager | None = Non
     payload["track_id"] = state.session.track_id if state.session else None
     payload["last_packet_time"] = state.last_packet_time
     payload["type"] = "telemetry"
+    payload["my_theoretical_best"] = getattr(state, "my_theoretical_best", None)
+    payload["biggest_loss_segment"] = getattr(state, "biggest_loss_segment", None)
+    payload["fastest_sectors"] = getattr(state, "fastest_sectors", None)
+
+    # Distinct engine status reporting (live, standby, error)
+    err = engine_error or getattr(state, "engine_error", None)
+    if not err and track_map and hasattr(track_map, "engine_error"):
+        err = getattr(track_map, "engine_error", None)
+    payload["engine_error"] = err
+    if err:
+        payload["engine_status"] = "error"
+    elif is_live:
+        payload["engine_status"] = "live"
+    else:
+        payload["engine_status"] = "standby"
+
     return payload
 
 
@@ -252,6 +299,15 @@ class Broadcaster:
             "timestamp": time.time(),
         }
         self._radio_history.append(msg)
+        self.push_message(msg)
+
+    def broadcast(self, msg_type: str, data: Any):
+        """Pushes structured event payload to all clients."""
+        msg = {
+            "type": msg_type,
+            "data": data,
+            "timestamp": time.time(),
+        }
         self.push_message(msg)
 
     def push_message(self, msg: dict[str, Any] | str):
@@ -353,11 +409,15 @@ def create_app(
     config: AppConfig | None = None,
     engineer: Any | None = None,
     usage_guard: Any | None = None,
+    positions_broadcaster: PositionsBroadcaster | None = None,
+    replay_controller: ReplayController | None = None,
 ) -> FastAPI:
     """Creates the FastAPI app instance."""
     app = FastAPI(title="Race Engineer Live Dashboard", docs_url=None, redoc_url=None)
     setups_store = setups_storage or SetupsStorage()
     knowledge_base = knowledge or KnowledgeBase()
+    pos_bcast = positions_broadcaster or (getattr(engineer, "positions_broadcaster", None) if engineer else None) or PositionsBroadcaster()
+    replay_ctrl = replay_controller or (getattr(engineer, "replay_controller", None) if engineer else None) or ReplayController(engineer)
 
     def check_token(
         token_param: str | None = None,
@@ -433,6 +493,46 @@ def create_app(
         if track_map:
             track_map.rebuild()
         return {"status": "rebuilding"}
+
+    @app.get("/api/track_model")
+    async def get_track_model(token_param: str | None = Query(None, alias="token")):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        if engineer and getattr(engineer, "track_model", None):
+            return engineer.track_model.to_dict()
+        return {"has_model": False, "corners": [], "bins": []}
+
+    @app.post("/api/track_model/rebuild")
+    async def post_rebuild_track_model(token_param: str | None = Query(None, alias="token")):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        if engineer and getattr(engineer, "track_model_builder", None):
+            engineer.track_model = engineer.track_model_builder.build_model()
+            if engineer.track_model:
+                engineer.overtake_detector.set_track_model(engineer.track_model)
+                engineer.defend_detector.set_track_model(engineer.track_model)
+                if engineer.track_model.is_ready:
+                    engineer.track_model_storage.save_model(engineer.track_model)
+            return {"status": "rebuilt", "is_ready": engineer.track_model.is_ready if engineer.track_model else False}
+        return {"status": "no_builder"}
+
+    @app.put("/api/track_model/corners/{corner_number}")
+    async def put_corner_name(
+        corner_number: int,
+        body: dict[str, Any],
+        token_param: str | None = Query(None, alias="token"),
+    ):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        name = body.get("name", "")
+        apex_dist_m = float(body.get("apex_dist_m", 0.0))
+        if engineer and getattr(engineer, "track_model_storage", None) and engineer.state.session:
+            t_id = engineer.state.session.track_id or 0
+            engineer.track_model_storage.set_corner_name(t_id, corner_number, apex_dist_m, name)
+            if engineer.track_model:
+                engineer.track_model_storage.apply_stored_corner_names(engineer.track_model)
+            return {"status": "saved", "name": name}
+        return {"status": "error", "detail": "No active session"}
 
     @app.get("/api/sessions")
     async def get_sessions(
@@ -523,6 +623,99 @@ def create_app(
             "track_points": track_pts,
             "total_delta_s": round(float(l1["lap_time_s"] - l2["lap_time_s"]), 3),
         }
+
+    # -------------------------------------------------------------------------
+    # Prompt 22: Sectors, Mini-Sectors & Corner Comparison APIs
+    # -------------------------------------------------------------------------
+    @app.get("/api/laps/minisector_comparison")
+    async def get_minisector_comparison(
+        session_uid: str = Query(...),
+        car_a: int = Query(...),
+        lap_a: int = Query(...),
+        car_b: int = Query(...),
+        lap_b: int = Query(...),
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        tracker = getattr(engineer, "minisector_tracker", None) or MiniSectorTracker()
+        rec_a = tracker.storage.get_lap_timing(session_uid, car_a, lap_a)
+        rec_b = tracker.storage.get_lap_timing(session_uid, car_b, lap_b)
+        if not rec_a or not rec_b:
+            raise HTTPException(status_code=404, detail="One or both lap timing records not found")
+
+        track_len = float(getattr(engineer.state, "track_length", 5000.0) if engineer else 5000.0)
+        track_model = getattr(engineer, "track_model", None) if engineer else None
+
+        driver_a = engineer.state.name(car_a) if engineer else f"Car {car_a}"
+        driver_b = engineer.state.name(car_b) if engineer else f"Car {car_b}"
+
+        return tracker.compare_laps(
+            rec_a, rec_b, track_len, track_model=track_model,
+            driver_a_name=driver_a, driver_b_name=driver_b,
+        )
+
+    @app.get("/api/laps/fastest_minisectors")
+    async def get_fastest_minisectors(
+        session_uid: str = Query(...),
+        include_flagged: bool = Query(False),
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        tracker = getattr(engineer, "minisector_tracker", None) or MiniSectorTracker()
+        track_len = float(getattr(engineer.state, "track_length", 5000.0) if engineer else 5000.0)
+
+        drivers_meta: dict[int, dict[str, Any]] = {}
+        if engineer and engineer.state.participants:
+            for idx, p in enumerate(engineer.state.participants):
+                meta_item = {
+                    "name": p.name or f"Car {idx}",
+                    "team": getattr(p, "team_name", "Unknown"),
+                }
+                c_hex = getattr(p, "primary_color_hex", None)
+                if c_hex:
+                    meta_item["color"] = c_hex
+                drivers_meta[idx] = meta_item
+
+        return tracker.get_fastest_by_minisector(
+            session_uid, track_len, drivers_meta=drivers_meta, include_flagged=include_flagged
+        )
+
+    @app.get("/api/laps/theoretical_best")
+    async def get_theoretical_best(
+        session_uid: str = Query(...),
+        car_idx: int = Query(...),
+        include_flagged: bool = Query(False),
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        tracker = getattr(engineer, "minisector_tracker", None) or MiniSectorTracker()
+        track_len = float(getattr(engineer.state, "track_length", 5000.0) if engineer else 5000.0)
+        return tracker.get_theoretical_best(session_uid, car_idx, track_len, include_flagged=include_flagged)
+
+    @app.get("/api/laps/f1_colors")
+    async def get_f1_colors(
+        session_uid: str = Query(...),
+        car_idx: int = Query(...),
+        lap_num: int = Query(...),
+        include_flagged: bool = Query(False),
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        tracker = getattr(engineer, "minisector_tracker", None) or MiniSectorTracker()
+        track_len = float(getattr(engineer.state, "track_length", 5000.0) if engineer else 5000.0)
+        return tracker.get_f1_sector_colors(session_uid, car_idx, lap_num, track_len, include_flagged=include_flagged)
 
     @app.get("/api/sessions/{session_id}/stints")
     async def get_session_stints(
@@ -1030,6 +1223,93 @@ def create_app(
             "data": saved,
         }
 
+    # -------------------------------------------------------------------------
+    # Prompt 25: Seed Reference Data APIs
+    # -------------------------------------------------------------------------
+    @app.get("/api/seed/status")
+    async def get_seed_status(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        importer = SeedImporter()
+        return importer.get_status()
+
+    @app.post("/api/seed/import")
+    async def post_seed_import(
+        body: dict[str, Any] = Body(default_factory=dict),
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        reimport = bool(body.get("reimport", False))
+        importer = SeedImporter()
+        res = importer.import_all(reimport=reimport)
+        return res
+
+    @app.post("/api/tracks/confirm_mapping")
+    async def post_confirm_track_mapping(
+        body: dict[str, Any] = Body(...),
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        slug = body.get("slug", "")
+        game_track_id = int(body.get("game_track_id", 0))
+        importer = SeedImporter()
+        ok = importer.confirm_track_mapping(slug, game_track_id)
+        return {"status": "ok" if ok else "error", "confirmed": ok}
+
+    @app.post("/api/teams/confirm_mapping")
+    async def post_confirm_team_mapping(
+        body: dict[str, Any] = Body(...),
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        team_id = int(body.get("team_id", 0))
+        team_name = str(body.get("team_name", ""))
+        importer = SeedImporter()
+        ok = importer.confirm_team_mapping(team_id, team_name)
+        return {"status": "ok" if ok else "error", "confirmed": ok}
+
+    @app.get("/api/tracks/{track_slug}/turns")
+    async def get_track_turns(
+        track_slug: str,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        importer = SeedImporter()
+        turns = importer.get_track_turns(track_slug)
+        return {"turns": turns}
+
+    @app.post("/api/tracks/{track_slug}/confirm_turn_match")
+    async def post_confirm_turn_match(
+        track_slug: str,
+        body: dict[str, Any] = Body(...),
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None, alias="Authorization"),
+        x_token: str | None = Header(None, alias="X-Token"),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        turn_id = int(body.get("turn_id", 0))
+        corner_number = int(body.get("corner_number", 0))
+        importer = SeedImporter()
+        ok = importer.confirm_turn_match(track_slug, turn_id, corner_number)
+        return {"status": "ok" if ok else "error", "confirmed": ok}
+
     @app.get("/api/settings/persona")
     async def get_persona_settings(
         token_param: str | None = Query(None, alias="token"),
@@ -1385,6 +1665,40 @@ def create_app(
         return {"status": "error", "message": "Config unavailable"}
 
 
+    @app.get("/api/cache/audio")
+    async def get_audio_cache_stats(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        from audio_cache import AudioCacheManager
+        mgr = getattr(getattr(engineer, "tts", None), "cache_manager", None)
+        if mgr is None:
+            mgr = AudioCacheManager()
+        return mgr.get_stats()
+
+    @app.post("/api/cache/audio/clear")
+    async def post_clear_audio_cache(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        from audio_cache import AudioCacheManager
+        mgr = getattr(getattr(engineer, "tts", None), "cache_manager", None)
+        if mgr is None:
+            mgr = AudioCacheManager()
+        cleared_count, cleared_bytes = mgr.clear()
+        return {
+            "status": "ok",
+            "cleared_files": cleared_count,
+            "cleared_bytes": cleared_bytes,
+            "cleared_mb": round(cleared_bytes / (1024 * 1024), 2),
+        }
+
     @app.websocket("/ws/live")
     async def ws_live(websocket: WebSocket, token_param: str | None = Query(None, alias="token")):
         if not verify_token(token_param, token):
@@ -1430,6 +1744,80 @@ def create_app(
         finally:
             broadcaster.unregister(q)
 
+    @app.websocket("/ws/positions")
+    async def ws_positions(websocket: WebSocket, token_param: str | None = Query(None, alias="token")):
+        if not verify_token(token_param, token):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Unauthorized")
+            return
+
+        await websocket.accept()
+        q = pos_bcast.register()
+        try:
+            while True:
+                frame_bytes = await q.get()
+                await websocket.send_bytes(frame_bytes)
+        except (WebSocketDisconnect, ConnectionResetError):
+            pass
+        finally:
+            pos_bcast.unregister(q)
+
+    # --- Replay Endpoints (Prompt 23) ---
+    @app.get("/api/replay/sessions")
+    async def get_replay_sessions(token_param: str | None = Query(None, alias="token")):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        return replay_ctrl.list_recordings()
+
+    @app.post("/api/replay/load")
+    async def post_replay_load(
+        body: dict[str, Any] = Body(...),
+        token_param: str | None = Query(None, alias="token"),
+    ):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        path = body.get("path")
+        if not path:
+            raise HTTPException(status_code=400, detail="Missing recording path")
+        try:
+            return replay_ctrl.load_recording(path)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.post("/api/replay/play")
+    async def post_replay_play(
+        body: dict[str, Any] = Body(default_factory=dict),
+        token_param: str | None = Query(None, alias="token"),
+    ):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        speed = float(body.get("speed", 1.0))
+        replay_ctrl.play(speed)
+        return replay_ctrl.get_status()
+
+    @app.post("/api/replay/pause")
+    async def post_replay_pause(token_param: str | None = Query(None, alias="token")):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        replay_ctrl.pause()
+        return replay_ctrl.get_status()
+
+    @app.post("/api/replay/seek")
+    async def post_replay_seek(
+        body: dict[str, Any] = Body(...),
+        token_param: str | None = Query(None, alias="token"),
+    ):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        time_s = float(body.get("time_s", 0.0))
+        replay_ctrl.seek(time_s)
+        return replay_ctrl.get_status()
+
+    @app.get("/api/replay/status")
+    async def get_replay_status(token_param: str | None = Query(None, alias="token")):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        return replay_ctrl.get_status()
+
     return app
 
 
@@ -1447,6 +1835,8 @@ class DashboardServer:
         knowledge: KnowledgeBase | None = None,
         engineer: Any | None = None,
         usage_guard: Any | None = None,
+        positions_broadcaster: PositionsBroadcaster | None = None,
+        replay_controller: ReplayController | None = None,
     ):
         self.state = state
         self.config = config
@@ -1454,7 +1844,9 @@ class DashboardServer:
         self.usage_guard = usage_guard
         self.token = ensure_token(config, config_path)
         self.broadcaster = Broadcaster()
-        self.track_map = track_map or TrackMapManager()
+        self.track_map = track_map or getattr(engineer, "track_map", None) or TrackMapManager()
+        self.positions_broadcaster = positions_broadcaster or getattr(engineer, "positions_broadcaster", None) or PositionsBroadcaster()
+        self.replay_controller = replay_controller or getattr(engineer, "replay_controller", None) or ReplayController(engineer)
         self.storage = storage
         self.setups_storage = setups_storage or SetupsStorage()
         self.llm_client = llm_client
@@ -1471,10 +1863,23 @@ class DashboardServer:
             config=self.config,
             engineer=self.engineer,
             usage_guard=self.usage_guard,
+            positions_broadcaster=self.positions_broadcaster,
+            replay_controller=self.replay_controller,
         )
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
         self._broadcast_task: asyncio.Task | None = None
+        self._engine_error: str | None = None
+
+    @property
+    def engine_error(self) -> str | None:
+        return self._engine_error
+
+    def set_engine_error(self, err: str | None) -> None:
+        self._engine_error = err
+
+    def build_live_payload(self) -> dict[str, Any]:
+        return build_live_payload(self.state, self.track_map, engine_error=self._engine_error)
 
     def start(self, loop: asyncio.AbstractEventLoop | None = None) -> tuple[asyncio.Task, asyncio.Task]:
         """Starts uvicorn.Server and the broadcast loop inside the existing asyncio loop."""
@@ -1493,6 +1898,8 @@ class DashboardServer:
             access_log=False,
         )
         self._server = uvicorn.Server(uvi_cfg)
+        # Disable uvicorn signal capture so top-level SIGINT/SIGBREAK handler cleanly governs shutdown
+        self._server.capture_signals = contextlib.nullcontext
 
         self._server_task = asyncio.create_task(self._server.serve())
         self._broadcast_task = asyncio.create_task(self._run_broadcast(hz))
@@ -1513,7 +1920,7 @@ class DashboardServer:
                 force_push = (now - last_heartbeat) >= 1.0
                 if self.track_map:
                     self.track_map.update_from_state(self.state)
-                payload = build_live_payload(self.state, self.track_map)
+                payload = self.build_live_payload()
                 guard = self.usage_guard or (getattr(self.engineer, "usage_guard", None) if self.engineer else None)
                 if guard:
                     st = guard.get_status()
@@ -1526,6 +1933,21 @@ class DashboardServer:
                 pushed = self.broadcaster.broadcast_state(payload, force=force_push)
                 if pushed:
                     last_heartbeat = now
+
+                # Positions heartbeat if clients are connected and no UDP motion packets arrived recently
+                if self.positions_broadcaster and self.positions_broadcaster.client_count > 0:
+                    last_pos_time = getattr(self.engineer, "_last_pos_time", 0.0) if self.engineer else 0.0
+                    if (now - last_pos_time) >= 0.15:
+                        if self.engineer:
+                            self.engineer._last_pos_time = now
+                        t_id = self.state.session.track_id if self.state.session else 0
+                        seq = self.positions_broadcaster.next_seq()
+                        ts_ms = int(wall_now * 1000) & 0xFFFFFFFF
+                        track_model = getattr(self.engineer, "track_model", None) if self.engineer else None
+                        outline = self.track_map.current_outline if self.track_map else None
+                        cars = extract_car_positions(self.state, track_model, outline)
+                        frame = encode_positions_frame(seq, ts_ms, t_id, cars)
+                        self.positions_broadcaster.broadcast_frame(frame)
 
                 # 1 Hz snapshot timeline recording in compressed 10-second chunks
                 if wall_now - last_1hz_time >= 1.0:
@@ -1567,5 +1989,9 @@ class DashboardServer:
             self._broadcast_task.cancel()
         if self._server:
             self._server.should_exit = True
-        if self._server_task and not self._server_task.done():
-            self._server_task.cancel()
+        if self._server_task:
+            try:
+                await asyncio.wait_for(asyncio.shield(self._server_task), timeout=2.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                if not self._server_task.done():
+                    self._server_task.cancel()

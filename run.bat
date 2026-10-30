@@ -1,4 +1,5 @@
 @echo off
+setlocal
 if not exist ".venv\Scripts\activate.bat" (
     echo [ERROR] Virtual environment not found. Please run setup.bat first.
     pause
@@ -7,3 +8,4 @@ if not exist ".venv\Scripts\activate.bat" (
 
 call .venv\Scripts\activate.bat
 python main.py %*
+exit /b %ERRORLEVEL%

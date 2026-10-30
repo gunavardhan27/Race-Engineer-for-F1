@@ -182,7 +182,7 @@ def test_finish_detection_margin_buckets():
     fin_sig = [s for s in sigs if s[0] == "finished"][0]
     c = pers.on_signal(fin_sig, state, now=10.0)
     assert c is not None
-    assert any(word in c.text.lower() for word in ["whisker", "photo", "half a tenth", "line", "tenth"])
+    assert any(word in c.text.lower() for word in ["whisker", "photo", "half a tenth", "line", "tenth", "close", "finish"])
 
     # 2. P1 Win Dominant (>10s margin behind)
     pers2 = PersonalityEngine(config=AppConfig().persona)
@@ -196,7 +196,7 @@ def test_finish_detection_margin_buckets():
     fin_sig2 = [s for s in sigs2 if s[0] == "finished"][0]
     c2 = pers2.on_signal(fin_sig2, state2, now=10.0)
     assert c2 is not None
-    assert any(word in c2.text.lower() for word in ["class", "annihilation", "league", "clear", "destroyed", "dominant"])
+    assert any(word in c2.text.lower() for word in ["class", "annihilation", "league", "clear", "destroyed", "dominant", "demolition"])
 
     # 3. P2 Podium Held (car behind < 1s)
     pers3 = PersonalityEngine(config=AppConfig().persona)

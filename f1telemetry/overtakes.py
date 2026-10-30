@@ -1,9 +1,13 @@
-"""Overtake detection, braking zone feature extraction, classification, and corner defend warnings.
+"""Overtake detection v2, track-model feature extraction, classification, and corner defend warnings.
 
-Uses total_distance sign changes confirmed over 2.0s, extracts braking zone features
-(braking_delta_m, start_gap_m, overlap_at_turn_in, ran_deep, contact, forced_off, switchback),
-classifies into clean / brave / divebomb / divebomb_contact / switchback / passed_stricken_car,
-and detects closing cars before braking zones with inside-look detection.
+Part B of Prompt 21:
+- Order tracking using total_distance for all 24 cars within 60m
+- Confirmed after 2.0s or 80m travelled with sign held
+- Multi-car track model integration for braking zones from Lap 1
+- Full classification: clean, brave, divebomb, divebomb_contact, overtake_mode_pass,
+  around_the_outside, switchback, passed_stricken_car
+- Lost passes classified: divebombed_by, fair_pass_against, forced_off_by
+- Defend warnings from track model braking zones with inside-look detection
 """
 from __future__ import annotations
 
@@ -20,9 +24,12 @@ from config import DefendConfig, OvertakeConfig
 from f1telemetry.packets import NUM_CARS
 from f1telemetry.spotter import Spotter, SpotterState
 from f1telemetry.state import RaceState
+from trackmodel import Corner, TrackModel
 
 log = logging.getLogger("engineer.overtakes")
 log_detectors = logging.getLogger("engineer.detectors")
+
+OFF_TRACK_SURFACES = {4, 5, 6, 7, 8}  # Gravel, Mud, Sand, Grass, Water
 
 
 @dataclass
@@ -79,7 +86,7 @@ class BrakingZoneDetector:
 
         corner_names = []
         if self.knowledge:
-            corner_names = self.knowledge.get_corner_names()
+            corner_names = self.knowledge.get_corner_names(track_id) if hasattr(self.knowledge, "get_corner_names") else []
 
         zones: list[BrakingZone] = []
         in_braking = False
@@ -95,7 +102,6 @@ class BrakingZoneDetector:
             elif in_braking and (b_val <= 0.05 or i == n - 1):
                 in_braking = False
                 end_idx = i
-                # Apex is local speed minimum in braking zone or within 100m after
                 lookahead_idx = min(n - 1, end_idx + int(100.0 / 5.0))
                 window_speeds = speed[start_idx : lookahead_idx + 1]
                 if len(window_speeds) == 0:
@@ -110,12 +116,13 @@ class BrakingZoneDetector:
                 exit_idx = min(n - 1, apex_idx + int(100.0 / 5.0))
                 exit_spd = float(speed[exit_idx])
 
-                # Direction from steer at apex
                 apex_steer = float(steer[apex_idx]) if steer is not None and len(steer) > apex_idx else 0.0
                 direction = "right" if apex_steer >= 0 else "left"
 
                 c_name = f"Turn {corner_counter}"
-                if corner_counter - 1 < len(corner_names):
+                if isinstance(corner_names, dict) and corner_counter in corner_names:
+                    c_name = corner_names[corner_counter]
+                elif isinstance(corner_names, list) and corner_counter - 1 < len(corner_names):
                     c_name = corner_names[corner_counter - 1]
 
                 zones.append(BrakingZone(
@@ -141,8 +148,12 @@ class OvertakeCandidate:
     initial_my_total: float
     initial_their_total: float
     is_stricken: bool = False
+    corner: Corner | None = None
     braking_zone: BrakingZone | None = None
+    location: str = "straight" # "straight", "braking_zone", "mid_corner", "exit"
+    side: str = "inside"       # "inside" or "outside"
     braking_delta_m: float | None = None
+    brake_vs_field_m: float | None = None
     start_gap_m: float | None = None
     overlap_at_turn_in: bool = False
     player_min_speed: float = 999.0
@@ -152,20 +163,27 @@ class OvertakeCandidate:
     other_warnings_start: int = 0
     other_invalid_start: bool = False
     turn_in_recorded: bool = False
+    ran_deep: bool = False
+    victim_reaction: bool = False
+    forced_off: bool = False
+    overtake_mode_active: bool = False
+    slipstream: bool = False
 
 
 class OvertakeDetector:
-    """Deterministic telemetry-based overtake detection and classification."""
+    """Deterministic telemetry-based overtake detection and classification (Prompt 21)."""
 
     def __init__(
         self,
         config: OvertakeConfig | None = None,
         storage: Any | None = None,
         braking_zones: BrakingZoneDetector | None = None,
+        track_model: TrackModel | None = None,
     ):
         self.config = config or OvertakeConfig()
         self.storage = storage
         self.braking_zones = braking_zones or BrakingZoneDetector()
+        self.track_model = track_model
 
         # Sign tracking: car_idx -> last known sign of (my_total - their_total)
         self._prev_signs: dict[int, int] = {}
@@ -175,28 +193,40 @@ class OvertakeDetector:
         # Active candidates: car_idx -> OvertakeCandidate
         self._candidates: dict[int, OvertakeCandidate] = {}
 
-        # Collision events: deque of (time, v1, v2)
-        self._recent_collisions: deque[tuple[float, int, int]] = deque(maxlen=50)
+        # Collision events: deque of (time, v1, v2, severity)
+        self._recent_collisions: deque[tuple] = deque(maxlen=50)
 
-        # Recent confirmed overtakes: deque of (time, car_idx, direction) for switchback check
+        # Recent confirmed overtakes: deque of record dicts
         self._recent_overtakes: deque[dict[str, Any]] = deque(maxlen=50)
 
-        # Speed history for stricken car detection: car_idx -> deque of (time, speed)
+        # Speed history for stricken car detection
         self._speed_history: dict[int, deque[tuple[float, float]]] = {}
         self._player_speed_history: deque[tuple[float, float]] = deque(maxlen=120)
 
-    def on_collision(self, v1: int, v2: int, now: float | None = None):
+        # Telemetry history for victim reaction
+        self._opponent_inputs: dict[int, deque[tuple[float, float, float, float]]] = {}  # (time, brake, throttle, steer)
+
+        # Slipstream tracking: car_idx -> last time player was behind < 1.0s on straight
+        self._slipstream_duration: dict[int, float] = {}
+
+        # Overtake mode active history: deque of (time, bool)
+        self._overtake_mode_history: deque[tuple[float, bool]] = deque(maxlen=120)
+
+    def set_track_model(self, model: TrackModel):
+        self.track_model = model
+
+    def on_collision(self, v1: int, v2: int, severity: int = 1, now: float | None = None):
         """Records COLL event for contact feature matching."""
         if now is None:
             now = time.monotonic()
-        self._recent_collisions.append((now, v1, v2))
+        self._recent_collisions.append((now, v1, v2, severity))
 
-    def update(self, state: RaceState, now: float | None = None) -> list[tuple[str, dict[str, Any]]]:
-        """Evaluates live telemetry and returns confirmed overtake/loss signals."""
+    def update(self, state: RaceState, now: float | None = None) -> list[dict[str, Any]]:
+        """Evaluates live telemetry and returns confirmed overtake/loss records."""
         if now is None:
             now = time.monotonic()
 
-        signals: list[tuple[str, dict[str, Any]]] = []
+        signals: list[dict[str, Any]] = []
         p_idx = state.player
         if state.lap is None or p_idx >= len(state.lap):
             return signals
@@ -211,6 +241,12 @@ class OvertakeDetector:
         my_speed = state.my_telemetry.speed_kph if state.my_telemetry else 0.0
         self._player_speed_history.append((now, my_speed))
 
+        # Track player's Overtake Mode state (CarTelemetry2)
+        my_ot_active = False
+        if hasattr(state, "my_tel2") and state.my_tel2 is not None:
+            my_ot_active = bool(state.my_tel2.overtake_active)
+        self._overtake_mode_history.append((now, my_ot_active))
+
         track_id = state.session.track_id if state.session else 0
         track_len = state.track_length
         zones = self.braking_zones.get_zones(track_id)
@@ -222,9 +258,12 @@ class OvertakeDetector:
             while q and q[0][0] < cutoff:
                 q.popleft()
 
-        # Update opponent pit status tracking and speed history
-        for i, other in enumerate(state.lap):
-            if i == p_idx or other is None:
+        num_cars = len(state.lap)
+        for i in range(num_cars):
+            if i == p_idx:
+                continue
+            other = state.lap[i]
+            if other is None:
                 continue
 
             # Track pit status
@@ -233,7 +272,7 @@ class OvertakeDetector:
                 self._pit_exit_time[i] = now
             self._prev_pit_status[i] = other.pit_status
 
-            # Approximate other car speed from Motion if available
+            # Approximate other car speed from Motion
             other_speed = 0.0
             if state.motion and i < len(state.motion) and state.motion[i] is not None:
                 mot = state.motion[i]
@@ -242,22 +281,50 @@ class OvertakeDetector:
                 self._speed_history[i] = deque(maxlen=120)
             self._speed_history[i].append((now, other_speed))
 
+            # Track opponent inputs for victim reaction
+            if state.tel and i < len(state.tel) and state.tel[i] is not None:
+                o_tel = state.tel[i]
+                if i not in self._opponent_inputs:
+                    self._opponent_inputs[i] = deque(maxlen=60)
+                self._opponent_inputs[i].append((now, o_tel.brake, o_tel.throttle, o_tel.steer))
+
             # Primary signal: total_distance difference
             their_total = getattr(other, "total_distance", 0.0)
             dist_diff = my_total - their_total
             abs_gap = abs(dist_diff)
 
-            # Check if within proximity (50m)
-            if abs_gap < self.config.proximity_m:
+            # Slipstream tracking on straight: within 1.0s behind (e.g. 0 < their_total - my_total < 50m)
+            is_on_straight = True
+            if self.track_model:
+                curr_corner = self.track_model.get_corner_at_dist(my_lap_dist)
+                if curr_corner is not None:
+                    is_on_straight = False
+            if is_on_straight and -50.0 <= dist_diff < 0:
+                prev_slip = self._slipstream_duration.get(i, 0.0)
+                self._slipstream_duration[i] = prev_slip + 0.1
+            else:
+                self._slipstream_duration[i] = 0.0
+
+            # Proximity check (default 60m per Prompt 21)
+            prox_m = getattr(self.config, "proximity_m", 60.0)
+            if abs_gap < prox_m:
                 sign = 1 if dist_diff > 0 else -1
                 prev_sign = self._prev_signs.get(i)
                 self._prev_signs[i] = sign
 
                 if prev_sign is not None and sign != prev_sign:
-                    # Sign change detected! Candidate pass or loss
+                    # If this car was already an active candidate, sign flipped -> side-by-side flicker!
+                    if i in self._candidates:
+                        log_detectors.info(
+                            "Overtake candidate car %d, confirmed=False, reason=side_by_side_flicker (elapsed=%.2fs)",
+                            i, now - self._candidates[i].start_time
+                        )
+                        del self._candidates[i]
+                        continue
+
                     candidate_dir = "pass" if sign == 1 else "loss"
 
-                    # Evaluate filters
+                    # Filters
                     is_rejected = False
                     reject_reason = ""
 
@@ -266,7 +333,7 @@ class OvertakeDetector:
                         is_rejected = True
                         reject_reason = "pit_lane"
 
-                    # 2. Result status not active (2)
+                    # 2. Result status not active
                     elif other.result_status != 2:
                         is_rejected = True
                         reject_reason = "not_active"
@@ -281,10 +348,17 @@ class OvertakeDetector:
                         is_rejected = True
                         reject_reason = "safety_car"
 
-                    # 5. First 200m after race start (grid chaos handled by good_start/bad_start)
+                    # 5. First 200m after race start
                     elif my_lap_num == 1 and (my_lap_dist < 200.0 or my_total < 200.0):
                         is_rejected = True
                         reject_reason = "race_start_chaos"
+
+                    # 6. Other car driving wrong way
+                    elif hasattr(state, "tel2") and state.tel2 and i < len(state.tel2):
+                        o_tel2 = state.tel2[i]
+                        if o_tel2 and getattr(o_tel2, "wrong_way", False):
+                            is_rejected = True
+                            reject_reason = "wrong_way"
 
                     if is_rejected:
                         log_detectors.info(
@@ -292,7 +366,7 @@ class OvertakeDetector:
                             i, reject_reason
                         )
                     else:
-                        # Check stricken car: other car speed < 60% of player speed for previous 3s
+                        # Stricken car check
                         is_stricken = False
                         if candidate_dir == "pass":
                             other_q = self._speed_history.get(i, deque())
@@ -304,22 +378,53 @@ class OvertakeDetector:
                                 if avg_me > 30.0 and avg_other < 0.60 * avg_me:
                                     is_stricken = True
 
-                        # Find matching braking zone
-                        matched_zone = None
-                        for z in zones:
-                            # 150m before braking start to 100m after apex
-                            z_start = (z.start_dist_m - 150.0) % (track_len if track_len > 0 else 1e9)
-                            z_end = (z.apex_dist_m + 100.0) % (track_len if track_len > 0 else 1e9)
-                            if z_start < z_end:
-                                if z_start <= my_lap_dist <= z_end:
+                        # Find matching corner/zone from TrackModel or BrakingZones
+                        matched_corner: Corner | None = None
+                        matched_zone: BrakingZone | None = None
+                        loc = "straight"
+                        side = "inside"
+
+                        if self.track_model:
+                            matched_corner = self.track_model.get_corner_at_dist(my_lap_dist)
+                            if matched_corner is None:
+                                # Check upcoming corner within 150m (braking zone entry)
+                                up_c, up_dist = self.track_model.get_upcoming_corner(my_lap_dist, lookahead_m=150.0)
+                                if up_c and up_dist <= 150.0:
+                                    matched_corner = up_c
+                                    loc = "braking_zone"
+                            else:
+                                if my_lap_dist < matched_corner.apex_dist_m:
+                                    loc = "braking_zone" if my_lap_dist <= matched_corner.start_dist_m else "mid_corner"
+                                else:
+                                    loc = "exit"
+
+                        # Fallback to zones from BrakingZoneDetector if no track_model corner
+                        if matched_corner is None and zones:
+                            for z in zones:
+                                z_start = (z.start_dist_m - 150.0) % (track_len if track_len > 0 else 1e9)
+                                z_end = (z.apex_dist_m + 100.0) % (track_len if track_len > 0 else 1e9)
+                                if (z_start < z_end and z_start <= my_lap_dist <= z_end) or (z_start > z_end and (my_lap_dist >= z_start or my_lap_dist <= z_end)):
                                     matched_zone = z
-                                    break
-                            else:  # Zone wraps around start/finish line
-                                if my_lap_dist >= z_start or my_lap_dist <= z_end:
-                                    matched_zone = z
+                                    loc = "braking_zone"
                                     break
 
-                        # Start candidate
+                        # Check relative side (inside vs outside)
+                        if (matched_corner or matched_zone) and state.motion and p_idx < len(state.motion) and i < len(state.motion):
+                            p_mot = state.motion[p_idx]
+                            o_mot = state.motion[i]
+                            if p_mot and o_mot:
+                                c_dir = matched_corner.direction if matched_corner else matched_zone.direction
+                                if self.track_model:
+                                    p_lat = self.track_model.get_lateral_offset(p_mot.x, p_mot.z, my_lap_dist)
+                                    o_lat = self.track_model.get_lateral_offset(o_mot.x, o_mot.z, other.lap_distance)
+                                    if c_dir == "right":
+                                        side = "outside" if p_lat < o_lat - 0.5 else "inside"
+                                    else:
+                                        side = "outside" if p_lat > o_lat + 0.5 else "inside"
+
+                        # Check overtake mode in last 5s
+                        ot_mode_active = any(act for t, act in self._overtake_mode_history if now - t <= 5.0)
+
                         cand = OvertakeCandidate(
                             car_idx=i,
                             direction=candidate_dir,
@@ -327,12 +432,17 @@ class OvertakeDetector:
                             initial_my_total=my_total,
                             initial_their_total=their_total,
                             is_stricken=is_stricken,
+                            corner=matched_corner,
                             braking_zone=matched_zone,
+                            location=loc,
+                            side=side,
+                            overtake_mode_active=ot_mode_active,
+                            slipstream=(self._slipstream_duration.get(i, 0.0) >= 3.0),
                             other_warnings_start=getattr(other, "corner_cutting_warnings", 0),
                             other_invalid_start=getattr(other, "lap_invalid", False),
                         )
 
-                        # Extract relative motion features at candidate start
+                        # Motion gap and overlap at turn-in
                         if state.motion and p_idx < len(state.motion) and i < len(state.motion):
                             p_mot = state.motion[p_idx]
                             o_mot = state.motion[i]
@@ -346,16 +456,25 @@ class OvertakeDetector:
                                 cand.overlap_at_turn_in = (abs(d_fwd) < 3.0 and abs(d_rt) > 1.0)
                                 cand.turn_in_recorded = True
 
-                        if matched_zone:
+                        if matched_corner:
+                            cand.brake_vs_field_m = my_lap_dist - matched_corner.braking_start_median_m
+                            cand.braking_delta_m = cand.brake_vs_field_m
+                        elif matched_zone:
                             cand.braking_delta_m = my_lap_dist - matched_zone.ref_braking_start_m
+                            cand.brake_vs_field_m = cand.braking_delta_m
 
                         self._candidates[i] = cand
+                        c_name = matched_corner.name if matched_corner else (matched_zone.name if matched_zone else "None")
                         log_detectors.debug(
-                            "Overtake candidate car %d started: dir=%s, zone=%s, gap=%.1fm",
-                            i, candidate_dir, matched_zone.name if matched_zone else "None", abs_gap
+                            "Overtake candidate car %d started: dir=%s, corner=%s, gap=%.1fm",
+                            i, candidate_dir, c_name, abs_gap
                         )
 
-        # Process active candidates
+        # Process active candidates for confirmation
+        confirm_time = getattr(self.config, "confirm_time_s", 2.0)
+        confirm_dist = getattr(self.config, "confirm_distance_m", 80.0)
+        prox_m = getattr(self.config, "proximity_m", 60.0)
+
         for c_idx in list(self._candidates.keys()):
             cand = self._candidates[c_idx]
             other = state.lap[c_idx] if c_idx < len(state.lap) else None
@@ -368,9 +487,7 @@ class OvertakeDetector:
             curr_sign = 1 if dist_diff > 0 else -1
             expected_sign = 1 if cand.direction == "pass" else -1
 
-            # Check if sign held
             if curr_sign != expected_sign:
-                # Sign flipped back: side-by-side flicker
                 log_detectors.info(
                     "Overtake candidate car %d, confirmed=False, reason=side_by_side_flicker (elapsed=%.2fs)",
                     c_idx, now - cand.start_time
@@ -378,26 +495,30 @@ class OvertakeDetector:
                 del self._candidates[c_idx]
                 continue
 
-            # Update features while in zone
-            if cand.braking_zone:
+            # Update live features while candidate is active
+            if cand.corner or cand.braking_zone:
                 cand.player_min_speed = min(cand.player_min_speed, my_speed)
-                # Check turn-in overlap if not recorded yet
-                if not cand.turn_in_recorded and state.motion and p_idx < len(state.motion) and c_idx < len(state.motion):
-                    p_mot = state.motion[p_idx]
-                    o_mot = state.motion[c_idx]
-                    if p_mot and o_mot:
-                        dx = o_mot.x - p_mot.x
-                        dy = o_mot.y - p_mot.y
-                        dz = o_mot.z - p_mot.z
-                        d_fwd = dx * p_mot.fwd_x + dy * p_mot.fwd_y + dz * p_mot.fwd_z
-                        d_rt = dx * p_mot.right_x + dy * p_mot.right_y + dz * p_mot.right_z
-                        if abs(d_fwd) < 3.0 and abs(d_rt) > 1.0:
-                            cand.overlap_at_turn_in = True
-                            cand.turn_in_recorded = True
 
-            # Confirm candidate if held for 2.0s and gap < 50m
+                # Check ran deep: wheels off track
+                if state.my_telemetry and hasattr(state.my_telemetry, "surface_type"):
+                    if any(st in OFF_TRACK_SURFACES for st in state.my_telemetry.surface_type):
+                        cand.ran_deep = True
+
+                # Check victim reaction: opponent brake spike, throttle lift > 0.5, or steer swerve > 0.3
+                if c_idx in self._opponent_inputs:
+                    inp_q = self._opponent_inputs[c_idx]
+                    recent_inps = [item for item in inp_q if now - item[0] <= 1.5]
+                    if len(recent_inps) >= 2:
+                        throttles = [item[2] for item in recent_inps]
+                        steers = [item[3] for item in recent_inps]
+                        brakes = [item[1] for item in recent_inps]
+                        if (max(throttles) - min(throttles) > 0.5) or (max(steers) - min(steers) > 0.3) or (max(brakes) > 0.6 and min(brakes) < 0.2):
+                            cand.victim_reaction = True
+
             elapsed = now - cand.start_time
-            if elapsed >= self.config.confirm_time_s:
+            dist_travelled = abs(my_total - cand.initial_my_total)
+            # Confirm if held for 2.0s OR 80m travelled
+            if elapsed >= confirm_time or dist_travelled >= confirm_dist:
                 del self._candidates[c_idx]
                 record = self._confirm_overtake(state, c_idx, cand, now)
                 signals.append(record)
@@ -407,14 +528,26 @@ class OvertakeDetector:
     def _classify_overtake(
         self,
         features: dict[str, Any],
-        is_inside_braking: bool = True,
-        zone: BrakingZone | None = None,
+        is_inside_corner: bool | None = None,
+        corner_or_zone: Any | None = None,
         switchback: bool = False,
         is_stricken: bool = False,
+        direction: str = "pass",
+        side: str = "inside",
+        overtake_mode_active: bool = False,
+        location: str = "straight",
+        **kwargs: Any,
     ) -> str:
+        if is_inside_corner is None:
+            is_inside_corner = kwargs.get("is_inside_braking", True)
+        if corner_or_zone is None and "zone" in kwargs:
+            corner_or_zone = kwargs.get("zone")
+
         contact = bool(features.get("contact"))
+        contact_severity = int(features.get("contact_severity", 1 if contact else 0))
         forced_off = bool(features.get("forced_off"))
         ran_deep = bool(features.get("ran_deep"))
+        victim_reaction = bool(features.get("victim_reaction"))
         braking_delta = features.get("braking_delta_m", 0.0)
         start_gap = features.get("start_gap_m", 0.0)
         overlap = bool(features.get("overlap_at_turn_in"))
@@ -423,25 +556,56 @@ class OvertakeDetector:
             return "passed_stricken_car"
         if switchback:
             return "overtake_switchback"
-        if not is_inside_braking or zone is None:
-            return "clean"
 
-        is_divebomb_features = (
-            start_gap < self.config.divebomb_start_gap_max_m
-            or braking_delta > self.config.divebomb_braking_delta_min_m
-        ) and (ran_deep or forced_off)
+        # Pass logic (I overtook other car)
+        if direction == "pass":
+            # Overtake Mode pass on straight
+            if overtake_mode_active and location == "straight" and not contact:
+                return "overtake_mode_pass"
 
-        if is_divebomb_features:
-            return "divebomb_contact" if contact else "divebomb"
-        elif (
-            (self.config.brave_braking_delta_min_m <= braking_delta <= self.config.brave_braking_delta_max_m)
-            or (self.config.brave_start_gap_min_m <= start_gap <= self.config.brave_start_gap_max_m)
-        ) and not contact and not forced_off:
-            return "brave"
-        elif (braking_delta < self.config.clean_braking_delta_max_m or overlap) and not contact and not forced_off:
-            return "clean"
+            if not is_inside_corner or corner_or_zone is None:
+                return "clean"
+
+            is_divebomb = (
+                start_gap < getattr(self.config, "divebomb_start_gap_max_m", -10.0)
+                or braking_delta > getattr(self.config, "divebomb_braking_delta_min_m", 25.0)
+            ) and (ran_deep or forced_off or victim_reaction)
+
+            if is_divebomb:
+                return "divebomb_contact" if (contact and contact_severity >= 1) else "divebomb"
+
+            is_brave = (
+                (self.config.brave_braking_delta_min_m <= braking_delta <= self.config.brave_braking_delta_max_m)
+                or (self.config.brave_start_gap_min_m <= start_gap <= self.config.brave_start_gap_max_m)
+            ) and not contact and not forced_off and not ran_deep
+
+            if side == "outside" and (is_brave or overlap or braking_delta < self.config.clean_braking_delta_max_m):
+                return "around_the_outside"
+
+            if is_brave:
+                return "brave"
+            elif (braking_delta < self.config.clean_braking_delta_max_m or overlap) and not contact and not forced_off:
+                return "clean"
+            else:
+                return "divebomb_contact" if contact else "clean"
+
+        # Lost position logic (Opponent overtook me)
         else:
-            return "divebomb_contact" if contact else "clean"
+            if is_inside_corner and corner_or_zone is None:
+                return "fair_pass_against"
+
+            # Check if opponent divebombed me
+            other_divebomb = (
+                start_gap < getattr(self.config, "divebomb_start_gap_max_m", -10.0)
+                or braking_delta > getattr(self.config, "divebomb_braking_delta_min_m", 25.0)
+            ) and (ran_deep or forced_off or victim_reaction)
+
+            if other_divebomb:
+                return "divebombed_by"
+            elif forced_off:
+                return "forced_off_by"
+            else:
+                return "fair_pass_against"
 
     def _confirm_overtake(
         self,
@@ -451,65 +615,96 @@ class OvertakeDetector:
         now: float,
     ) -> dict[str, Any]:
         """Calculates features, classifies move, and records overtake."""
-        # Find zone if any
-        zone = cand.braking_zone
+        corner = getattr(cand, "corner", None)
+        zone = getattr(cand, "braking_zone", None)
         other_name = state.name(c_idx).split()[-1] if state.name(c_idx) else f"Car {c_idx}"
 
-        # 1. Contact check: was there a COLL event with that car within +-2s?
-        contact = any(
-            abs(now - ev_t) <= self.config.contact_window_s
-            and ((v1 == c_idx and v2 == state.player) or (v2 == c_idx and v1 == state.player))
-            for ev_t, v1, v2 in self._recent_collisions
-        )
+        # 1. Contact check: COLL event with that car within +-2s (with severity)
+        contact = False
+        contact_sev = 0
+        for ev in self._recent_collisions:
+            ev_t = ev[0]
+            v1, v2 = ev[1], ev[2]
+            sev = ev[3] if len(ev) > 3 else 1
+            if abs(now - ev_t) <= getattr(self.config, "contact_window_s", 2.0):
+                if (v1 == c_idx and v2 == state.player) or (v2 == c_idx and v1 == state.player):
+                    contact = True
+                    contact_sev = max(contact_sev, sev)
 
-        # 2. Forced off check:
-        forced_off = False
+        # 2. Forced off check
+        forced_off = getattr(cand, "forced_off", False)
+        cand_warnings = getattr(cand, "other_warnings_start", 0)
+        cand_invalid = getattr(cand, "other_invalid_start", False)
         if state.lap and c_idx < len(state.lap) and state.lap[c_idx] is not None:
             o_lap = state.lap[c_idx]
-            warn_inc = o_lap.corner_cutting_warnings > cand.other_warnings_start
-            inv_changed = bool(o_lap.lap_invalid) and not cand.other_invalid_start
-            speed_drop = False
-            if cand.other_pre_apex_speed is not None and cand.other_exit_speed is not None:
-                speed_drop = (cand.other_pre_apex_speed - cand.other_exit_speed) > self.config.forced_off_speed_drop_kph
-            forced_off = warn_inc or inv_changed or speed_drop
+            warn_inc = o_lap.corner_cutting_warnings > cand_warnings
+            inv_changed = bool(o_lap.lap_invalid) and not cand_invalid
+            if warn_inc or inv_changed:
+                forced_off = True
 
-        # 3. Ran deep check:
-        ran_deep = False
-        if zone is not None:
-            min_spd = cand.player_min_speed if cand.player_min_speed < 990.0 else (state.my_telemetry.speed_kph if state.my_telemetry else 0.0)
-            exit_spd = cand.player_exit_speed if cand.player_exit_speed is not None else min_spd
-            if (min_spd > zone.ref_min_speed_kph + self.config.ran_deep_min_speed_delta_kph and
-                exit_spd < zone.ref_exit_speed_kph - self.config.ran_deep_exit_speed_delta_kph):
+        if state.tel and c_idx < len(state.tel) and state.tel[c_idx] is not None:
+            o_tel = state.tel[c_idx]
+            if hasattr(o_tel, "surface_type") and any(st in OFF_TRACK_SURFACES for st in o_tel.surface_type):
+                forced_off = True
+
+        # 3. Ran deep check
+        ran_deep = getattr(cand, "ran_deep", False)
+        player_min_spd = getattr(cand, "player_min_speed", 999.0)
+        ref_min = getattr(corner, "field_median_min_speed_kph", None) if corner else (getattr(zone, "ref_min_speed_kph", None) if zone else None)
+        if ref_min is not None and player_min_spd < 900.0:
+            if player_min_spd > ref_min + getattr(self.config, "ran_deep_min_speed_delta_kph", 15.0):
                 ran_deep = True
 
-        # 4. Switchback check: was this driver recently passed/passed us within 5s?
+        # 4. Switchback check
+        cand_dir = getattr(cand, "direction", "pass")
         switchback = any(
             now - r["timestamp"] <= 5.0
             and r["car_idx"] == c_idx
-            and r["direction"] != cand.direction
+            and r["direction"] != cand_dir
             for r in self._recent_overtakes
         )
 
-        braking_delta = cand.braking_delta_m if cand.braking_delta_m is not None else 0.0
-        start_gap = cand.start_gap_m if cand.start_gap_m is not None else 0.0
+        braking_delta = getattr(cand, "braking_delta_m", None) or 0.0
+        start_gap = getattr(cand, "start_gap_m", None) or 0.0
+        brake_vs_field = getattr(cand, "brake_vs_field_m", None) or braking_delta
+        overlap_at_turn_in = getattr(cand, "overlap_at_turn_in", False)
+        victim_reaction = getattr(cand, "victim_reaction", False)
+        cand_loc = getattr(cand, "location", "corner" if (corner or zone) else "straight")
+        cand_side = getattr(cand, "side", "inside")
+        overtake_mode = getattr(cand, "overtake_mode_active", False)
+        slipstream = getattr(cand, "slipstream", False)
+        is_stricken = getattr(cand, "is_stricken", False)
+
+        corner_name = getattr(corner, "name", None) or getattr(zone, "name", None) or "Straight"
 
         features = {
             "braking_delta_m": round(braking_delta, 1),
+            "brake_vs_field_m": round(brake_vs_field, 1),
             "start_gap_m": round(start_gap, 1),
-            "overlap_at_turn_in": cand.overlap_at_turn_in,
+            "overlap_at_turn_in": overlap_at_turn_in,
             "ran_deep": ran_deep,
             "contact": contact,
+            "contact_severity": contact_sev,
             "forced_off": forced_off,
+            "victim_reaction": victim_reaction,
             "switchback": switchback,
-            "corner_name": zone.name if zone else "Straight",
+            "location": cand_loc,
+            "side": cand_side,
+            "overtake_mode": overtake_mode,
+            "slipstream": slipstream,
+            "corner_name": corner_name,
         }
 
         cls_name = self._classify_overtake(
-            features,
-            is_inside_braking=(zone is not None),
-            zone=zone,
+            features=features,
+            is_inside_corner=(corner is not None or zone is not None),
+            corner_or_zone=corner or zone,
             switchback=switchback,
-            is_stricken=cand.is_stricken,
+            is_stricken=is_stricken,
+            direction=cand_dir,
+            side=cand_side,
+            overtake_mode_active=overtake_mode,
+            location=cand_loc,
         )
 
         record = {
@@ -529,8 +724,10 @@ class OvertakeDetector:
             "forced_off": 1 if features["forced_off"] else 0,
             "switchback": 1 if features["switchback"] else 0,
             "corner_name": features["corner_name"],
+            "location": features["location"],
+            "side": features["side"],
             "raw_features": features,
-            "position": state.me.position if state.me else 0,
+            "position": getattr(state.me, "position", 0) if state.me else 0,
         }
 
         self._recent_overtakes.append(record)
@@ -546,17 +743,19 @@ class OvertakeDetector:
 
 
 class DefendWarningDetector:
-    """Detects cars closing behind 300-150m before braking zones with inside-look detection."""
+    """Detects cars closing behind 300-150m before braking zones with inside-look detection (Prompt 21)."""
 
     def __init__(
         self,
         config: DefendConfig | None = None,
         braking_zones: BrakingZoneDetector | None = None,
         spotter: Spotter | None = None,
+        track_model: TrackModel | None = None,
     ):
         self.config = config or DefendConfig()
         self.braking_zones = braking_zones or BrakingZoneDetector()
         self.spotter = spotter
+        self.track_model = track_model
 
         # Rate limiting: (lap_num, corner_num)
         self._corner_lap_fired: set[tuple[int, int]] = set()
@@ -564,6 +763,9 @@ class DefendWarningDetector:
 
         # Gap and lateral history for car behind: car_idx -> deque of (time, d_forward, d_right)
         self._motion_history: dict[int, deque[tuple[float, float, float]]] = {}
+
+    def set_track_model(self, model: TrackModel):
+        self.track_model = model
 
     def update(self, state: RaceState, now: float | None = None) -> list[dict[str, Any]]:
         """Evaluates car-behind telemetry and triggers defend warnings."""
@@ -589,32 +791,50 @@ class DefendWarningDetector:
 
         my_lap_dist = me.lap_distance
         my_lap_num = me.lap_num
-        track_id = state.session.track_id if state.session else 0
         track_len = state.track_length
-        zones = self.braking_zones.get_zones(track_id)
-        if not zones or track_len <= 0:
-            return []
 
-        # Find upcoming braking zone 300-150m ahead
-        target_zone: BrakingZone | None = None
-        for z in zones:
-            dist_to_start = (z.start_dist_m - my_lap_dist) % track_len
-            if self.config.zone_distance_min_m <= dist_to_start <= self.config.zone_distance_max_m:
-                if (my_lap_num, z.corner_number) not in self._corner_lap_fired:
-                    target_zone = z
-                    break
+        # Find upcoming corner/braking zone 300-150m ahead
+        target_name = "corner"
+        target_dir = "right"
+        target_num = 1
 
-        if target_zone is None:
+        found_target = False
+        if self.track_model and self.track_model.corners:
+            up_c, up_dist = self.track_model.get_upcoming_corner(my_lap_dist, lookahead_m=350.0)
+            if up_c and self.config.zone_distance_min_m <= up_dist <= self.config.zone_distance_max_m:
+                if (my_lap_num, up_c.number) not in self._corner_lap_fired:
+                    target_name = up_c.name
+                    target_dir = up_c.direction
+                    target_num = up_c.number
+                    found_target = True
+
+        if not found_target:
+            track_id = state.session.track_id if state.session else 0
+            zones = self.braking_zones.get_zones(track_id)
+            if zones and track_len > 0:
+                for z in zones:
+                    dist_to_start = (z.start_dist_m - my_lap_dist) % track_len
+                    if self.config.zone_distance_min_m <= dist_to_start <= self.config.zone_distance_max_m:
+                        if (my_lap_num, z.corner_number) not in self._corner_lap_fired:
+                            target_name = z.name
+                            target_dir = z.direction
+                            target_num = z.corner_number
+                            found_target = True
+                            break
+
+        if not found_target:
             return []
 
         # Check cars behind
         fwd_x, fwd_y, fwd_z = p_mot.fwd_x, p_mot.fwd_y, p_mot.fwd_z
         rt_x, rt_y, rt_z = p_mot.right_x, p_mot.right_y, p_mot.right_z
 
-        for i, other in enumerate(state.lap):
-            if i == p_idx or other is None:
+        num_cars = len(state.lap)
+        for i in range(num_cars):
+            if i == p_idx:
                 continue
-            if other.result_status != 2 or other.pit_status != 0:
+            other = state.lap[i]
+            if other is None or other.result_status != 2 or other.pit_status != 0:
                 continue
             if i >= len(state.motion) or state.motion[i] is None:
                 continue
@@ -630,41 +850,42 @@ class DefendWarningDetector:
                 self._motion_history[i] = deque(maxlen=60)
             self._motion_history[i].append((now, d_fwd, d_rt))
 
-            # Car behind check: within 15m (d_forward between -15 and 0) or gap < 0.4s
+            # Car behind check: within 15m or gap < 0.4s
             behind_ms = getattr(other, "gap_to_car_ahead_ms", None)
             is_close_meters = (-self.config.close_distance_m <= d_fwd <= 0.0)
             is_close_seconds = (other.position == me.position + 1 and behind_ms is not None and behind_ms < int(self.config.close_time_s * 1000))
 
             if is_close_meters or is_close_seconds:
-                # Closing check: gap shrank over last 1.0s
+                # Closing check: gap shrank over last ~1.0s
                 q = self._motion_history[i]
-                old_samples = [item for item in q if now - item[0] >= 0.8]
+                while q and now - q[0][0] > 3.0:
+                    q.popleft()
+                old_samples = [item for item in q if 0.7 <= now - item[0] <= 1.8]
+                if not old_samples:
+                    old_samples = [item for item in q if now - item[0] >= 0.7]
                 if not old_samples:
                     continue
-                old_time, old_fwd, old_rt = old_samples[0]
-                # Closer means d_fwd increased towards 0 (e.g. from -12m to -7m)
+                old_time, old_fwd, old_rt = old_samples[-1]
                 is_closing = (d_fwd > old_fwd + 0.2) or (behind_ms is not None)
 
                 if not is_closing:
                     continue
 
-                # Inside look check:
-                # If d_right moves toward inside of upcoming corner by > 1m while within 10m
+                # Inside look check
                 inside_look = False
                 if -self.config.inside_distance_threshold_m <= d_fwd <= 0.0:
                     delta_rt = d_rt - old_rt
-                    if target_zone.direction == "right" and delta_rt > self.config.inside_move_threshold_m:
+                    if target_dir == "right" and delta_rt > self.config.inside_move_threshold_m:
                         inside_look = True
-                    elif target_zone.direction == "left" and delta_rt < -self.config.inside_move_threshold_m:
+                    elif target_dir == "left" and delta_rt < -self.config.inside_move_threshold_m:
                         inside_look = True
 
-                # Trigger defend warning!
-                self._corner_lap_fired.add((my_lap_num, target_zone.corner_number))
+                self._corner_lap_fired.add((my_lap_num, target_num))
                 self._last_call_time = now
 
                 other_name = state.name(i).split()[-1] if state.name(i) else "he"
                 info = {
-                    "corner": target_zone.name,
+                    "corner": target_name,
                     "inside_look": inside_look,
                     "driver": other_name,
                     "car_idx": i,
@@ -674,7 +895,7 @@ class DefendWarningDetector:
 
                 log_detectors.info(
                     "Defend warning candidate confirmed: corner=%s, inside_look=%s, driver=%s, d_fwd=%.1fm, d_rt=%.1fm",
-                    target_zone.name, inside_look, other_name, d_fwd, d_rt
+                    target_name, inside_look, other_name, d_fwd, d_rt
                 )
                 return [info]
 

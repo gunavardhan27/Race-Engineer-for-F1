@@ -1,0 +1,233 @@
+{
+  "_note": "Track id mapping. Verify every id with inspect_telemetry.py (prints track_id) on each track.",
+  "tracks": [
+    {
+      "name": "Bahrain",
+      "slug": "bahrain",
+      "aliases": [
+        "Sakhir"
+      ],
+      "game_track_id": 3,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Saudi Arabia",
+      "slug": "saudi_arabia",
+      "aliases": [
+        "Jeddah"
+      ],
+      "game_track_id": 29,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Australia",
+      "slug": "australia",
+      "aliases": [
+        "Melbourne",
+        "Albert Park"
+      ],
+      "game_track_id": 0,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Japan",
+      "slug": "japan",
+      "aliases": [
+        "Suzuka"
+      ],
+      "game_track_id": 13,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "China",
+      "slug": "china",
+      "aliases": [
+        "Shanghai"
+      ],
+      "game_track_id": 2,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Miami",
+      "slug": "miami",
+      "aliases": [],
+      "game_track_id": 30,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Imola",
+      "slug": "imola",
+      "aliases": [
+        "Emilia Romagna"
+      ],
+      "game_track_id": 27,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Monaco",
+      "slug": "monaco",
+      "aliases": [],
+      "game_track_id": 5,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Canada",
+      "slug": "canada",
+      "aliases": [
+        "Montreal"
+      ],
+      "game_track_id": 6,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Spain (Catalunya)",
+      "slug": "spain_catalunya",
+      "aliases": [
+        "Barcelona",
+        "Catalunya"
+      ],
+      "game_track_id": 4,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Austria",
+      "slug": "austria",
+      "aliases": [
+        "Red Bull Ring",
+        "Spielberg"
+      ],
+      "game_track_id": 17,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Great Britain",
+      "slug": "great_britain",
+      "aliases": [
+        "Silverstone"
+      ],
+      "game_track_id": 7,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Hungary",
+      "slug": "hungary",
+      "aliases": [
+        "Hungaroring"
+      ],
+      "game_track_id": 9,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Belgium",
+      "slug": "belgium",
+      "aliases": [
+        "Spa",
+        "Spa-Francorchamps"
+      ],
+      "game_track_id": 10,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Netherlands",
+      "slug": "netherlands",
+      "aliases": [
+        "Zandvoort"
+      ],
+      "game_track_id": 26,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Italy (Monza)",
+      "slug": "italy_monza",
+      "aliases": [
+        "Monza",
+        "Italy"
+      ],
+      "game_track_id": 11,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Azerbaijan",
+      "slug": "azerbaijan",
+      "aliases": [
+        "Baku"
+      ],
+      "game_track_id": 20,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Singapore",
+      "slug": "singapore",
+      "aliases": [
+        "Marina Bay"
+      ],
+      "game_track_id": 12,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Austin",
+      "slug": "austin",
+      "aliases": [
+        "COTA",
+        "USA",
+        "United States"
+      ],
+      "game_track_id": 15,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Mexico",
+      "slug": "mexico",
+      "aliases": [
+        "Mexico City"
+      ],
+      "game_track_id": 19,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Brazil",
+      "slug": "brazil",
+      "aliases": [
+        "Interlagos",
+        "Sao Paulo"
+      ],
+      "game_track_id": 16,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Las Vegas",
+      "slug": "las_vegas",
+      "aliases": [],
+      "game_track_id": 31,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Qatar",
+      "slug": "qatar",
+      "aliases": [
+        "Losail",
+        "Lusail"
+      ],
+      "game_track_id": 32,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Abu Dhabi",
+      "slug": "abu_dhabi",
+      "aliases": [
+        "Yas Marina"
+      ],
+      "game_track_id": 14,
+      "game_track_id_status": "from the F1 25 appendix (recalled), verify with inspect_telemetry.py"
+    },
+    {
+      "name": "Madrid",
+      "slug": "madrid",
+      "aliases": [
+        "Madring"
+      ],
+      "game_track_id": null,
+      "game_track_id_status": "unknown - learn from the Session packet"
+    }
+  ]
+}

@@ -174,37 +174,43 @@ class KokoroTTS:
         except Exception as e:
             log.warning("KokoroTTS warmup warning: %s", e)
 
+from audio_cache import AudioCacheManager, get_default_cache_dir
 
-class EdgeTTS:
-    """Cloud TTS using edge-tts with audio disk caching, UsageGuard, and PiperTTS fallback."""
+
+class EdgeTTS(TTSProvider):
+    """Microsoft edge-tts wrapper with AudioCacheManager and automatic fallback."""
 
     def __init__(
         self,
         voice: str = "en-GB-RyanNeural",
         usage_guard: Optional[Any] = None,
         fallback_engine: Optional[TTSProvider] = None,
-        cache_dir: str = "cache/audio",
+        cache_dir: Optional[str | Path] = None,
+        cache_manager: Optional[AudioCacheManager] = None,
+        max_cache_mb: float = 100.0,
     ):
         self.voice = voice
         self.usage_guard = usage_guard
         self.fallback_engine = fallback_engine or PiperTTS()
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        if cache_manager is not None:
+            self.cache_manager = cache_manager
+        else:
+            self.cache_manager = AudioCacheManager(
+                cache_dir=cache_dir,
+                voice=voice,
+                max_mb=max_cache_mb,
+            )
+        self.cache_dir = self.cache_manager.cache_dir
 
     async def synth(self, text: str) -> Tuple[np.ndarray, int]:
         clean_text = normalize_text_for_speech(text.strip())
         if not clean_text:
             return np.array([], dtype=np.float32), 24000
 
-        # 1. Disk cache lookup (text + voice) -> 0 usage
-        cache_key = hashlib.sha256(f"{self.voice}:{clean_text}".encode("utf-8")).hexdigest()
-        cache_file = self.cache_dir / f"{cache_key}.npz"
-        if cache_file.is_file():
-            try:
-                with np.load(cache_file) as npz:
-                    return npz["audio"].astype(np.float32), int(npz["sample_rate"])
-            except Exception as e:
-                log.warning("EdgeTTS: Failed loading cached audio for %r: %s", clean_text, e)
+        # 1. Disk cache lookup via AudioCacheManager (static phrases only, int16 compressed)
+        cached = self.cache_manager.load(clean_text)
+        if cached is not None:
+            return cached
 
         # 2. Check UsageGuard before making cloud call
         if self.usage_guard:
@@ -233,11 +239,8 @@ class EdgeTTS:
             if self.usage_guard:
                 self.usage_guard.record_usage("edge_tts", requests=1, characters=len(clean_text), status_code=200)
 
-            # 5. Save to disk cache for future reuse
-            try:
-                np.savez_compressed(cache_file, audio=data, sample_rate=sample_rate)
-            except Exception as e:
-                log.warning("EdgeTTS: Failed caching synthesized audio: %s", e)
+            # 5. Save to disk cache for future reuse (only if static, compressed to int16)
+            self.cache_manager.save(clean_text, data, sample_rate)
 
             return data, sample_rate
 
@@ -256,7 +259,12 @@ class EdgeTTS:
             log.warning("EdgeTTS warmup warning: %s", e)
 
 
-def create_tts_engine(config: TTSConfig, usage_guard: Optional[Any] = None) -> TTSProvider:
+def create_tts_engine(
+    config: TTSConfig,
+    usage_guard: Optional[Any] = None,
+    cache_config: Optional[Any] = None,
+    cache_manager: Optional[AudioCacheManager] = None,
+) -> TTSProvider:
     """Factory creating the configured TTS engine."""
     engine_name = (config.engine or "piper").lower()
     if engine_name == "piper":
@@ -265,7 +273,14 @@ def create_tts_engine(config: TTSConfig, usage_guard: Optional[Any] = None) -> T
         return KokoroTTS(voice=config.voice)
     elif engine_name == "edge":
         fallback = PiperTTS(voice_name="en_GB-alan-medium")
-        return EdgeTTS(voice=config.voice, usage_guard=usage_guard, fallback_engine=fallback)
+        max_mb = getattr(cache_config, "audio_max_mb", 100.0) if cache_config else 100.0
+        return EdgeTTS(
+            voice=config.voice,
+            usage_guard=usage_guard,
+            fallback_engine=fallback,
+            cache_manager=cache_manager,
+            max_cache_mb=max_mb,
+        )
     else:
         log.warning("Unknown TTS engine '%s'; falling back to PiperTTS", config.engine)
         return PiperTTS(voice_name=config.voice)

@@ -16,6 +16,7 @@
 13. Stowe (T13): fast right at end of Hangar Straight, heavy braking from high top speed.
 14. Vale (T14): tight chicane entry, high risk of front locking under downhill braking.
 15. Club (T15): slow right exit onto pit straight, traction critical.
+- T16-17 Vale/Club (sector 3): Left-Right Chicane, low speed. Heavy braking.
 
 ## Overtaking
 - Primary overtaking zones are into Brooklands (T6) via the Wellington Straight DRS zone, and into Stowe (T13) via the Hangar Straight DRS zone.

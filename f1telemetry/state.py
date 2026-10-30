@@ -72,6 +72,11 @@ class RaceState:
         self.player = 0
         self.session = None
         self.lap = self.tel = self.status = self.damage = self.motion = self.setups = None
+        self.tel2 = None
+        self.tyre_sets = None
+        self.lap_positions = None
+        self._wrong_way_active = False
+        self._overtake_available = False
         self.current_setup_id: str | int | None = None
         self.current_setup_fingerprint: str | None = None
         self.best_setup_info: dict | None = None
@@ -86,6 +91,9 @@ class RaceState:
         self._buttons = 0
         self.personal_best = None
         self.last_lap_vs_best = None
+        self.my_theoretical_best = None
+        self.biggest_loss_segment = None
+        self.fastest_sectors = None
         self.final_classification = None
 
         # Pace, qualifying and time trial tracking
@@ -226,6 +234,25 @@ class RaceState:
         elif pid == PacketId.TIME_TRIAL:
             self.time_trial = data
             signals.append(("time_trial", data))
+        elif pid == PacketId.CAR_TELEMETRY2:
+            self.tel2 = data
+            me2 = self.my_tel2
+            if me2 is not None:
+                if me2.wrong_way:
+                    if not getattr(self, "_wrong_way_active", False):
+                        self._wrong_way_active = True
+                        signals.append(("wrong_way",))
+                else:
+                    self._wrong_way_active = False
+
+                was_available = getattr(self, "_overtake_available", False)
+                if me2.overtake_available and not was_available:
+                    signals.append(("overtake_available", me2.overtake_in_m))
+                self._overtake_available = me2.overtake_available
+        elif pid == PacketId.TYRE_SETS:
+            self.tyre_sets = data
+        elif pid == PacketId.LAP_POSITIONS:
+            self.lap_positions = data
         elif pid == PacketId.EVENT:
             if data.code == "BUTN":
                 was = bool(self._buttons & self.ptt_mask)
@@ -348,9 +375,13 @@ class RaceState:
 
     # ---- accessors -------------------------------------------------------
     def _mine(self, cars):
-        if cars is None or self.player >= packets.NUM_CARS:
+        if cars is None or self.player >= len(cars):
             return None
         return cars[self.player]
+
+    @property
+    def my_tel2(self) -> packets.CarTelemetry2 | None:
+        return self._mine(self.tel2)
 
     @property
     def me(self):
@@ -518,6 +549,7 @@ class RaceState:
                     "penalties": c.penalties_s,
                     "penalties_s": c.penalties_s,
                     "is_player": (i == self.player),
+                    "color": getattr(part, "primary_color_hex", None) if part else None,
                 })
         cars.sort(key=lambda x: x["position"])
         return cars
@@ -610,7 +642,8 @@ class RaceState:
 
     # ---- compact state for Redis / the LLM prompt ------------------------
     def snapshot(self) -> dict:
-        me, s, st, dmg, tel = self.me, self.session, self.my_status, self.my_damage, self.my_tel
+        me, s, st, dmg, tel, tel2 = self.me, self.session, self.my_status, self.my_damage, self.my_tel, self.my_tel2
+        regs_2026 = (tel2.regs_2026 if tel2 else False) or (getattr(s, "formula", 0) == 13)
         ai, ga = self.gap_ahead()
         bi, gb = self.gap_behind()
         rain = self.next_rain()
@@ -647,10 +680,16 @@ class RaceState:
                         "next_rain": {"in_min": rain.minutes_ahead, "pct": rain.rain_pct} if rain else None}
             if s else None,
             "safety_car": SAFETY_CAR.get(s.safety_car) if s else None,
+            "safety_car_status": s.safety_car if s else 0,
+            "marshal_zones": [{"start": mz[0], "flag": mz[1]} for mz in s.marshal_zones] if (s and hasattr(s, "marshal_zones")) else [],
+            "drs_zones": [{"start": dz[0], "end": dz[1]} for dz in s.drs_zones] if (s and hasattr(s, "drs_zones")) else [],
             "pit_window": {"ideal_lap": s.pit_ideal_lap, "latest_lap": s.pit_latest_lap}
             if s and s.pit_ideal_lap else None,
             "personal_best": self.personal_best,
             "last_lap_vs_best": self.last_lap_vs_best,
+            "my_theoretical_best": self.my_theoretical_best,
+            "biggest_loss_segment": self.biggest_loss_segment,
+            "fastest_sectors": self.fastest_sectors,
             "setup": {
                 "current": {
                     "id": self.current_setup_id,
@@ -677,4 +716,31 @@ class RaceState:
                 "total_cars": st_total,
                 "hint": st_hint,
             } if st_spd > 0 else None,
+            "regs_2026": regs_2026,
+            "active_aero": {
+                "mode": ("straight" if tel2.active_aero_mode == 1 else "corner") if tel2 else "corner",
+                "mode_id": tel2.active_aero_mode if tel2 else 0,
+                "available": tel2.active_aero_available if tel2 else False,
+                "distance_m": tel2.active_aero_in_m if tel2 else 0,
+            } if regs_2026 and tel2 else None,
+            "overtake_mode": {
+                "available": tel2.overtake_available if tel2 else False,
+                "active": tel2.overtake_active if tel2 else False,
+                "distance_m": tel2.overtake_in_m if tel2 else 0,
+            } if regs_2026 and tel2 else None,
+            "drs": (
+                {"allowed": tel2.active_aero_available, "open": (tel2.active_aero_mode == 1)}
+                if regs_2026 and tel2 else
+                {"allowed": st.drs_allowed if st else False, "open": tel.drs if tel else False}
+            ),
+            "tyre_sets": [
+                {
+                    "actual_compound": ts.actual_compound,
+                    "usable_life": ts.usable_life,
+                    "wear_pct": ts.wear,
+                    "lap_delta_s": round(ts.lap_delta_ms / 1000.0, 3),
+                    "fitted": ts.fitted,
+                }
+                for ts in self.tyre_sets.sets
+            ] if self.tyre_sets else None,
         }

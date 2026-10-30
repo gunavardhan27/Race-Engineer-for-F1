@@ -103,10 +103,30 @@
     towerCount: document.getElementById('tower-count'),
     radioLog: document.getElementById('radio-log'),
 
-    // Track Map & G-Force
-    trackMapCanvas: document.getElementById('track-map-canvas'),
+    // Track Map & G-Force (Prompt 23 Two-Layer Canvas & Replay)
+    trackStaticCanvas: document.getElementById('track-static-canvas'),
+    trackDynamicCanvas: document.getElementById('track-dynamic-canvas'),
+    trackMapCanvas: document.getElementById('track-dynamic-canvas') || document.getElementById('track-map-canvas'),
+    carPopover: document.getElementById('car-popover'),
+    safetyCarBanner: document.getElementById('safety-car-banner'),
+    followingCarChip: document.getElementById('following-car-chip'),
+    btnViewWhole: document.getElementById('btn-view-whole'),
+    btnViewFollow: document.getElementById('btn-view-follow'),
+    toggleBattles: document.getElementById('toggle-battles'),
+    toggleYellows: document.getElementById('toggle-yellows'),
+    toggleGaps: document.getElementById('toggle-gaps'),
+    toggleAero: document.getElementById('toggle-aero'),
+    toggleReplay: document.getElementById('toggle-replay'),
+    replayPanel: document.getElementById('replay-panel'),
+    replaySessionSelect: document.getElementById('replay-session-select'),
+    btnReplayLoad: document.getElementById('btn-replay-load'),
+    btnReplayPlay: document.getElementById('btn-replay-play'),
+    replaySpeedGroup: document.getElementById('replay-speed-group'),
+    replayTimeDisplay: document.getElementById('replay-time-display'),
+    replayScrubber: document.getElementById('replay-scrubber'),
+    replayMarkersTrack: document.getElementById('replay-markers-track'),
     mapStatusBadge: document.getElementById('map-status-badge'),
-    btnRebuildMap: document.getElementById('btn-rebuild-map'),
+    btnRebuildMap: document.getElementById('btn-rebuild-map') || document.getElementById('btn-rebuild-outline'),
     mapPlaceholderHint: document.getElementById('map-placeholder-hint'),
     gForceCanvas: document.getElementById('g-force-canvas'),
     valGLat: document.getElementById('val-g-lat'),
@@ -327,12 +347,56 @@
     usageHistoryTbody: document.getElementById('usage-history-tbody') || document.getElementById('history'),
   };
 
-  // --- Track Map & G-Force State ---
+  // --- Track Map, Radar & Replay State (Prompt 23) ---
   let cachedOutline = null;
+  let cachedTrackModel = null;
   let cachedTrackId = null;
   let isFetchingOutline = false;
+  let isFetchingModel = false;
   let gHistory = []; // array of [lat, lon]
   let runningBounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
+
+  let cachedSafetyCarStatus = 0;
+  let cachedMarshalZones = [];
+  let cachedDrsZones = [];
+  const carMetadata = new Map(); // car_idx -> { name, team, color, position, ... }
+  let playerCarIdx = null;
+  let recentOvertakes = []; // { x, z, time, desc }
+
+  // Positions WebSocket & 60fps Interpolation Buffer
+  let posWs = null;
+  let posWsReconnectAttempts = 0;
+  let posWsReconnectTimer = null;
+  let positionsBuffer = []; // { recvTime, timestampMs, trackId, cars }
+  let lastFallbackCars = [];
+  let lastDynamicCars = []; // latest rendered cars for click hit testing
+
+  // Offscreen static canvas & camera
+  const offscreenTrackCanvas = document.createElement('canvas');
+  let staticLayerDirty = true;
+  let viewMode = 'whole'; // 'whole', 'follow_player', 'follow_car'
+  let followedCarIdx = null;
+  const smoothCamera = { x: 0, z: 0 };
+
+  // Map Overlay Toggles
+  const mapToggles = {
+    battles: true,
+    yellows: true,
+    gaps: true,
+    aero: true,
+    replay: false,
+  };
+
+  // Replay State
+  const replayState = {
+    loaded: false,
+    playing: false,
+    speed: 1.0,
+    current_time_s: 0.0,
+    duration_s: 0.0,
+    markers: [],
+  };
+  let replayPollTimer = null;
 
   // --- Helper: Lap Time Formatter ---
   function formatLapTime(seconds) {
@@ -410,9 +474,19 @@
       if (lastPacketTime === 0) return;
       const elapsed = Date.now() - lastPacketTime;
       if (elapsed > NO_TELEMETRY_THRESHOLD_MS) {
-        el.noTelemetryBanner.classList.remove('hidden');
-        el.connectionBadge.className = 'status-pill offline';
-        el.connectionText.textContent = 'NO TELEMETRY';
+        if (el.noTelemetryBanner) el.noTelemetryBanner.classList.remove('hidden');
+        const linkText = document.getElementById('link-text');
+        const linkChip = document.getElementById('link-chip');
+        const linkPopSub = document.getElementById('link-pop-sub');
+        if (linkChip && !linkChip.classList.contains('bad')) {
+          linkChip.className = 'chip wait';
+          if (linkText) linkText.textContent = 'Waiting for game';
+          if (linkPopSub) linkPopSub.textContent = 'No telemetry received for 3s. Waiting for game...';
+        }
+        if (el.connectionBadge && !el.connectionBadge.classList.contains('danger')) {
+          el.connectionBadge.className = 'status-pill standby';
+          el.connectionText.textContent = 'NO TELEMETRY';
+        }
       }
     }, 500);
   }
@@ -443,17 +517,54 @@
       lastPacketTime = Date.now();
     }
 
-    if (isLive || (lastPacketTime > 0 && (Date.now() - lastPacketTime) < 3500)) {
+    const linkText = document.getElementById('link-text');
+    const linkChip = document.getElementById('link-chip');
+    const linkPopSub = document.getElementById('link-pop-sub');
+    const errBanner = document.getElementById('engine-error-banner');
+    const errText = document.getElementById('engine-error-text');
+
+    // Distinguish 4 states:
+    // 1: Engine not running (handled in socket.onclose)
+    // 2: Engine error (with message)
+    // 3: Running but no telemetry for 3 s
+    // 4: Telemetry live
+    if (data.engine_error || data.engine_status === 'error') {
       if (el.noTelemetryBanner) el.noTelemetryBanner.classList.add('hidden');
-      el.connectionBadge.className = 'status-pill connected';
-      el.connectionText.textContent = 'LIVE';
-      if (el.sessionStatus) el.sessionStatus.textContent = 'ACTIVE';
+      if (linkText) linkText.textContent = 'Engine Error';
+      if (linkChip) linkChip.className = 'chip bad';
+      if (linkPopSub) linkPopSub.textContent = data.engine_error || 'Engine error occurred.';
+      if (errBanner) {
+        errBanner.classList.remove('hidden');
+        if (errText) errText.textContent = data.engine_error || 'Engine error';
+      }
+      if (el.connectionBadge) {
+        el.connectionBadge.className = 'status-pill danger';
+        el.connectionText.textContent = 'ENGINE ERROR';
+      }
+      if (el.sessionStatus) el.sessionStatus.textContent = 'ERROR';
     } else {
-      // Connected to dashboard server, waiting for game telemetry packets
-      if (el.noTelemetryBanner) el.noTelemetryBanner.classList.remove('hidden');
-      el.connectionBadge.className = 'status-pill standby';
-      el.connectionText.textContent = 'STANDBY (WAITING FOR F1)';
-      if (el.sessionStatus && !data.track) el.sessionStatus.textContent = 'STANDBY';
+      if (errBanner) errBanner.classList.add('hidden');
+      if (isLive || (lastPacketTime > 0 && (Date.now() - lastPacketTime) < 3500)) {
+        if (el.noTelemetryBanner) el.noTelemetryBanner.classList.add('hidden');
+        if (linkText) linkText.textContent = 'Live · 20 Hz';
+        if (linkChip) linkChip.className = 'chip ok';
+        if (linkPopSub) linkPopSub.textContent = 'Receiving telemetry from F1 25.';
+        if (el.connectionBadge) {
+          el.connectionBadge.className = 'status-pill connected';
+          el.connectionText.textContent = 'LIVE';
+        }
+        if (el.sessionStatus) el.sessionStatus.textContent = 'ACTIVE';
+      } else {
+        if (el.noTelemetryBanner) el.noTelemetryBanner.classList.remove('hidden');
+        if (linkText) linkText.textContent = 'Waiting for game';
+        if (linkChip) linkChip.className = 'chip wait';
+        if (linkPopSub) linkPopSub.textContent = 'Listening on UDP port 20777...';
+        if (el.connectionBadge) {
+          el.connectionBadge.className = 'status-pill standby';
+          el.connectionText.textContent = 'STANDBY (WAITING FOR F1)';
+        }
+        if (el.sessionStatus && !data.track) el.sessionStatus.textContent = 'STANDBY';
+      }
     }
 
     // Cloud AI Quota Top-Bar Pill
@@ -504,10 +615,27 @@
     if (data.gear !== undefined && data.gear !== null) {
       el.gear.textContent = data.gear === 0 ? 'N' : data.gear === -1 ? 'R' : data.gear;
     }
-    if (data.drs) {
-      el.drs.classList.add('active');
+    if (data.regs_2026) {
+      if (data.active_aero && data.active_aero.mode === 'straight') {
+        el.drs.textContent = 'STRAIGHT';
+        el.drs.classList.add('active');
+      } else if (data.overtake_mode && data.overtake_mode.active) {
+        el.drs.textContent = 'OT ACTIVE';
+        el.drs.classList.add('active');
+      } else if (data.overtake_mode && data.overtake_mode.available) {
+        el.drs.textContent = 'OT READY';
+        el.drs.classList.add('active');
+      } else {
+        el.drs.textContent = 'CORNER';
+        el.drs.classList.remove('active');
+      }
     } else {
-      el.drs.classList.remove('active');
+      el.drs.textContent = 'DRS';
+      if (data.drs) {
+        el.drs.classList.add('active');
+      } else {
+        el.drs.classList.remove('active');
+      }
     }
 
     // 4. Gaps
@@ -669,20 +797,38 @@
       el.damageBadge.textContent = 'ALL SYSTEMS NOMINAL';
     }
 
-    // 9. Timing Tower
+    // 9. Timing Tower & Car Metadata
     if (data.timing_tower && Array.isArray(data.timing_tower)) {
       renderTimingTower(data.timing_tower);
+      data.timing_tower.forEach(c => {
+        carMetadata.set(c.car_idx, c);
+        if (c.is_player) playerCarIdx = c.car_idx;
+      });
     }
 
-    // 10. Track Outline & Map
+    // Safety Car, Marshal Zones & DRS Zones (Prompt 23)
+    if (data.safety_car_status !== undefined) {
+      cachedSafetyCarStatus = data.safety_car_status;
+      updateSafetyCarBanner(cachedSafetyCarStatus);
+    }
+    if (data.marshal_zones && Array.isArray(data.marshal_zones)) {
+      cachedMarshalZones = data.marshal_zones;
+    }
+    if (data.drs_zones && Array.isArray(data.drs_zones)) {
+      cachedDrsZones = data.drs_zones;
+    }
+
+    // 10. Track Outline, Model & Map
     if (data.track_id !== undefined && data.track_id !== null) {
       if (data.track_id !== cachedTrackId || (data.has_track_outline && !cachedOutline)) {
         cachedTrackId = data.track_id;
         fetchTrackMap();
+        fetchTrackModel();
       }
     }
 
     if (data.car_positions && Array.isArray(data.car_positions)) {
+      lastFallbackCars = data.car_positions;
       renderTrackMap(data.car_positions);
     }
 
@@ -692,9 +838,7 @@
     }
 
     // --- Modern Pit Wall Dashboard Sync ---
-    const linkText = document.getElementById('link-text');
-    const linkChip = document.getElementById('link-chip');
-    if (linkText && linkChip) {
+    if (linkText && linkChip && !data.engine_error && data.engine_status !== 'error') {
       if (isLive || (lastPacketTime > 0 && (Date.now() - lastPacketTime) < 3500)) {
         linkText.textContent = 'Live · 20 Hz';
         linkChip.className = 'chip ok';
@@ -890,8 +1034,15 @@
     }
     const cDrs = document.getElementById('c-drs');
     if (cDrs) {
-      cDrs.textContent = data.drs ? 'DRS open' : 'DRS';
-      cDrs.className = `chip ${data.drs ? 'ok' : ''}`;
+      if (data.regs_2026) {
+        const isStraight = data.active_aero && data.active_aero.mode === 'straight';
+        const isOt = data.overtake_mode && (data.overtake_mode.available || data.overtake_mode.active);
+        cDrs.textContent = isStraight ? 'Straight Mode' : (isOt ? (data.overtake_mode.active ? 'OT Active' : 'OT Ready') : 'Corner Mode');
+        cDrs.className = `chip ${isStraight || isOt ? 'ok' : ''}`;
+      } else {
+        cDrs.textContent = data.drs ? 'DRS open' : 'DRS';
+        cDrs.className = `chip ${data.drs ? 'ok' : ''}`;
+      }
     }
     if (data.throttle !== undefined) {
       const thrPct = Math.round(data.throttle * 100);
@@ -922,7 +1073,7 @@
     }
   }
 
-  // --- Track Map Network API ---
+  // --- Track Map Network API (Prompt 23) ---
   async function fetchTrackMap() {
     if (isFetchingOutline) return;
     isFetchingOutline = true;
@@ -932,14 +1083,19 @@
         const data = await resp.json();
         if (data.has_outline && data.points && data.points.length > 0) {
           cachedOutline = data;
-          el.mapStatusBadge.className = 'meta-pill pill-ok';
-          el.mapStatusBadge.textContent = 'CIRCUIT MAPPED';
-          el.mapPlaceholderHint.classList.add('hidden');
+          if (el.mapStatusBadge) {
+            el.mapStatusBadge.className = 'meta-pill pill-ok';
+            el.mapStatusBadge.textContent = 'CIRCUIT MAPPED';
+          }
+          if (el.mapPlaceholderHint) el.mapPlaceholderHint.classList.add('hidden');
+          staticLayerDirty = true;
         } else {
           cachedOutline = null;
-          el.mapStatusBadge.className = 'meta-pill';
-          el.mapStatusBadge.textContent = 'BLANK CANVAS (MAPPING)';
-          el.mapPlaceholderHint.classList.remove('hidden');
+          if (el.mapStatusBadge) {
+            el.mapStatusBadge.className = 'meta-pill';
+            el.mapStatusBadge.textContent = 'BLANK CANVAS (MAPPING)';
+          }
+          if (el.mapPlaceholderHint) el.mapPlaceholderHint.classList.remove('hidden');
         }
       }
     } catch (e) {
@@ -949,44 +1105,321 @@
     }
   }
 
+  async function fetchTrackModel() {
+    if (isFetchingModel) return;
+    isFetchingModel = true;
+    try {
+      const resp = await fetch(`/api/track_model${window.location.search}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.bins && data.bins.length > 0) {
+          cachedTrackModel = data;
+          staticLayerDirty = true;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to fetch track model:', e);
+    } finally {
+      isFetchingModel = false;
+    }
+  }
+
   async function rebuildTrackMap() {
     try {
       const resp = await fetch(`/api/track_map/rebuild${window.location.search}`, { method: 'POST' });
       if (resp.ok) {
         cachedOutline = null;
+        cachedTrackModel = null;
         runningBounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
-        el.mapStatusBadge.className = 'meta-pill pill-warn';
-        el.mapStatusBadge.textContent = 'REBUILDING (CLEAN LAP NEEDED)';
-        el.mapPlaceholderHint.classList.remove('hidden');
+        if (el.mapStatusBadge) {
+          el.mapStatusBadge.className = 'meta-pill pill-warn';
+          el.mapStatusBadge.textContent = 'REBUILDING (CLEAN LAP NEEDED)';
+        }
+        if (el.mapPlaceholderHint) el.mapPlaceholderHint.classList.remove('hidden');
+        staticLayerDirty = true;
       }
     } catch (e) {
       console.warn('Failed to rebuild track map:', e);
     }
   }
 
-  // --- Render Track Map Canvas ---
-  function renderTrackMap(cars) {
-    if (!el.trackMapCanvas) return;
-    const canvas = el.trackMapCanvas;
-    const parent = canvas.parentElement;
-    const rect = parent.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
+  function updateSafetyCarBanner(scStatus) {
+    if (!el.safetyCarBanner) return;
+    if (scStatus === 1) {
+      el.safetyCarBanner.className = 'safety-car-banner sc-active';
+      el.safetyCarBanner.textContent = '⚠️ SAFETY CAR (SC) DEPLOYED — DELTA POSITIVE';
+      el.safetyCarBanner.classList.remove('hidden');
+    } else if (scStatus === 2) {
+      el.safetyCarBanner.className = 'safety-car-banner vsc-active';
+      el.safetyCarBanner.textContent = '⚠️ VIRTUAL SAFETY CAR (VSC) — MAINTAIN DELTA';
+      el.safetyCarBanner.classList.remove('hidden');
+    } else {
+      el.safetyCarBanner.className = 'safety-car-banner hidden';
+      el.safetyCarBanner.textContent = '';
+      el.safetyCarBanner.classList.add('hidden');
+    }
+  }
 
-    const w = rect.width || 400;
-    const h = rect.height || 260;
+  // --- Binary Frame Protocol Decoder (Prompt 23) ---
+  function decodePositionsFrame(buffer) {
+    if (!buffer || buffer.byteLength < 10) return null;
+    const dv = new DataView(buffer);
+    const magic0 = dv.getUint8(0);
+    const magic1 = dv.getUint8(1);
+    if (magic0 !== 0x46 || magic1 !== 0x50) return null; // 'F', 'P'
 
-    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-      canvas.width = Math.round(w * dpr);
-      canvas.height = Math.round(h * dpr);
+    const seq = dv.getUint16(2, true);
+    const timestampMs = dv.getUint32(4, true);
+    const trackId = dv.getUint8(8);
+    const numCars = dv.getUint8(9);
+
+    const cars = [];
+    const expectedLen = 10 + numCars * 15;
+    if (buffer.byteLength < expectedLen) return null;
+
+    for (let i = 0; i < numCars; i++) {
+      const off = 10 + i * 15;
+      const carIdx = dv.getUint8(off);
+      const x = dv.getInt32(off + 1, true) / 10.0;
+      const z = dv.getInt32(off + 5, true) / 10.0;
+      const headingU16 = dv.getUint16(off + 9, true);
+      const heading = (headingU16 / 65535.0) * (2.0 * Math.PI);
+      const speedKph = dv.getUint16(off + 11, true);
+      const position = dv.getUint8(off + 13);
+      const flags = dv.getUint8(off + 14);
+
+      cars.push({
+        car_idx: carIdx,
+        x: x,
+        z: z,
+        heading: heading,
+        speed_kph: speedKph,
+        position: position,
+        flags: flags,
+        is_pit: (flags & 0x01) !== 0,
+        is_retired: (flags & 0x02) !== 0,
+        is_out_lap: (flags & 0x04) !== 0,
+        is_player: (flags & 0x08) !== 0,
+        is_wrong_way: (flags & 0x10) !== 0,
+        is_estimated: (flags & 0x20) !== 0,
+        is_drs: (flags & 0x40) !== 0,
+      });
     }
 
-    const ctx = canvas.getContext('2d');
-    ctx.resetTransform();
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, w, h);
+    return { seq, timestampMs, trackId, numCars, cars };
+  }
 
-    // Update running bounds for cars seen so far
-    if (cars && cars.length > 0) {
+  // --- Positions WebSocket Connection ---
+  function connectPositionsWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const token = getToken();
+    const wsUrl = `${protocol}//${window.location.host}/ws/positions${token ? '?token=' + encodeURIComponent(token) : ''}`;
+
+    if (posWs) {
+      try { posWs.close(); } catch (e) {}
+      posWs = null;
+    }
+
+    try {
+      posWs = new WebSocket(wsUrl);
+      posWs.binaryType = 'arraybuffer';
+    } catch (err) {
+      console.warn('[Positions WS] Creation error:', err);
+      schedulePositionsReconnect();
+      return;
+    }
+
+    posWs.onopen = function () {
+      posWsReconnectAttempts = 0;
+      console.log('[Positions WS] Connected to 20Hz binary telemetry stream:', wsUrl);
+    };
+
+    posWs.onmessage = function (event) {
+      if (!(event.data instanceof ArrayBuffer)) return;
+      const frame = decodePositionsFrame(event.data);
+      if (!frame) return;
+
+      const now = performance.now();
+      positionsBuffer.push({
+        recvTime: now,
+        timestampMs: frame.timestampMs,
+        trackId: frame.trackId,
+        cars: frame.cars,
+      });
+
+      // Keep ~1500ms of history
+      while (positionsBuffer.length > 30) {
+        positionsBuffer.shift();
+      }
+
+      if (frame.trackId && frame.trackId !== cachedTrackId) {
+        cachedTrackId = frame.trackId;
+        fetchTrackMap();
+        fetchTrackModel();
+      }
+    };
+
+    posWs.onclose = function () {
+      schedulePositionsReconnect();
+    };
+
+    posWs.onerror = function (e) {
+      try { posWs.close(); } catch (err) {}
+    };
+  }
+
+  function schedulePositionsReconnect() {
+    if (posWsReconnectTimer) clearTimeout(posWsReconnectTimer);
+    posWsReconnectAttempts++;
+    const delay = Math.min(5000, 500 * Math.pow(1.5, posWsReconnectAttempts));
+    posWsReconnectTimer = setTimeout(connectPositionsWebSocket, delay);
+  }
+
+  // --- Interpolation & Extrapolation Helpers ---
+  function getInterpolatedPositions(now) {
+    if (positionsBuffer.length === 0) {
+      return lastFallbackCars.map(c => ({
+        ...c,
+        is_pit: !!c.pitting,
+        is_player: !!c.is_player,
+        is_retired: !!c.retired,
+        flags: (c.pitting ? 0x01 : 0) | (c.is_player ? 0x08 : 0),
+        heading: c.heading || 0,
+        speed_kph: c.speed_kph || 0,
+      }));
+    }
+
+    const renderDelayMs = 100; // 100ms render buffer
+    const targetTime = now - renderDelayMs;
+
+    if (positionsBuffer.length === 1) {
+      return positionsBuffer[0].cars;
+    }
+
+    // Find bounding packets p0 and p1
+    let p0 = null;
+    let p1 = null;
+
+    for (let i = 0; i < positionsBuffer.length - 1; i++) {
+      if (positionsBuffer[i].recvTime <= targetTime && positionsBuffer[i + 1].recvTime >= targetTime) {
+        p0 = positionsBuffer[i];
+        p1 = positionsBuffer[i + 1];
+        break;
+      }
+    }
+
+    if (p0 && p1) {
+      const span = p1.recvTime - p0.recvTime;
+      const alpha = span > 0 ? Math.max(0, Math.min(1, (targetTime - p0.recvTime) / span)) : 1.0;
+      return interpolateCars(p0.cars, p1.cars, alpha);
+    }
+
+    // Extrapolate past the newest packet up to 200ms
+    const newest = positionsBuffer[positionsBuffer.length - 1];
+    const dt = Math.max(0, (targetTime - newest.recvTime) / 1000.0);
+
+    if (dt <= 0.200) {
+      return newest.cars.map(c => {
+        const v = (c.speed_kph || 0) / 3.6; // m/s
+        const x = c.x + Math.sin(c.heading) * v * dt;
+        const z = c.z + Math.cos(c.heading) * v * dt;
+        return { ...c, x, z };
+      });
+    }
+
+    // Beyond 200ms hold position
+    return newest.cars;
+  }
+
+  function interpolateCars(cars0, cars1, alpha) {
+    const map0 = new Map();
+    cars0.forEach(c => map0.set(c.car_idx, c));
+
+    return cars1.map(c1 => {
+      const c0 = map0.get(c1.car_idx);
+      if (!c0) return c1;
+
+      const x = c0.x + alpha * (c1.x - c0.x);
+      const z = c0.z + alpha * (c1.z - c0.z);
+
+      // Shortest-angle heading interpolation
+      const diff = (c1.heading - c0.heading + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
+      const heading = (c0.heading + alpha * diff + 2 * Math.PI) % (2 * Math.PI);
+      const speed = Math.round(c0.speed_kph + alpha * (c1.speed_kph - c0.speed_kph));
+
+      return {
+        ...c1,
+        x,
+        z,
+        heading,
+        speed_kph: speed,
+      };
+    });
+  }
+
+  // --- Team Color & Livery Helpers ---
+  const TEAM_COLORS_MAP = {
+    0: '#00d2be', // Mercedes
+    1: '#e80020', // Ferrari
+    2: '#3671c6', // Red Bull Racing
+    3: '#ff8000', // McLaren
+    4: '#0093cc', // Alpine
+    5: '#6692ff', // RB / VCARB
+    6: '#229971', // Aston Martin
+    7: '#64c4ff', // Williams
+    8: '#52e252', // Kick Sauber
+    9: '#b6babd', // Haas
+  };
+
+  function getCarColor(car) {
+    if (car.is_player) return '#00e5ff';
+    const meta = carMetadata.get(car.car_idx);
+    if (meta && meta.color) return meta.color;
+    if (meta && meta.team_id !== undefined && TEAM_COLORS_MAP[meta.team_id]) {
+      return TEAM_COLORS_MAP[meta.team_id];
+    }
+    const palette = ['#e80020', '#3671c6', '#ff8000', '#00d2be', '#229971', '#0093cc', '#64c4ff', '#6692ff', '#52e252', '#b6babd'];
+    return palette[car.car_idx % palette.length];
+  }
+
+  // --- Fallback renderTrackMap bridge ---
+  function renderTrackMap(cars) {
+    if (cars && Array.isArray(cars)) {
+      lastFallbackCars = cars;
+    }
+  }
+
+  // --- Two-Layer Canvas Track Map Renderer (Prompt 23) ---
+  function renderMapFrame(timestamp) {
+    const staticCanvas = el.trackStaticCanvas;
+    const dynamicCanvas = el.trackDynamicCanvas;
+    if (!staticCanvas || !dynamicCanvas) return;
+
+    const parent = staticCanvas.parentElement;
+    if (!parent) return;
+    const rect = parent.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const w = rect.width || 640;
+    const h = rect.height || 360;
+
+    const targetW = Math.round(w * dpr);
+    const targetH = Math.round(h * dpr);
+
+    if (staticCanvas.width !== targetW || staticCanvas.height !== targetH ||
+        dynamicCanvas.width !== targetW || dynamicCanvas.height !== targetH) {
+      staticCanvas.width = targetW;
+      staticCanvas.height = targetH;
+      dynamicCanvas.width = targetW;
+      dynamicCanvas.height = targetH;
+      staticLayerDirty = true;
+    }
+
+    // Get interpolated live or replay positions
+    const cars = getInterpolatedPositions(timestamp);
+    lastDynamicCars = cars;
+
+    // Update running bounds
+    if (cars.length > 0) {
       cars.forEach(c => {
         if (c.x < runningBounds.minX) runningBounds.minX = c.x;
         if (c.x > runningBounds.maxX) runningBounds.maxX = c.x;
@@ -995,40 +1428,94 @@
       });
     }
 
-    // Determine coordinate bounds
-    let minX, maxX, minZ, maxZ;
-    if (cachedOutline && cachedOutline.bounds) {
-      minX = cachedOutline.bounds.min_x;
-      maxX = cachedOutline.bounds.max_x;
-      minZ = cachedOutline.bounds.min_z;
-      maxZ = cachedOutline.bounds.max_z;
-    } else if (isFinite(runningBounds.minX) && runningBounds.minX !== runningBounds.maxX) {
-      minX = runningBounds.minX;
-      maxX = runningBounds.maxX;
-      minZ = runningBounds.minZ;
-      maxZ = runningBounds.maxZ;
+    // Determine coordinate bounds & camera
+    let bounds;
+    const playerCar = cars.find(c => c.is_player);
+    const targetFollowCar = (followedCarIdx !== null) ? cars.find(c => c.car_idx === followedCarIdx) : null;
+
+    if (viewMode === 'follow_player' && playerCar) {
+      smoothCamera.x += (playerCar.x - smoothCamera.x) * 0.15;
+      smoothCamera.z += (playerCar.z - smoothCamera.z) * 0.15;
+      const span = 300;
+      bounds = {
+        minX: smoothCamera.x - span / 2,
+        maxX: smoothCamera.x + span / 2,
+        minZ: smoothCamera.z - span / 2,
+        maxZ: smoothCamera.z + span / 2,
+      };
+    } else if (viewMode === 'follow_car' && targetFollowCar) {
+      smoothCamera.x += (targetFollowCar.x - smoothCamera.x) * 0.15;
+      smoothCamera.z += (targetFollowCar.z - smoothCamera.z) * 0.15;
+      const span = 300;
+      bounds = {
+        minX: smoothCamera.x - span / 2,
+        maxX: smoothCamera.x + span / 2,
+        minZ: smoothCamera.z - span / 2,
+        maxZ: smoothCamera.z + span / 2,
+      };
     } else {
-      minX = -100; maxX = 100; minZ = -100; maxZ = 100;
+      // Whole track view
+      if (cachedOutline && cachedOutline.bounds) {
+        bounds = {
+          minX: cachedOutline.bounds.min_x,
+          maxX: cachedOutline.bounds.max_x,
+          minZ: cachedOutline.bounds.min_z,
+          maxZ: cachedOutline.bounds.max_z,
+        };
+      } else if (isFinite(runningBounds.minX) && runningBounds.minX !== runningBounds.maxX) {
+        bounds = { ...runningBounds };
+      } else {
+        bounds = { minX: -200, maxX: 200, minZ: -200, maxZ: 200 };
+      }
     }
 
-    const spanX = Math.max(maxX - minX, 10);
-    const spanZ = Math.max(maxZ - minZ, 10);
-    const padding = 24;
+    const spanX = Math.max(bounds.maxX - bounds.minX, 10);
+    const spanZ = Math.max(bounds.maxZ - bounds.minZ, 10);
+    const padding = (viewMode === 'whole') ? 28 : 16;
     const scale = Math.min((w - 2 * padding) / spanX, (h - 2 * padding) / spanZ);
     const offsetX = padding + (w - 2 * padding - spanX * scale) / 2;
     const offsetY = padding + (h - 2 * padding - spanZ * scale) / 2;
 
     function toCanvas(x, z) {
       return {
-        x: offsetX + (x - minX) * scale,
-        y: offsetY + (z - minZ) * scale,
+        x: offsetX + (x - bounds.minX) * scale,
+        y: offsetY + (z - bounds.minZ) * scale,
       };
     }
 
-    // 1. Draw Background Grid (Subtle radar)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+    // 1. Static Layer Render
+    if (viewMode === 'whole') {
+      if (staticLayerDirty) {
+        renderStaticTrackLayer(staticCanvas, w, h, dpr, toCanvas, bounds);
+        staticLayerDirty = false;
+      }
+    } else {
+      // In follow view, redraw static layer as camera moves
+      renderStaticTrackLayer(staticCanvas, w, h, dpr, toCanvas, bounds);
+    }
+
+    // 2. Dynamic Layer Render
+    renderDynamicTrackLayer(dynamicCanvas, w, h, dpr, toCanvas, cars, timestamp, playerCar);
+
+    // 3. Update Car Popover Position if car is followed
+    if (followedCarIdx !== null && targetFollowCar && el.carPopover && !el.carPopover.classList.contains('hidden')) {
+      const pt = toCanvas(targetFollowCar.x, targetFollowCar.z);
+      el.carPopover.style.left = `${Math.round(pt.x)}px`;
+      el.carPopover.style.top = `${Math.round(pt.y)}px`;
+    }
+  }
+
+  // --- Static Layer: Centreline, Used Edges Ribbon, Sectors, Corners, Aero ---
+  function renderStaticTrackLayer(canvas, w, h, dpr, toCanvas, bounds) {
+    const ctx = canvas.getContext('2d');
+    ctx.resetTransform();
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+
+    // Subtle radar grid
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
     ctx.lineWidth = 1;
-    const gridSpacing = 40;
+    const gridSpacing = 44;
     for (let gx = 0; gx < w; gx += gridSpacing) {
       ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, h); ctx.stroke();
     }
@@ -1036,11 +1523,112 @@
       ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
     }
 
-    // 2. Draw Circuit Outline (If available)
-    if (cachedOutline && cachedOutline.points && cachedOutline.points.length > 1) {
-      const pts = cachedOutline.points;
+    const hasModelBins = cachedTrackModel && cachedTrackModel.bins && cachedTrackModel.bins.length > 10;
+    const hasOutlinePoints = cachedOutline && cachedOutline.points && cachedOutline.points.length > 1;
 
-      // Base Track Ribbon
+    if (hasModelBins) {
+      const bins = cachedTrackModel.bins;
+
+      // Usable width track ribbon
+      ctx.beginPath();
+      // Left edge forward
+      const getLeftEdge = (b) => {
+        const nx = Math.cos(b.heading);
+        const nz = -Math.sin(b.heading);
+        const off = (b.left_edge_m !== undefined) ? b.left_edge_m : -6.0;
+        return toCanvas(b.x + off * nx, b.z + off * nz);
+      };
+      const getRightEdge = (b) => {
+        const nx = Math.cos(b.heading);
+        const nz = -Math.sin(b.heading);
+        const off = (b.right_edge_m !== undefined) ? b.right_edge_m : 6.0;
+        return toCanvas(b.x + off * nx, b.z + off * nz);
+      };
+
+      const firstL = getLeftEdge(bins[0]);
+      ctx.moveTo(firstL.x, firstL.y);
+      for (let i = 1; i < bins.length; i++) {
+        const p = getLeftEdge(bins[i]);
+        ctx.lineTo(p.x, p.y);
+      }
+      for (let i = bins.length - 1; i >= 0; i--) {
+        const p = getRightEdge(bins[i]);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = '#141a24';
+      ctx.fill();
+      ctx.strokeStyle = '#253245';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+
+      // Active Aero / DRS Zones overlay
+      if (mapToggles.aero && cachedDrsZones && cachedDrsZones.length > 0) {
+        cachedDrsZones.forEach(dz => {
+          ctx.beginPath();
+          let started = false;
+          const trackLen = cachedTrackModel.track_length_m || (bins.length * 2.0);
+          const startDist = dz.start * trackLen;
+          const endDist = dz.end * trackLen;
+
+          bins.forEach(b => {
+            const d = b.lap_distance_m;
+            const inZone = (endDist >= startDist) ? (d >= startDist && d <= endDist) : (d >= startDist || d <= endDist);
+            if (inZone) {
+              const pt = toCanvas(b.x, b.z);
+              if (!started) { ctx.moveTo(pt.x, pt.y); started = true; }
+              else { ctx.lineTo(pt.x, pt.y); }
+            }
+          });
+          ctx.strokeStyle = 'rgba(0, 230, 118, 0.45)';
+          ctx.lineWidth = 8;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+        });
+      }
+
+      // Glowing Cyan Centreline
+      ctx.beginPath();
+      const firstC = toCanvas(bins[0].x, bins[0].z);
+      ctx.moveTo(firstC.x, firstC.y);
+      for (let i = 1; i < bins.length; i++) {
+        const p = toCanvas(bins[i].x, bins[i].z);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.closePath();
+      ctx.strokeStyle = '#00e5ff';
+      ctx.lineWidth = 2.0;
+      ctx.shadowColor = 'rgba(0, 229, 255, 0.7)';
+      ctx.shadowBlur = 6;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Corner badges & numbers
+      if (cachedTrackModel.corners && cachedTrackModel.corners.length > 0) {
+        cachedTrackModel.corners.forEach(crn => {
+          const apexBin = bins[Math.min(bins.length - 1, Math.max(0, Math.floor(crn.apex_dist_m / 2.0)))];
+          if (!apexBin) return;
+          const pt = toCanvas(apexBin.x, apexBin.z);
+
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 7, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(10, 15, 24, 0.9)';
+          ctx.strokeStyle = '#475569';
+          ctx.lineWidth = 1;
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = 'bold 8px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${crn.number}`, pt.x, pt.y);
+        });
+      }
+
+    } else if (hasOutlinePoints) {
+      // Outline Points Fallback Ribbon
+      const pts = cachedOutline.points;
       ctx.beginPath();
       const first = toCanvas(pts[0][0], pts[0][1]);
       ctx.moveTo(first.x, first.y);
@@ -1049,8 +1637,8 @@
         ctx.lineTo(p.x, p.y);
       }
       ctx.closePath();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-      ctx.lineWidth = 6;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+      ctx.lineWidth = 10;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.stroke();
@@ -1064,13 +1652,15 @@
       }
       ctx.closePath();
       ctx.strokeStyle = '#00e5ff';
-      ctx.lineWidth = 2;
-      ctx.shadowColor = 'rgba(0, 229, 255, 0.6)';
+      ctx.lineWidth = 2.0;
+      ctx.shadowColor = 'rgba(0, 229, 255, 0.7)';
       ctx.shadowBlur = 6;
       ctx.stroke();
       ctx.shadowBlur = 0;
+    }
 
-      // Sector Markers
+    // Sector Markers & Finish Line from outline
+    if (cachedOutline) {
       if (cachedOutline.sectors) {
         if (cachedOutline.sectors.s2) {
           const s2 = toCanvas(cachedOutline.sectors.s2[0], cachedOutline.sectors.s2[1]);
@@ -1081,91 +1671,281 @@
           drawSectorMarker(ctx, s3, '#d500f9', 'S3');
         }
       }
-
-      // Start/Finish Line
       if (cachedOutline.finish_line) {
         const fin = toCanvas(cachedOutline.finish_line[0], cachedOutline.finish_line[1]);
         drawFinishLine(ctx, fin);
       }
     }
+  }
 
-    // 3. Draw All Cars
-    if (cars && cars.length > 0) {
-      const sorted = [...cars].sort((a, b) => {
-        if (a.is_player) return 1;
-        if (b.is_player) return -1;
-        if (a.is_ahead || a.is_behind) return 1;
-        if (b.is_ahead || b.is_behind) return -1;
-        return 0;
-      });
+  // --- Dynamic Layer: Yellow Marshal Zones, Battles, Gaps, Overtakes, Cars ---
+  function renderDynamicTrackLayer(canvas, w, h, dpr, toCanvas, cars, timestamp, playerCar) {
+    const ctx = canvas.getContext('2d');
+    ctx.resetTransform();
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
 
-      sorted.forEach(c => {
-        const pt = toCanvas(c.x, c.z);
-        if (c.is_player) {
-          // Player car: Large pulsing cyan dot with outer halo
+    // 1. Shaded Yellow Marshal Zones
+    if (mapToggles.yellows && cachedMarshalZones && cachedMarshalZones.length > 0 && cachedTrackModel && cachedTrackModel.bins) {
+      const bins = cachedTrackModel.bins;
+      const trackLen = cachedTrackModel.track_length_m || (bins.length * 2.0);
+
+      cachedMarshalZones.forEach((mz, idx) => {
+        if (mz.flag === 3) { // Flag 3 = Yellow
+          const nextStart = (idx + 1 < cachedMarshalZones.length) ? cachedMarshalZones[idx + 1].start : 1.0;
+          const sDist = mz.start * trackLen;
+          const eDist = nextStart * trackLen;
+
           ctx.beginPath();
-          ctx.arc(pt.x, pt.y, 11, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(0, 229, 255, 0.25)';
-          ctx.fill();
-
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, 6.5, 0, Math.PI * 2);
-          ctx.fillStyle = '#00e5ff';
-          ctx.strokeStyle = '#ffffff';
-          ctx.lineWidth = 1.5;
-          ctx.fill();
+          let started = false;
+          bins.forEach(b => {
+            const inZone = (eDist >= sDist) ? (b.lap_distance_m >= sDist && b.lap_distance_m <= eDist)
+                                            : (b.lap_distance_m >= sDist || b.lap_distance_m <= eDist);
+            if (inZone) {
+              const pt = toCanvas(b.x, b.z);
+              if (!started) { ctx.moveTo(pt.x, pt.y); started = true; }
+              else { ctx.lineTo(pt.x, pt.y); }
+            }
+          });
+          ctx.strokeStyle = 'rgba(255, 214, 0, 0.42)';
+          ctx.lineWidth = 14;
+          ctx.lineCap = 'round';
           ctx.stroke();
 
-          // Label
-          ctx.fillStyle = '#00e5ff';
-          ctx.font = 'bold 10px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText(`P${c.position}`, pt.x, pt.y - 10);
-        } else if (c.is_ahead || c.is_behind) {
-          // Rival car (Ahead / Behind): Amber
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, 5.5, 0, Math.PI * 2);
-          ctx.fillStyle = '#ffab00';
-          ctx.strokeStyle = '#000000';
-          ctx.lineWidth = 1;
-          ctx.fill();
-          ctx.stroke();
-
-          ctx.fillStyle = '#ffab00';
-          ctx.font = 'bold 9px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText(`${c.position}`, pt.x, pt.y - 8);
-        } else if (c.pitting) {
-          // Pitting car: Grey
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
-          ctx.fillStyle = '#555555';
-          ctx.strokeStyle = '#222222';
-          ctx.lineWidth = 1;
-          ctx.fill();
-          ctx.stroke();
-
-          ctx.fillStyle = '#888888';
-          ctx.font = '8px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText('PIT', pt.x, pt.y - 6);
-        } else {
-          // Other active cars: White
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, 4.5, 0, Math.PI * 2);
-          ctx.fillStyle = '#f0f4f8';
-          ctx.strokeStyle = '#111520';
-          ctx.lineWidth = 1;
-          ctx.fill();
-          ctx.stroke();
-
-          ctx.fillStyle = '#cbd5e1';
-          ctx.font = '8px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText(`${c.position}`, pt.x, pt.y - 6);
+          // Flag icon at zone start
+          const startBin = bins[Math.min(bins.length - 1, Math.max(0, Math.floor(sDist / 2.0)))];
+          if (startBin) {
+            const flagPt = toCanvas(startBin.x, startBin.z);
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🚩', flagPt.x, flagPt.y - 12);
+          }
         }
       });
     }
+
+    // 2. Battles (<1.0s gap connected with dashed neon link line & gap)
+    if (mapToggles.battles && cars.length > 1) {
+      for (let i = 0; i < cars.length; i++) {
+        for (let j = i + 1; j < cars.length; j++) {
+          const c1 = cars[i];
+          const c2 = cars[j];
+          if (c1.is_pit || c2.is_pit || c1.is_retired || c2.is_retired) continue;
+
+          if (Math.abs(c1.position - c2.position) === 1) {
+            const dx = c1.x - c2.x;
+            const dz = c1.z - c2.z;
+            const distM = Math.sqrt(dx * dx + dz * dz);
+            const meta2 = carMetadata.get(c2.car_idx);
+            const gap = (meta2 && meta2.gap_ahead !== null && meta2.gap_ahead < 1.0) ? meta2.gap_ahead : null;
+
+            if (distM < 38 || (gap !== null && gap < 1.0)) {
+              const p1 = toCanvas(c1.x, c1.z);
+              const p2 = toCanvas(c2.x, c2.z);
+
+              ctx.beginPath();
+              ctx.setLineDash([4, 4]);
+              ctx.moveTo(p1.x, p1.y);
+              ctx.lineTo(p2.x, p2.y);
+              ctx.strokeStyle = '#ff3d00';
+              ctx.lineWidth = 1.8;
+              ctx.stroke();
+              ctx.setLineDash([]);
+
+              // Midpoint battle badge
+              const mx = (p1.x + p2.x) / 2;
+              const my = (p1.y + p2.y) / 2;
+              const label = (gap !== null) ? `⚔ ${gap.toFixed(2)}s` : `⚔ ${(distM / 55).toFixed(1)}s`;
+              ctx.font = 'bold 9px monospace';
+              const tw = ctx.measureText(label).width;
+              ctx.fillStyle = 'rgba(15, 18, 26, 0.92)';
+              ctx.fillRect(mx - tw / 2 - 4, my - 7, tw + 8, 14);
+              ctx.strokeStyle = '#ff3d00';
+              ctx.lineWidth = 1;
+              ctx.strokeRect(mx - tw / 2 - 4, my - 7, tw + 8, 14);
+              ctx.fillStyle = '#ff6e40';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(label, mx, my);
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Gap Bubbles Ahead & Behind Player
+    if (mapToggles.gaps && playerCar && !playerCar.is_retired) {
+      const carAhead = cars.find(c => c.position === playerCar.position - 1 && !c.is_pit && !c.is_retired);
+      const carBehind = cars.find(c => c.position === playerCar.position + 1 && !c.is_pit && !c.is_retired);
+
+      if (carAhead) {
+        const pt = toCanvas(carAhead.x, carAhead.z);
+        const metaAhead = carMetadata.get(carAhead.car_idx);
+        const gapText = (metaAhead && metaAhead.gap_ahead !== null) ? `▲ +${metaAhead.gap_ahead}s` : '▲ AHEAD';
+        drawGapBubble(ctx, pt.x, pt.y - 14, gapText, '#00e5ff');
+      }
+      if (carBehind) {
+        const pt = toCanvas(carBehind.x, carBehind.z);
+        const metaPlayer = carMetadata.get(playerCar.car_idx);
+        const gapText = (metaPlayer && metaPlayer.gap_ahead !== null) ? `▼ -${metaPlayer.gap_ahead}s` : '▼ BEHIND';
+        drawGapBubble(ctx, pt.x, pt.y + 14, gapText, '#ffab00');
+      }
+    }
+
+    // 4. Overtake Beacon Pulses
+    if (recentOvertakes.length > 0) {
+      const now = performance.now();
+      recentOvertakes = recentOvertakes.filter(ot => (now - ot.time) < 3000);
+      recentOvertakes.forEach(ot => {
+        const ageS = (now - ot.time) / 1000.0;
+        const radius = 10 + ageS * 28;
+        const alpha = Math.max(0, 1.0 - ageS / 3.0);
+        const pt = toCanvas(ot.x, ot.z);
+
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(0, 229, 255, ${alpha})`;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        ctx.font = 'bold 9px monospace';
+        ctx.fillStyle = `rgba(0, 229, 255, ${alpha})`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(ot.desc || 'OVERTAKE!', pt.x, pt.y - radius - 2);
+      });
+    }
+
+    // 5. Car Glyphs (Player drawn last on top, pit dimmed, retired removed)
+    const sorted = [...cars].sort((a, b) => {
+      if (a.is_player) return 1;
+      if (b.is_player) return -1;
+      if (a.is_pit && !b.is_pit) return -1;
+      if (!a.is_pit && b.is_pit) return 1;
+      return 0;
+    });
+
+    sorted.forEach(c => {
+      if (c.is_retired) return; // Retired cars removed
+      const pt = toCanvas(c.x, c.z);
+      c._canvasX = pt.x;
+      c._canvasY = pt.y;
+
+      const color = getCarColor(c);
+      const headingAngle = Math.atan2(Math.cos(c.heading), Math.sin(c.heading));
+
+      if (c.is_pit) {
+        // Pit car: dimmed grey circle
+        ctx.globalAlpha = 0.35;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#64748b';
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 1;
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '8px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('PIT', pt.x, pt.y - 8);
+        ctx.globalAlpha = 1.0;
+        return;
+      }
+
+      if (c.is_player) {
+        // Player: glowing cyan outer halo & bold glyph
+        const pulse = 12 + Math.sin(timestamp * 0.007) * 2.5;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, pulse, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0, 229, 255, 0.22)';
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 7.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#00e5ff';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2.0;
+        ctx.fill();
+        ctx.stroke();
+
+        drawHeadingArrow(ctx, pt.x, pt.y, headingAngle, 7.5, '#ffffff');
+
+        ctx.fillStyle = '#00e5ff';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`P${c.position}`, pt.x, pt.y - 10);
+      } else {
+        // Rival / Active Car
+        const radius = 6.0;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.strokeStyle = '#090d14';
+        ctx.lineWidth = 1.4;
+        ctx.fill();
+        ctx.stroke();
+
+        if (c.is_estimated) {
+          ctx.setLineDash([2, 2]);
+          ctx.strokeStyle = '#ffd600';
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        drawHeadingArrow(ctx, pt.x, pt.y, headingAngle, radius, '#ffffff');
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 8px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${c.position}`, pt.x, pt.y);
+
+        if (c.is_estimated) {
+          ctx.fillStyle = '#ffd600';
+          ctx.font = '8px monospace';
+          ctx.fillText('~', pt.x + 8, pt.y - 5);
+        }
+      }
+    });
+  }
+
+  function drawHeadingArrow(ctx, cx, cy, angle, radius, color) {
+    const tipDist = radius + 4.5;
+    const tipX = cx + Math.cos(angle) * tipDist;
+    const tipY = cy + Math.sin(angle) * tipDist;
+
+    const wingAngle = 2.4;
+    const wingDist = radius + 1.2;
+    const leftX = cx + Math.cos(angle + wingAngle) * wingDist;
+    const leftY = cy + Math.sin(angle + wingAngle) * wingDist;
+    const rightX = cx + Math.cos(angle - wingAngle) * wingDist;
+    const rightY = cy + Math.sin(angle - wingAngle) * wingDist;
+
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(leftX, leftY);
+    ctx.lineTo(rightX, rightY);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  function drawGapBubble(ctx, x, y, text, color) {
+    ctx.font = 'bold 9px monospace';
+    const tw = ctx.measureText(text).width;
+    ctx.fillStyle = 'rgba(10, 14, 20, 0.88)';
+    ctx.fillRect(x - tw / 2 - 4, y - 6, tw + 8, 12);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - tw / 2 - 4, y - 6, tw + 8, 12);
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x, y);
   }
 
   function drawSectorMarker(ctx, pt, color, label) {
@@ -1177,7 +1957,8 @@
     ctx.fillStyle = color;
     ctx.font = 'bold 9px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(label, pt.x, pt.y + 12);
+    ctx.textBaseline = 'top';
+    ctx.fillText(label, pt.x, pt.y + 6);
   }
 
   function drawFinishLine(ctx, pt) {
@@ -1192,7 +1973,368 @@
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 9px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('FINISH', pt.x, pt.y + 14);
+    ctx.textBaseline = 'top';
+    ctx.fillText('FINISH', pt.x, pt.y + 7);
+  }
+
+  // --- Map Interactivity: Click to Follow & Popover ---
+  function initTrackMapInteractions() {
+    if (!el.trackDynamicCanvas) return;
+
+    el.trackDynamicCanvas.addEventListener('click', (event) => {
+      const rect = el.trackDynamicCanvas.getBoundingClientRect();
+      const clickX = event.clientX - rect.left;
+      const clickY = event.clientY - rect.top;
+
+      let closest = null;
+      let closestDist = 20; // 20px hit radius
+
+      lastDynamicCars.forEach(c => {
+        if (c.is_retired || c._canvasX === undefined) return;
+        const dist = Math.hypot(c._canvasX - clickX, c._canvasY - clickY);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = c;
+        }
+      });
+
+      if (closest) {
+        followedCarIdx = closest.car_idx;
+        viewMode = 'follow_car';
+
+        if (el.btnViewWhole) el.btnViewWhole.classList.remove('active');
+        if (el.btnViewFollow) el.btnViewFollow.classList.remove('active');
+
+        const meta = carMetadata.get(closest.car_idx);
+        const driverName = meta ? (meta.name || 'Car ' + closest.car_idx) : 'Car ' + closest.car_idx;
+
+        if (el.followingCarChip) {
+          el.followingCarChip.textContent = `Following: P${closest.position} ${driverName} ✕`;
+          el.followingCarChip.classList.remove('hidden');
+        }
+
+        if (el.carPopover) {
+          const color = getCarColor(closest);
+          el.carPopover.innerHTML = `
+            <div style="font-weight:700; font-size:12px; margin-bottom:4px; display:flex; justify-content:space-between; align-items:center;">
+              <span>P${closest.position} · ${driverName}</span>
+              <span style="color:${color};">●</span>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; color:var(--text-2); font-size:11px;">
+              <div>Speed: <strong style="color:var(--text-1);">${closest.speed_kph} km/h</strong></div>
+              <div>Tyre: <strong style="color:var(--text-1);">${(meta && meta.tyre_compound) ? meta.tyre_compound.toUpperCase() : '--'} (${meta ? meta.tyre_age : '--'}L)</strong></div>
+              <div>Gap Ahead: <strong style="color:var(--text-1);">${(meta && meta.gap_ahead !== null) ? '+' + meta.gap_ahead + 's' : '--'}</strong></div>
+              <div>Pit Stops: <strong style="color:var(--text-1);">${(meta && meta.pit_stops !== null) ? meta.pit_stops : 0}</strong></div>
+            </div>
+            ${(closest.flags & 0x40) ? '<div style="margin-top:4px; color:#00e676; font-weight:600;">⚡ ACTIVE AERO / DRS ACTIVE</div>' : ''}
+            ${(closest.flags & 0x20) ? '<div style="margin-top:4px; color:#ffd600; font-size:10px;">~ Position estimated from lap distance</div>' : ''}
+          `;
+          el.carPopover.style.left = `${Math.round(clickX)}px`;
+          el.carPopover.style.top = `${Math.round(clickY)}px`;
+          el.carPopover.classList.remove('hidden');
+        }
+      } else {
+        // Clicked empty canvas: hide popover
+        if (el.carPopover) el.carPopover.classList.add('hidden');
+      }
+    });
+
+    if (el.followingCarChip) {
+      el.followingCarChip.addEventListener('click', () => {
+        followedCarIdx = null;
+        setViewMode('whole');
+      });
+    }
+
+    if (el.btnViewWhole) {
+      el.btnViewWhole.addEventListener('click', () => setViewMode('whole'));
+    }
+    if (el.btnViewFollow) {
+      el.btnViewFollow.addEventListener('click', () => setViewMode('follow_player'));
+    }
+
+    // Overlay Toggles
+    if (el.toggleBattles) {
+      el.toggleBattles.addEventListener('click', () => {
+        mapToggles.battles = !mapToggles.battles;
+        el.toggleBattles.classList.toggle('active', mapToggles.battles);
+      });
+    }
+    if (el.toggleYellows) {
+      el.toggleYellows.addEventListener('click', () => {
+        mapToggles.yellows = !mapToggles.yellows;
+        el.toggleYellows.classList.toggle('active', mapToggles.yellows);
+      });
+    }
+    if (el.toggleGaps) {
+      el.toggleGaps.addEventListener('click', () => {
+        mapToggles.gaps = !mapToggles.gaps;
+        el.toggleGaps.classList.toggle('active', mapToggles.gaps);
+      });
+    }
+    if (el.toggleAero) {
+      el.toggleAero.addEventListener('click', () => {
+        mapToggles.aero = !mapToggles.aero;
+        el.toggleAero.classList.toggle('active', mapToggles.aero);
+        staticLayerDirty = true;
+      });
+    }
+    if (el.toggleReplay) {
+      el.toggleReplay.addEventListener('click', () => {
+        mapToggles.replay = !mapToggles.replay;
+        el.toggleReplay.classList.toggle('active', mapToggles.replay);
+        if (el.replayPanel) el.replayPanel.classList.toggle('hidden', !mapToggles.replay);
+        if (mapToggles.replay) {
+          fetchReplaySessions();
+          startReplayPolling();
+        } else {
+          stopReplayPolling();
+        }
+      });
+    }
+  }
+
+  function setViewMode(mode) {
+    viewMode = mode;
+    followedCarIdx = null;
+    if (el.followingCarChip) el.followingCarChip.classList.add('hidden');
+    if (el.btnViewWhole) el.btnViewWhole.classList.toggle('active', mode === 'whole');
+    if (el.btnViewFollow) el.btnViewFollow.classList.toggle('active', mode === 'follow_player');
+    staticLayerDirty = true;
+  }
+
+  // --- Replay Controls System (Prompt 23) ---
+  let isScrubbing = false;
+
+  function initReplayControls() {
+    if (el.btnReplayLoad) {
+      el.btnReplayLoad.addEventListener('click', async () => {
+        const path = el.replaySessionSelect ? el.replaySessionSelect.value : '';
+        if (!path) return;
+        try {
+          el.btnReplayLoad.textContent = 'Loading...';
+          const resp = await fetch(`/api/replay/load${window.location.search}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path }),
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            updateReplayState(data);
+            renderReplayMarkers(data.markers, data.duration_s);
+            if (data.track_id && data.track_id !== cachedTrackId) {
+              cachedTrackId = data.track_id;
+              fetchTrackMap();
+              fetchTrackModel();
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to load replay session:', e);
+        } finally {
+          el.btnReplayLoad.textContent = 'Load';
+        }
+      });
+    }
+
+    if (el.btnReplayPlay) {
+      el.btnReplayPlay.addEventListener('click', async () => {
+        try {
+          if (replayState.playing) {
+            const resp = await fetch(`/api/replay/pause${window.location.search}`, { method: 'POST' });
+            if (resp.ok) {
+              const data = await resp.json();
+              updateReplayState(data);
+            }
+          } else {
+            const resp = await fetch(`/api/replay/play${window.location.search}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ speed: replayState.speed }),
+            });
+            if (resp.ok) {
+              const data = await resp.json();
+              updateReplayState(data);
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to toggle replay play/pause:', e);
+        }
+      });
+    }
+
+    if (el.replaySpeedGroup) {
+      el.replaySpeedGroup.querySelectorAll('.speed-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const speed = parseFloat(btn.dataset.speed) || 1.0;
+          replayState.speed = speed;
+          el.replaySpeedGroup.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          if (replayState.playing) {
+            try {
+              await fetch(`/api/replay/play${window.location.search}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ speed }),
+              });
+            } catch (e) {
+              console.warn('Failed to set replay speed:', e);
+            }
+          }
+        });
+      });
+    }
+
+    if (el.replayScrubber) {
+      el.replayScrubber.addEventListener('mousedown', () => { isScrubbing = true; });
+      el.replayScrubber.addEventListener('touchstart', () => { isScrubbing = true; });
+      el.replayScrubber.addEventListener('change', async (e) => {
+        isScrubbing = false;
+        const val = parseFloat(e.target.value) || 0;
+        const targetTimeS = (val / 100.0) * (replayState.duration_s || 0);
+        seekReplay(targetTimeS);
+      });
+    }
+  }
+
+  async function fetchReplaySessions() {
+    if (!el.replaySessionSelect) return;
+    try {
+      const resp = await fetch(`/api/replay/sessions${window.location.search}`);
+      if (resp.ok) {
+        const list = await resp.json();
+        el.replaySessionSelect.innerHTML = '';
+        if (list.length === 0) {
+          el.replaySessionSelect.innerHTML = '<option value="">No recorded sessions found</option>';
+          return;
+        }
+        list.forEach(item => {
+          const opt = document.createElement('option');
+          opt.value = item.path;
+          opt.textContent = `${item.filename} (${item.size_mb} MB)`;
+          el.replaySessionSelect.appendChild(opt);
+        });
+      }
+    } catch (e) {
+      console.warn('Failed to fetch replay sessions:', e);
+    }
+  }
+
+  async function seekReplay(timeS) {
+    try {
+      const resp = await fetch(`/api/replay/seek${window.location.search}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ time_s: timeS }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        updateReplayState(data);
+      }
+    } catch (e) {
+      console.warn('Failed to seek replay:', e);
+    }
+  }
+
+  function startReplayPolling() {
+    if (replayPollTimer) return;
+    replayPollTimer = setInterval(async () => {
+      if (!mapToggles.replay) {
+        stopReplayPolling();
+        return;
+      }
+      try {
+        const resp = await fetch(`/api/replay/status${window.location.search}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          updateReplayState(data);
+        }
+      } catch (e) {}
+    }, 500);
+  }
+
+  function stopReplayPolling() {
+    if (replayPollTimer) {
+      clearInterval(replayPollTimer);
+      replayPollTimer = null;
+    }
+  }
+
+  function updateReplayState(data) {
+    if (!data) return;
+    replayState.loaded = !!data.loaded;
+    replayState.playing = !!data.playing;
+    replayState.speed = data.speed || 1.0;
+    replayState.current_time_s = data.current_time_s || 0.0;
+    replayState.duration_s = data.duration_s || 0.0;
+    if (data.markers && data.markers.length) {
+      replayState.markers = data.markers;
+    }
+
+    if (el.btnReplayPlay) {
+      el.btnReplayPlay.textContent = replayState.playing ? '⏸ Pause' : '▶ Play';
+      if (replayState.playing) {
+        el.btnReplayPlay.classList.add('warn');
+        el.btnReplayPlay.classList.remove('primary');
+      } else {
+        el.btnReplayPlay.classList.remove('warn');
+        el.btnReplayPlay.classList.add('primary');
+      }
+    }
+
+    if (el.replayTimeDisplay) {
+      el.replayTimeDisplay.textContent = `${formatTime(replayState.current_time_s)} / ${formatTime(replayState.duration_s)}`;
+    }
+
+    if (el.replayScrubber && !isScrubbing && replayState.duration_s > 0) {
+      el.replayScrubber.value = ((replayState.current_time_s / replayState.duration_s) * 100).toFixed(1);
+    }
+  }
+
+  function renderReplayMarkers(markers, durationS) {
+    if (!el.replayMarkersTrack) return;
+    el.replayMarkersTrack.innerHTML = '';
+    if (!durationS || durationS <= 0 || !markers || !markers.length) return;
+
+    markers.forEach(m => {
+      const pin = document.createElement('div');
+      pin.className = 'replay-marker-pin';
+      const pct = Math.max(0, Math.min(100, (m.time_s / durationS) * 100));
+      pin.style.left = `${pct}%`;
+
+      let color = '#00e5ff'; // otke
+      if (m.marker_type === 'sc') color = '#ffd600';
+      else if (m.marker_type === 'pit') color = '#d500f9';
+      else if (m.marker_type === 'incident') color = '#ff3d00';
+
+      pin.style.background = color;
+      pin.title = `[${formatTime(m.time_s)}] ${m.description}`;
+
+      pin.addEventListener('click', (e) => {
+        e.stopPropagation();
+        seekReplay(m.time_s);
+      });
+      el.replayMarkersTrack.appendChild(pin);
+    });
+  }
+
+  function formatTime(sec) {
+    if (!sec || isNaN(sec) || sec < 0) return '00:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m < 10 ? '0' + m : m}:${s < 10 ? '0' + s : s}`;
+  }
+
+  // --- 60 FPS Render Loop Initialization ---
+  function mapRenderLoop(timestamp) {
+    requestAnimationFrame(mapRenderLoop);
+    renderMapFrame(timestamp);
+  }
+
+  function initTrackMapSystem() {
+    initTrackMapInteractions();
+    initReplayControls();
+    requestAnimationFrame(mapRenderLoop);
+    connectPositionsWebSocket();
   }
 
   // --- Render G-Force Friction Circle ---
@@ -1398,8 +2540,16 @@
     const token = getToken();
     const wsUrl = `${protocol}//${window.location.host}/ws/live${token ? '?token=' + encodeURIComponent(token) : ''}`;
 
-    el.connectionBadge.className = 'status-pill connecting';
-    el.connectionText.textContent = 'CONNECTING...';
+    const linkText = document.getElementById('link-text');
+    const linkChip = document.getElementById('link-chip');
+    const linkPopSub = document.getElementById('link-pop-sub');
+
+    // "Connecting" is strictly used only during browser -> app WebSocket handshake
+    if (linkText) linkText.textContent = 'Connecting';
+    if (linkChip) linkChip.className = 'chip wait';
+    if (linkPopSub) linkPopSub.textContent = 'Connecting to dashboard server...';
+    if (el.connectionBadge) el.connectionBadge.className = 'status-pill connecting';
+    if (el.connectionText) el.connectionText.textContent = 'CONNECTING...';
 
     if (socket) {
       try { socket.close(); } catch (e) {}
@@ -1442,6 +2592,10 @@
           }
         } else if (payload.type === 'overtake') {
           appendOvertakeRow(payload.data || payload);
+        } else if (payload.type === 'lap_minisectors_update') {
+          if (typeof refreshMinisectorData === 'function') {
+            refreshMinisectorData();
+          }
         } else {
           const isLive = !!payload.session_live;
           const now = Date.now();
@@ -1466,8 +2620,16 @@
     };
 
     socket.onclose = function (event) {
-      el.connectionBadge.className = 'status-pill offline';
-      el.connectionText.textContent = 'OFFLINE';
+      const linkText = document.getElementById('link-text');
+      const linkChip = document.getElementById('link-chip');
+      const linkPopSub = document.getElementById('link-pop-sub');
+      const errBanner = document.getElementById('engine-error-banner');
+      if (errBanner) errBanner.classList.add('hidden');
+      if (linkText) linkText.textContent = 'Engine Offline';
+      if (linkChip) linkChip.className = 'chip bad';
+      if (linkPopSub) linkPopSub.textContent = 'Engine is not running or disconnected.';
+      if (el.connectionBadge) el.connectionBadge.className = 'status-pill offline';
+      if (el.connectionText) el.connectionText.textContent = 'ENGINE NOT RUNNING';
       console.warn('[Dashboard] WebSocket closed:', event.code, event.reason);
       scheduleReconnect();
     };
@@ -1483,7 +2645,9 @@
     reconnectAttempts++;
     // Exponential backoff: 500ms, 1s, 2s, 4s, capped at 5s
     const delay = Math.min(500 * Math.pow(2, reconnectAttempts - 1), 5000);
-    el.connectionText.textContent = `RETRY IN ${Math.round(delay / 1000)}s`;
+    const linkText = document.getElementById('link-text');
+    if (linkText) linkText.textContent = `Retry in ${Math.round(delay / 1000)}s`;
+    if (el.connectionText) el.connectionText.textContent = `RETRY IN ${Math.round(delay / 1000)}s`;
     reconnectTimer = setTimeout(connectWebSocket, delay);
   }
 
@@ -1584,6 +2748,8 @@
           fetchAudioDevices();
           fetchVolumes();
           fetchPortSettings();
+          fetchAudioCacheStats();
+          fetchSeedDataStatus();
           if (subSec) {
             setTimeout(() => activateSettingsSubnav(subSec), 100);
           }
@@ -1808,6 +2974,10 @@
     }
     if (el.btnSavePorts) {
       el.btnSavePorts.addEventListener('click', savePortSettings);
+    }
+    const btnClearCache = document.getElementById('btn-clear-cache');
+    if (btnClearCache) {
+      btnClearCache.addEventListener('click', clearAudioCache);
     }
 
     if (el.filterTrack) {
@@ -2137,8 +3307,12 @@
         renderSpeedChart(data.telemetry);
         renderInputsChart(data.telemetry);
         renderDeltaChart(data.telemetry);
+        currentCompareTrackPoints = data.track_points;
         renderLapsTrackMap(data.track_points);
         renderCornerBreakdown(data.corners);
+        if (typeof refreshMinisectorData === 'function') {
+          refreshMinisectorData();
+        }
       })
       .catch((err) => {
         console.warn('[Dashboard] Could not compare laps:', err);
@@ -2557,10 +3731,23 @@
 
   function appendOvertakeRow(ot) {
     const tbody = document.getElementById('overtakes-tbody');
-    if (!tbody) return;
-    const emptyRow = tbody.querySelector('.empty-row');
-    if (emptyRow) emptyRow.remove();
-    tbody.insertBefore(_buildOvertakeRow(ot), tbody.firstChild);
+    if (tbody) {
+      const emptyRow = tbody.querySelector('.empty-row');
+      if (emptyRow) emptyRow.remove();
+      tbody.insertBefore(_buildOvertakeRow(ot), tbody.firstChild);
+    }
+
+    // Trigger overtake beacon animation on live track map (Prompt 23)
+    if (ot) {
+      if (ot.x !== undefined && ot.z !== undefined) {
+        recentOvertakes.push({ x: ot.x, z: ot.z, time: performance.now(), desc: ot.move ? ot.move.toUpperCase() : 'OVERTAKE!' });
+      } else {
+        const pCar = lastDynamicCars.find(c => c.is_player);
+        if (pCar) {
+          recentOvertakes.push({ x: pCar.x, z: pCar.z, time: performance.now(), desc: ot.move ? ot.move.toUpperCase() : 'OVERTAKE!' });
+        }
+      }
+    }
   }
 
   function _buildOvertakeRow(ot) {
@@ -4651,6 +5838,156 @@
     }
   }
 
+  // --- TTS Audio Cache Settings ---
+  async function fetchAudioCacheStats() {
+    try {
+      const token = getToken();
+      const url = token ? `/api/cache/audio?token=${encodeURIComponent(token)}` : '/api/cache/audio';
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      const countEl = document.getElementById('cache-file-count');
+      const sizeEl = document.getElementById('cache-size-mb');
+      if (countEl) countEl.textContent = `${data.file_count || 0} files`;
+      if (sizeEl) sizeEl.textContent = `${(data.size_mb || 0).toFixed(1)} MB / ${(data.max_mb || 100).toFixed(0)} MB`;
+    } catch (e) {
+      console.warn("Could not fetch audio cache stats:", e);
+    }
+  }
+
+  async function clearAudioCache() {
+    const btn = document.getElementById('btn-clear-cache');
+    const msg = document.getElementById('cache-feedback-msg');
+    if (btn) btn.disabled = true;
+    try {
+      const token = getToken();
+      const url = token ? `/api/cache/audio/clear?token=${encodeURIComponent(token)}` : '/api/cache/audio/clear';
+      const res = await fetch(url, { method: 'POST' });
+      if (res.ok) {
+        if (msg) {
+          msg.textContent = 'Cache cleared successfully.';
+          msg.style.color = 'var(--green, #00e676)';
+        }
+        await fetchAudioCacheStats();
+      } else {
+        if (msg) {
+          msg.textContent = 'Failed to clear cache.';
+          msg.style.color = 'var(--red, #ff3d00)';
+        }
+      }
+    } catch (e) {
+      console.error("Could not clear audio cache:", e);
+      if (msg) {
+        msg.textContent = 'Error clearing audio cache.';
+        msg.style.color = 'var(--red, #ff3d00)';
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+      setTimeout(() => {
+        if (msg) {
+          msg.textContent = 'LRU eviction active at size cap. Live numbers/gaps are never cached.';
+          msg.style.color = '';
+        }
+      }, 4000);
+    }
+  }
+
+  // --- Prompt 25: Seed Reference Data ---
+  async function fetchSeedDataStatus() {
+    try {
+      const token = getToken();
+      const url = token ? `/api/seed/status?token=${encodeURIComponent(token)}` : '/api/seed/status';
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      const setupsEl = document.getElementById('seed-setups-count');
+      const tracksEl = document.getElementById('seed-tracks-count');
+      const flagsEl = document.getElementById('seed-flags-desc');
+      const listEl = document.getElementById('unconfirmed-mappings-list');
+      const msgEl = document.getElementById('seed-feedback-msg');
+
+      if (setupsEl) {
+        setupsEl.textContent = `${data.imported_setups_total || 275} team + ${data.base_setups_total || 25} base`;
+      }
+      if (tracksEl) {
+        tracksEl.textContent = `${data.tracks_total || 25} tracks (${data.tracks_confirmed || 0} confirmed) / ${data.turns_total || 181} turns`;
+      }
+      if (flagsEl) {
+        flagsEl.textContent = `${data.flags_count || 0} validation flags (e.g. tyre pressures below game minimums). Values preserved, not changed.`;
+      }
+      if (msgEl && data.last_import_time) {
+        const d = new Date(parseFloat(data.last_import_time) * 1000);
+        msgEl.textContent = `Last import: ${d.toLocaleTimeString()}`;
+      }
+
+      if (listEl) {
+        if (!data.unconfirmed_tracks || data.unconfirmed_tracks.length === 0) {
+          listEl.innerHTML = '<span class="dim" style="color:var(--green, #00e676)">All 25 track mappings confirmed.</span>';
+        } else {
+          listEl.innerHTML = data.unconfirmed_tracks.map(t => `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
+              <span>${t.name} (id: ${t.game_track_id !== null ? t.game_track_id : 'unassigned'})</span>
+              <button class="btn sm ghost" onclick="window.confirmTrackMappingPrompt('${t.slug}', ${t.game_track_id !== null ? t.game_track_id : 0})">Confirm ID</button>
+            </div>
+          `).join('');
+        }
+      }
+    } catch (e) {
+      console.warn("Could not fetch seed data status:", e);
+    }
+  }
+
+  window.confirmTrackMappingPrompt = async function(slug, currentId) {
+    const val = prompt(`Confirm Game Track ID for ${slug}:`, currentId);
+    if (val === null) return;
+    const game_track_id = parseInt(val, 10);
+    if (isNaN(game_track_id)) return;
+    try {
+      const token = getToken();
+      const url = token ? `/api/tracks/confirm_mapping?token=${encodeURIComponent(token)}` : '/api/tracks/confirm_mapping';
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug, game_track_id })
+      });
+      await fetchSeedDataStatus();
+    } catch (e) {
+      console.warn("Failed to confirm track mapping:", e);
+    }
+  };
+
+  async function reimportSeedData() {
+    const btn = document.getElementById('btn-reimport-seed');
+    const msg = document.getElementById('seed-feedback-msg');
+    if (btn) btn.disabled = true;
+    if (msg) msg.textContent = 'Importing seed data...';
+    try {
+      const token = getToken();
+      const url = token ? `/api/seed/import?token=${encodeURIComponent(token)}` : '/api/seed/import';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reimport: true })
+      });
+      if (res.ok) {
+        if (msg) {
+          msg.textContent = 'Seed data re-imported successfully.';
+          msg.style.color = 'var(--green, #00e676)';
+        }
+        await fetchSeedDataStatus();
+      } else {
+        if (msg) {
+          msg.textContent = 'Seed import failed.';
+          msg.style.color = 'var(--red, #ff3d00)';
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to reimport seed data:", e);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   // --- AI Usage Guard Status ---
   async function fetchUsageStatus() {
     try {
@@ -4845,6 +6182,667 @@
     }
   }
 
+  // ===========================================================================
+  // Prompt 22: Mini-Sectors, Sectors & Corner Map Subsystem
+  // ===========================================================================
+  let currentMapMode = 'lap-lap'; // 'lap-lap', 'me-ref', 'field', 'f1-colors'
+  let currentMinisectorSegments = [];
+  let currentHoveredMinisector = null;
+  let currentCompareTrackPoints = null;
+
+  function initMinisectorSystem() {
+    const tabs = document.getElementById('map-mode-tabs');
+    if (tabs) {
+      tabs.querySelectorAll('.seg-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          setMapMode(btn.dataset.mode);
+        });
+      });
+    }
+
+    const chk = document.getElementById('chk-include-flagged');
+    if (chk) {
+      chk.addEventListener('change', () => {
+        refreshMinisectorData();
+      });
+    }
+
+    ['ms-car-a', 'ms-lap-a', 'ms-car-b', 'ms-lap-b', 'ms-ref-target', 'ms-my-lap', 'ms-f1-car', 'ms-f1-lap'].forEach((id) => {
+      const elem = document.getElementById(id);
+      if (elem) {
+        elem.addEventListener('change', () => {
+          refreshMinisectorData();
+        });
+      }
+    });
+
+    const canvas = document.getElementById('laps-map-canvas');
+    if (canvas) {
+      canvas.addEventListener('pointermove', onMapCanvasPointerMove);
+      canvas.addEventListener('pointerleave', onMapCanvasPointerLeave);
+      canvas.addEventListener('click', onMapCanvasPointerClick);
+    }
+
+    updateMinisectorSelectors();
+    refreshMinisectorData();
+  }
+
+  function setMapMode(mode) {
+    currentMapMode = mode;
+    const tabs = document.getElementById('map-mode-tabs');
+    if (tabs) {
+      tabs.querySelectorAll('.seg-btn').forEach((b) => {
+        b.classList.toggle('active', b.dataset.mode === mode);
+      });
+    }
+
+    const ctrlLapLap = document.getElementById('ctrl-lap-lap');
+    const ctrlMeRef = document.getElementById('ctrl-me-ref');
+    const ctrlF1Colors = document.getElementById('ctrl-f1-colors');
+
+    if (ctrlLapLap) ctrlLapLap.classList.toggle('hidden', mode !== 'lap-lap');
+    if (ctrlMeRef) ctrlMeRef.classList.toggle('hidden', mode !== 'me-ref');
+    if (ctrlF1Colors) ctrlF1Colors.classList.toggle('hidden', mode !== 'f1-colors');
+
+    refreshMinisectorData();
+  }
+
+  function updateMinisectorSelectors() {
+    const selCarA = document.getElementById('ms-car-a');
+    const selCarB = document.getElementById('ms-car-b');
+    const selF1Car = document.getElementById('ms-f1-car');
+    const selLapA = document.getElementById('ms-lap-a');
+    const selLapB = document.getElementById('ms-lap-b');
+    const selMyLap = document.getElementById('ms-my-lap');
+    const selF1Lap = document.getElementById('ms-f1-lap');
+
+    if (!selCarA || !selCarB) return;
+
+    const cars = new Map();
+    if (window.latestTelemetry && window.latestTelemetry.participants) {
+      window.latestTelemetry.participants.forEach((p, idx) => {
+        cars.set(idx, p.name || `Car ${idx}`);
+      });
+    }
+    if (currentSessionLaps && currentSessionLaps.length > 0) {
+      currentSessionLaps.forEach((l) => {
+        const cIdx = l.car_idx !== undefined ? l.car_idx : 0;
+        if (!cars.has(cIdx)) {
+          cars.set(cIdx, `Car ${cIdx}`);
+        }
+      });
+    }
+    if (cars.size === 0) {
+      cars.set(0, 'Player Car');
+    }
+
+    const populateCarSel = (sel, defIdx) => {
+      if (!sel) return;
+      const cur = sel.value;
+      sel.innerHTML = '';
+      cars.forEach((name, idx) => {
+        const opt = document.createElement('option');
+        opt.value = idx;
+        opt.textContent = `${name} (#${idx})`;
+        sel.appendChild(opt);
+      });
+      if (cur && cars.has(parseInt(cur, 10))) {
+        sel.value = cur;
+      } else if (defIdx !== undefined && cars.has(defIdx)) {
+        sel.value = defIdx;
+      }
+    };
+
+    populateCarSel(selCarA, 0);
+    populateCarSel(selCarB, cars.size > 1 ? Array.from(cars.keys())[1] : 0);
+    if (selF1Car) populateCarSel(selF1Car, 0);
+
+    const populateLapsForCar = (carIdx, lapSel) => {
+      if (!lapSel) return;
+      const curVal = lapSel.value;
+      lapSel.innerHTML = '';
+      const carLaps = (currentSessionLaps || []).filter((l) => (l.car_idx !== undefined ? l.car_idx : 0) === parseInt(carIdx, 10));
+      if (carLaps.length === 0) {
+        for (let num = 1; num <= 5; num++) {
+          const opt = document.createElement('option');
+          opt.value = num;
+          opt.textContent = `Lap ${num}`;
+          lapSel.appendChild(opt);
+        }
+      } else {
+        carLaps.forEach((l) => {
+          const opt = document.createElement('option');
+          opt.value = l.lap_num || l.lap;
+          opt.textContent = `Lap ${l.lap_num || l.lap} (${formatLapTime(l.lap_time_s)})`;
+          lapSel.appendChild(opt);
+        });
+      }
+      if (curVal && Array.from(lapSel.options).some(o => o.value === curVal)) {
+        lapSel.value = curVal;
+      } else if (lapSel.options.length > 0) {
+        lapSel.value = lapSel.options[lapSel.options.length - 1].value;
+      }
+    };
+
+    populateLapsForCar(selCarA.value, selLapA);
+    populateLapsForCar(selCarB.value, selLapB);
+    populateLapsForCar(selCarA.value, selMyLap);
+    if (selF1Car && selF1Lap) populateLapsForCar(selF1Car.value, selF1Lap);
+  }
+
+  function getActiveSessionUid() {
+    if (el.filterSession && el.filterSession.value) {
+      const s = loadedSessions.find((sess) => sess.id === parseInt(el.filterSession.value, 10));
+      if (s && s.session_uid) return String(s.session_uid);
+    }
+    if (window.latestTelemetry && window.latestTelemetry.session_uid) {
+      return String(window.latestTelemetry.session_uid);
+    }
+    return "0";
+  }
+
+  function refreshMinisectorData() {
+    const sessionUid = getActiveSessionUid();
+    const token = getToken();
+    const chk = document.getElementById('chk-include-flagged');
+    const includeFlagged = chk ? chk.checked : false;
+
+    if (currentMapMode === 'lap-lap') {
+      const selCarA = document.getElementById('ms-car-a');
+      const selLapA = document.getElementById('ms-lap-a');
+      const selCarB = document.getElementById('ms-car-b');
+      const selLapB = document.getElementById('ms-lap-b');
+
+      const carA = selCarA ? parseInt(selCarA.value, 10) : 0;
+      const lapA = selLapA ? parseInt(selLapA.value, 10) : 1;
+      const carB = selCarB ? parseInt(selCarB.value, 10) : 0;
+      const lapB = selLapB ? parseInt(selLapB.value, 10) : 1;
+
+      const url = `/api/laps/minisector_comparison?session_uid=${encodeURIComponent(sessionUid)}&car_a=${carA}&lap_a=${lapA}&car_b=${carB}&lap_b=${lapB}&token=${encodeURIComponent(token)}`;
+      fetch(url)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && data.segments) {
+            currentMinisectorSegments = data.segments;
+            renderMinisectorCanvas(data.segments);
+            renderMinisectorDeltaStrip(data.segments);
+            renderTopLosses(data.top_losses || []);
+            renderStandardComparisonLegend(data.driver_a, data.driver_b);
+          } else {
+            generateSyntheticMinisectors();
+          }
+        })
+        .catch(() => generateSyntheticMinisectors());
+
+      fetchTheoreticalBest(sessionUid, carA, includeFlagged);
+      fetchF1Colors(sessionUid, carA, lapA, includeFlagged);
+    } else if (currentMapMode === 'me-ref') {
+      const selRef = document.getElementById('ms-ref-target');
+      const selMyLap = document.getElementById('ms-my-lap');
+      const myLap = selMyLap ? parseInt(selMyLap.value, 10) : 1;
+      const myCar = 0;
+
+      const url = `/api/laps/minisector_comparison?session_uid=${encodeURIComponent(sessionUid)}&car_a=${myCar}&lap_a=${myLap}&car_b=0&lap_b=1&token=${encodeURIComponent(token)}`;
+      fetch(url)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && data.segments) {
+            currentMinisectorSegments = data.segments;
+            renderMinisectorCanvas(data.segments);
+            renderMinisectorDeltaStrip(data.segments);
+            renderTopLosses(data.top_losses || []);
+            renderStandardComparisonLegend("My Lap", selRef ? selRef.options[selRef.selectedIndex].text : "Reference");
+          } else {
+            generateSyntheticMinisectors();
+          }
+        })
+        .catch(() => generateSyntheticMinisectors());
+
+      fetchTheoreticalBest(sessionUid, myCar, includeFlagged);
+    } else if (currentMapMode === 'field') {
+      const url = `/api/laps/fastest_minisectors?session_uid=${encodeURIComponent(sessionUid)}&include_flagged=${includeFlagged}&token=${encodeURIComponent(token)}`;
+      fetch(url)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && data.sectors) {
+            currentMinisectorSegments = data.sectors.map((s, idx) => ({
+              index: s.sector_index || idx + 1,
+              name: `Mini-sector ${s.sector_index || idx + 1}`,
+              winner_name: s.winner_name,
+              winner_team: s.winner_team,
+              winner_color: s.winner_color || '#00e676',
+              color: s.winner_color || '#00e676',
+              best_time_ms: s.best_time_ms,
+              start_m: s.start_m,
+              end_m: s.end_m,
+            }));
+            renderMinisectorCanvas(currentMinisectorSegments);
+            renderMinisectorDeltaStrip(currentMinisectorSegments);
+            renderFieldWinsLegend(data.wins_legend || []);
+          } else {
+            generateSyntheticMinisectors();
+          }
+        })
+        .catch(() => generateSyntheticMinisectors());
+
+      fetchTheoreticalBest(sessionUid, 0, includeFlagged);
+    } else if (currentMapMode === 'f1-colors') {
+      const selCar = document.getElementById('ms-f1-car');
+      const selLap = document.getElementById('ms-f1-lap');
+      const carIdx = selCar ? parseInt(selCar.value, 10) : 0;
+      const lapNum = selLap ? parseInt(selLap.value, 10) : 1;
+      fetchF1Colors(sessionUid, carIdx, lapNum, includeFlagged, true);
+      fetchTheoreticalBest(sessionUid, carIdx, includeFlagged);
+    }
+  }
+
+  function fetchTheoreticalBest(sessionUid, carIdx, includeFlagged) {
+    const token = getToken();
+    const url = `/api/laps/theoretical_best?session_uid=${encodeURIComponent(sessionUid)}&car_idx=${carIdx}&include_flagged=${includeFlagged}&token=${encodeURIComponent(token)}`;
+    fetch(url)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!data) return;
+        const timeEl = document.getElementById('ideal-lap-time');
+        const badgeEl = document.getElementById('ideal-gain-badge');
+        const subEl = document.getElementById('ideal-lap-sub');
+        if (data.has_data && data.theoretical_best_str) {
+          if (timeEl) timeEl.textContent = data.theoretical_best_str;
+          if (badgeEl) {
+            const gain = data.potential_gain_s;
+            badgeEl.textContent = `${gain > 0 ? '-' : ''}${Math.abs(gain).toFixed(3)}s potential`;
+            badgeEl.className = 'chip pill-ok';
+          }
+          if (subEl) subEl.textContent = data.summary_text || `Actual Best: ${data.actual_best_str}`;
+        } else {
+          if (timeEl) timeEl.textContent = '--:--.---';
+          if (badgeEl) badgeEl.textContent = 'No laps';
+        }
+      })
+      .catch(() => {});
+  }
+
+  function fetchF1Colors(sessionUid, carIdx, lapNum, includeFlagged, updateCanvas = false) {
+    const token = getToken();
+    const url = `/api/laps/f1_colors?session_uid=${encodeURIComponent(sessionUid)}&car_idx=${carIdx}&lap_num=${lapNum}&include_flagged=${includeFlagged}&token=${encodeURIComponent(token)}`;
+    fetch(url)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!data) return;
+        renderOfficialSectors(data.sectors || []);
+        if (updateCanvas && data.mini_sectors) {
+          const colorMap = { purple: '#c084fc', green: '#00e676', yellow: '#ffd600' };
+          currentMinisectorSegments = data.mini_sectors.map((m, idx) => ({
+            index: m.mini_sector || idx + 1,
+            name: `Mini-sector ${m.mini_sector || idx + 1}`,
+            time_ms: m.time_ms,
+            color: colorMap[m.color] || '#ffd600',
+            f1_color: m.color,
+          }));
+          renderMinisectorCanvas(currentMinisectorSegments);
+          renderMinisectorDeltaStrip(currentMinisectorSegments);
+          renderF1Legend();
+        }
+      })
+      .catch(() => {});
+  }
+
+  function generateSyntheticMinisectors() {
+    const count = 25;
+    currentMinisectorSegments = [];
+    for (let i = 0; i < count; i++) {
+      const isFaster = i % 3 !== 2;
+      currentMinisectorSegments.push({
+        index: i + 1,
+        name: `Mini-sector ${i + 1}`,
+        color: isFaster ? '#00e676' : '#2979ff',
+        winner_color: isFaster ? '#00e676' : '#2979ff',
+        time_a_ms: 3200 + (i * 20),
+        time_b_ms: 3200 + (isFaster ? 80 : -70),
+        delta_s: isFaster ? -0.08 : 0.07,
+        min_speed_a_kph: 120 + (i % 5) * 25,
+        min_speed_b_kph: 118 + (i % 5) * 26,
+        braking_point_a_m: i * 200 + 40,
+        braking_point_b_m: i * 200 + 55,
+        diagnosis: isFaster ? '' : 'Braking earlier',
+        start_m: i * 200,
+        end_m: (i + 1) * 200,
+      });
+    }
+    renderMinisectorCanvas(currentMinisectorSegments);
+    renderMinisectorDeltaStrip(currentMinisectorSegments);
+    renderStandardComparisonLegend("Driver A", "Driver B");
+  }
+
+  function generateSyntheticTrackPoints() {
+    const pts = [];
+    const count = 120;
+    const rX = 220, rZ = 130;
+    for (let i = 0; i < count; i++) {
+      const theta = (i / count) * Math.PI * 2;
+      const x = rX * Math.cos(theta) + 40 * Math.sin(2 * theta);
+      const z = rZ * Math.sin(theta) + 30 * Math.sin(3 * theta);
+      const dist = (i / count) * 5891.0;
+      pts.push({ x, z, distance_m: dist });
+    }
+    return pts;
+  }
+
+  function renderMinisectorCanvas(segments) {
+    const canvas = document.getElementById('laps-map-canvas');
+    if (!canvas) return;
+    const res = setupCanvas(canvas, 360);
+    if (!res) return;
+    const { ctx, width: W, height: H } = res;
+
+    ctx.clearRect(0, 0, W, H);
+
+    let pts = currentCompareTrackPoints;
+    if (!pts || pts.length < 10) {
+      if (cachedOutline && cachedOutline.points && cachedOutline.points.length > 10) {
+        pts = cachedOutline.points.map(p => ({
+          x: p.x !== undefined ? p.x : p[0],
+          z: p.z !== undefined ? p.z : p[2],
+          distance_m: p.distance_m !== undefined ? p.distance_m : p[3]
+        }));
+      } else {
+        pts = generateSyntheticTrackPoints();
+      }
+    }
+
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    pts.forEach(p => {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.z < minZ) minZ = p.z;
+      if (p.z > maxZ) maxZ = p.z;
+    });
+
+    const rangeX = maxX - minX || 100;
+    const rangeZ = maxZ - minZ || 100;
+    const pad = 30;
+    const availW = W - pad * 2;
+    const availH = H - pad * 2;
+    const scale = Math.min(availW / rangeX, availH / rangeZ);
+
+    const toScreen = (x, z) => {
+      const scrX = pad + (x - minX) * scale + (availW - rangeX * scale) / 2;
+      const scrZ = H - (pad + (z - minZ) * scale + (availH - rangeZ * scale) / 2);
+      return [scrX, scrZ];
+    };
+
+    const nSegs = (segments && segments.length > 0) ? segments.length : 25;
+    const trackLen = pts[pts.length - 1].distance_m || 5000.0;
+
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < pts.length; i++) {
+      const [sx, sz] = toScreen(pts[i].x, pts[i].z);
+      if (i === 0) ctx.moveTo(sx, sz);
+      else ctx.lineTo(sx, sz);
+    }
+    ctx.stroke();
+
+    ctx.lineWidth = 4.5;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const dist = p1.distance_m !== undefined ? p1.distance_m : (i / (pts.length - 1)) * trackLen;
+      const segIdx = Math.min(nSegs - 1, Math.max(0, Math.floor((dist / trackLen) * nSegs)));
+      const seg = segments ? segments[segIdx] : null;
+
+      const [x1, y1] = toScreen(p1.x, p1.z);
+      const [x2, y2] = toScreen(p2.x, p2.z);
+
+      const color = seg ? (seg.color || seg.winner_color || '#00e676') : '#00e676';
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+
+      if (currentHoveredMinisector === segIdx) {
+        ctx.save();
+        ctx.lineWidth = 9;
+        ctx.strokeStyle = '#ffffff';
+        ctx.shadowColor = '#00e5ff';
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    const [startX, startZ] = toScreen(pts[0].x, pts[0].z);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(startX, startZ, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ff1744';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  function renderMinisectorDeltaStrip(segments) {
+    const strip = document.getElementById('minisector-delta-strip');
+    if (!strip || !segments) return;
+    strip.innerHTML = '';
+    segments.forEach((s, idx) => {
+      const segEl = document.createElement('div');
+      segEl.className = 'strip-segment';
+      segEl.dataset.index = idx;
+      segEl.style.backgroundColor = s.color || s.winner_color || '#00e676';
+      segEl.title = `${s.name || 'Segment ' + (idx + 1)}`;
+      segEl.addEventListener('pointerenter', (e) => showMinisectorPopover(idx, e));
+      segEl.addEventListener('pointerleave', hideMinisectorPopover);
+      segEl.addEventListener('click', (e) => showMinisectorPopover(idx, e));
+      strip.appendChild(segEl);
+    });
+  }
+
+  function showMinisectorPopover(idx, event) {
+    const pop = document.getElementById('minisector-popover');
+    if (!pop || !currentMinisectorSegments[idx]) return;
+    const s = currentMinisectorSegments[idx];
+    currentHoveredMinisector = idx;
+
+    let content = `<div class="p-head">${s.name || 'Mini-sector ' + (idx + 1)}</div>`;
+    if (currentMapMode === 'lap-lap' || currentMapMode === 'me-ref') {
+      const sign = (s.delta_s !== undefined && s.delta_s > 0) ? '+' : '';
+      const deltaClass = s.delta_s < 0 ? 'faster' : (s.delta_s > 0 ? 'slower' : '');
+      content += `
+        <div class="p-row"><span>Driver A:</span><b>${s.time_a_ms ? (s.time_a_ms / 1000).toFixed(3) + 's' : '--'}</b></div>
+        <div class="p-row"><span>Driver B:</span><b>${s.time_b_ms ? (s.time_b_ms / 1000).toFixed(3) + 's' : '--'}</b></div>
+        <div class="p-row"><span>Delta:</span><span class="p-delta ${deltaClass}">${sign}${s.delta_s !== undefined ? s.delta_s.toFixed(3) + 's' : '--'}</span></div>
+      `;
+      if (s.min_speed_a_kph !== null && s.min_speed_a_kph !== undefined) {
+        content += `<div class="p-row"><span>Min Speed:</span><span>${Math.round(s.min_speed_a_kph)} vs ${Math.round(s.min_speed_b_kph)} km/h</span></div>`;
+      }
+      if (s.braking_point_a_m !== null && s.braking_point_a_m !== undefined) {
+        content += `<div class="p-row"><span>Braking:</span><span>${Math.round(s.braking_point_a_m)}m vs ${Math.round(s.braking_point_b_m)}m</span></div>`;
+      }
+      if (s.min_speed_a_kph === null && s.min_speed_b_kph === null) {
+        content += `<div class="p-restr">Telemetry restricted for car</div>`;
+      }
+      if (s.diagnosis) {
+        content += `<div class="p-diag">${s.diagnosis}</div>`;
+      }
+    } else if (currentMapMode === 'field') {
+      content += `
+        <div class="p-row"><span>Fastest:</span><b>${s.winner_name || 'Driver'}</b></div>
+        <div class="p-row"><span>Team:</span><span>${s.winner_team || 'Unknown'}</span></div>
+        <div class="p-row"><span>Time:</span><b>${s.best_time_ms ? (s.best_time_ms / 1000).toFixed(3) + 's' : '--'}</b></div>
+      `;
+    } else if (currentMapMode === 'f1-colors') {
+      const colLabel = s.f1_color === 'purple' ? 'Session Best (Purple)' : (s.f1_color === 'green' ? 'Personal Best (Green)' : 'Slower (Yellow)');
+      content += `
+        <div class="p-row"><span>Time:</span><b>${s.time_ms ? (s.time_ms / 1000).toFixed(3) + 's' : '--'}</b></div>
+        <div class="p-row"><span>Status:</span><span>${colLabel}</span></div>
+      `;
+    }
+
+    pop.innerHTML = content;
+    pop.classList.remove('hidden');
+
+    renderMinisectorCanvas(currentMinisectorSegments);
+
+    const dist = (s.start_m + s.end_m) / 2.0;
+    syncChartCursorToDist(dist);
+  }
+
+  function hideMinisectorPopover() {
+    const pop = document.getElementById('minisector-popover');
+    if (pop) pop.classList.add('hidden');
+    currentHoveredMinisector = null;
+    renderMinisectorCanvas(currentMinisectorSegments);
+  }
+
+  function syncChartCursorToDist(distM) {
+    const box = document.getElementById('charts');
+    if (!box) return;
+    const LAP_LEN = 5891;
+    const fx = Math.min(1.0, Math.max(0.0, distM / LAP_LEN));
+    const W = 1000;
+    box.querySelectorAll('.chart .xh').forEach((l) => {
+      l.setAttribute('x1', fx * W);
+      l.setAttribute('x2', fx * W);
+    });
+  }
+
+  function renderStandardComparisonLegend(driverA, driverB) {
+    const box = document.getElementById('map-legend-container');
+    if (!box) return;
+    box.innerHTML = `
+      <div class="legend">
+        <span><i style="background:var(--green)"></i>${driverA || 'Driver A'} (Faster)</span>
+        <span><i style="background:#2979ff"></i>${driverB || 'Driver B'} (Faster)</span>
+      </div>
+    `;
+  }
+
+  function renderF1Legend() {
+    const box = document.getElementById('map-legend-container');
+    if (!box) return;
+    box.innerHTML = `
+      <div class="legend">
+        <span><i style="background:var(--purple)"></i>Purple (Session Best)</span>
+        <span><i style="background:var(--green)"></i>Green (Personal Best)</span>
+        <span><i style="background:#ffd600"></i>Yellow (Slower)</span>
+      </div>
+    `;
+  }
+
+  function renderFieldWinsLegend(wins) {
+    const box = document.getElementById('map-legend-container');
+    if (!box) return;
+    if (!wins || wins.length === 0) {
+      box.innerHTML = '<div class="dim" style="font-size:11px;">No lap timing records available yet.</div>';
+      return;
+    }
+    let html = `
+      <div style="font-weight:650; font-size:12px; margin-bottom:4px;">Mini-Sector Wins (${wins.length} Drivers)</div>
+      <table class="field-wins-table">
+        <thead>
+          <tr><th>Driver</th><th>Team</th><th class="r">Sectors Won</th><th class="r">% Lap</th></tr>
+        </thead>
+        <tbody>
+    `;
+    wins.forEach((w) => {
+      html += `
+        <tr class="clickable" data-car="${w.car_idx}">
+          <td><span class="team-swatch" style="background:${w.color};"></span><b>${w.name}</b></td>
+          <td style="color:var(--text-3);">${w.team}</td>
+          <td class="r" style="font-weight:700;">${w.sectors_won}</td>
+          <td class="r" style="color:var(--text-2);">${w.pct}%</td>
+        </tr>
+      `;
+    });
+    html += `</tbody></table>`;
+    box.innerHTML = html;
+
+    box.querySelectorAll('tr.clickable').forEach((row) => {
+      row.addEventListener('click', () => {
+        const carIdx = row.dataset.car;
+        const selCarB = document.getElementById('ms-car-b');
+        if (selCarB) {
+          selCarB.value = carIdx;
+        }
+        setMapMode('lap-lap');
+      });
+    });
+  }
+
+  function renderTopLosses(losses) {
+    const body = document.getElementById('loss-list-body');
+    if (!body) return;
+    if (!losses || losses.length === 0) {
+      body.innerHTML = '<div class="empty">No significant time loss vs reference!</div>';
+      return;
+    }
+    let html = '';
+    losses.forEach((loss) => {
+      const diag = loss.diagnosis || 'Pace delta';
+      html += `
+        <div class="loss-item">
+          <div>
+            <div class="loss-name">${loss.name || 'Segment ' + loss.index}</div>
+            <div class="loss-diag">${diag}</div>
+          </div>
+          <div class="loss-val">+${loss.delta_s.toFixed(3)}s</div>
+        </div>
+      `;
+    });
+    body.innerHTML = html;
+  }
+
+  function renderOfficialSectors(sectors) {
+    const s1 = document.getElementById('sec-1-val');
+    const s2 = document.getElementById('sec-2-val');
+    const s3 = document.getElementById('sec-3-val');
+    if (!sectors || sectors.length < 3) return;
+
+    const applySector = (el, s) => {
+      if (!el || !s) return;
+      const t = s.time_ms ? (s.time_ms / 1000).toFixed(3) + 's' : '--';
+      el.textContent = t;
+      el.className = `f1-badge f1-${s.color || 'yellow'}`;
+    };
+
+    applySector(s1, sectors[0]);
+    applySector(s2, sectors[1]);
+    applySector(s3, sectors[2]);
+  }
+
+  function onMapCanvasPointerMove(e) {
+    const canvas = document.getElementById('laps-map-canvas');
+    if (!canvas || !currentMinisectorSegments || currentMinisectorSegments.length === 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const w = rect.width;
+    const h = rect.height;
+
+    const relX = (x / w) - 0.5;
+    const relY = (y / h) - 0.5;
+    let angle = Math.atan2(relY, relX) + Math.PI;
+    const frac = angle / (2 * Math.PI);
+    const segIdx = Math.min(currentMinisectorSegments.length - 1, Math.max(0, Math.floor(frac * currentMinisectorSegments.length)));
+    showMinisectorPopover(segIdx, e);
+  }
+
+  function onMapCanvasPointerLeave() {
+    hideMinisectorPopover();
+  }
+
+  function onMapCanvasPointerClick(e) {
+    onMapCanvasPointerMove(e);
+  }
+
   // --- Init on DOM Load ---
   window.addEventListener('DOMContentLoaded', () => {
     function safeRun(label, fn) {
@@ -4859,14 +6857,23 @@
     safeRun('initTabs', initTabs);
     safeRun('initSetupsTab', initSetupsTab);
     safeRun('initTracksTab', initTracksTab);
+    safeRun('initMinisectorSystem', initMinisectorSystem);
     safeRun('fetchPersonaSettings', fetchPersonaSettings);
     safeRun('fetchPortSettings', fetchPortSettings);
+    safeRun('fetchAudioCacheStats', fetchAudioCacheStats);
+    safeRun('fetchSeedDataStatus', fetchSeedDataStatus);
+    const btnReimport = document.getElementById('btn-reimport-seed');
+    if (btnReimport) {
+      btnReimport.addEventListener('click', reimportSeedData);
+    }
     safeRun('fetchUsageStatus', fetchUsageStatus);
     safeRun('fetchUsageHistory', fetchUsageHistory);
     if (el.btnRebuildMap) {
       el.btnRebuildMap.addEventListener('click', rebuildTrackMap);
     }
     safeRun('fetchTrackMap', fetchTrackMap);
+    safeRun('fetchTrackModel', fetchTrackModel);
+    safeRun('initTrackMapSystem', initTrackMapSystem);
     safeRun('startWatchdog', startWatchdog);
     safeRun('connectWebSocket', connectWebSocket);
   });

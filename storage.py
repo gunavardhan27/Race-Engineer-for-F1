@@ -244,8 +244,15 @@ class SessionStorage:
 
         try:
             while True:
-                item = self._queue.get()
+                try:
+                    item = self._queue.get(timeout=0.5)
+                except queue.Empty:
+                    if self._closed:
+                        break
+                    continue
+
                 if item is None:
+                    self._queue.task_done()
                     break
 
                 action, args = item

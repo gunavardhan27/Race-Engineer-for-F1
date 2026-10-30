@@ -449,9 +449,13 @@ class PersonalityEngine:
                 # Collision involving player
                 v1, v2 = ev.vehicle_1_idx, ev.vehicle_2_idx
                 if v1 == p or v2 == p:
+                    sev = getattr(ev, "severity", None)
+                    if sev == 0:
+                        # 2026: low severity touch: do not fire heavy collision roast
+                        return None
                     other_idx = v2 if v1 == p else v1
                     other_name = state.name(other_idx).split()[-1] if (other_idx is not None and state.name(other_idx)) else "him"
-                    return self.trigger("collision", state, {"name": other_name}, now=now)
+                    return self.trigger("collision", state, {"name": other_name, "severity": sev}, now=now)
 
             elif ev.code == "FLBK":
                 return self.trigger("flashback", state, {}, now=now)
@@ -499,10 +503,20 @@ class PersonalityEngine:
             # Start trigger at end of lap 1 vs grid position
             if rec.lap == 1 and rec.grid_position > 0:
                 diff = rec.grid_position - rec.position
+                reaction_str = ""
+                if state.session and getattr(state.session, "start_reaction_time", 0.0) > 0.0:
+                    reaction_str = f"reaction {state.session.start_reaction_time:.2f}"
+
                 if diff >= 2:
-                    return self.trigger("good_start", state, {"gained": diff}, now=now)
+                    out = self.trigger("good_start", state, {"gained": diff, "reaction": reaction_str}, now=now)
+                    if out and reaction_str and reaction_str not in out:
+                        out = f"{out.rstrip('.')}! {reaction_str.capitalize()}."
+                    return out
                 elif diff <= -2:
-                    return self.trigger("bad_start", state, {"lost": abs(diff)}, now=now)
+                    out = self.trigger("bad_start", state, {"lost": abs(diff), "reaction": reaction_str}, now=now)
+                    if out and reaction_str and reaction_str not in out:
+                        out = f"{out.rstrip('.')}! {reaction_str.capitalize()}."
+                    return out
 
             # Lost >= 2 positions in one lap
             if len(state.laps) >= 2:
@@ -530,7 +544,12 @@ class PersonalityEngine:
             ev = sig[1]
             ptype = getattr(ev, "penalty_type", None)
             sec = getattr(ev, "penalty_time", 0) or 0
-            is_tt = (getattr(state, "session_type", None) == 13) or getattr(state, "is_time_trial", False)
+            is_tt = (
+                getattr(state, "session_type", None) == 13
+                or getattr(state, "is_time_trial", False)
+                or (getattr(state, "session", None) and getattr(state.session, "session_type", None) == 13)
+                or getattr(state, "time_trial", None) is not None
+            )
             if is_tt:
                 return None
 
@@ -636,6 +655,10 @@ class PersonalityEngine:
                 return self.trigger("passed_stricken_car", state, ctx, now=now)
             elif cls_name == "overtake_switchback":
                 return self.trigger("overtake_switchback", state, ctx, now=now)
+            elif cls_name == "overtake_mode_pass":
+                return self.trigger("overtake_mode_pass", state, ctx, now=now)
+            elif cls_name == "around_the_outside":
+                return self.trigger("around_the_outside", state, ctx, now=now)
             elif cls_name == "divebomb":
                 self._last_divebomb_time = now
                 self._last_divebomb_driver = name
@@ -654,9 +677,21 @@ class PersonalityEngine:
 
         elif kind == "overtaken_confirmed":
             rec = sig[1]
+            cls_name = rec.get("classification", "fair_pass_against")
             name = rec.get("other_driver_name", "he")
+            corner = rec.get("corner_name", "the corner")
             pos = rec.get("position", state.me.position if state.me else 0)
-            ctx = {"name": name, "pos": pos}
+            ctx = {"name": name, "pos": pos, "corner": corner}
+
+            if cls_name == "divebombed_by":
+                return self.trigger("divebombed_by", state, ctx, now=now)
+            elif cls_name == "forced_off_by":
+                return self.trigger("forced_off_by", state, ctx, now=now)
+            elif cls_name == "fair_pass_against":
+                res = self.trigger("fair_pass_against", state, ctx, now=now)
+                if not res:
+                    res = self.trigger("overtaken", state, ctx, now=now)
+                return res
             return self.trigger("overtaken", state, ctx, now=now)
 
         elif kind == "defend_warning":
