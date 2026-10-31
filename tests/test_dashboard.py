@@ -277,3 +277,64 @@ def test_token_authentication():
     resp = client.get(f"/api/sessions?token={token}")
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+def test_session_adaptation_and_tyre_deg():
+    """Verify session fields in snapshot, real-time tyre deg fallback, and timing tower best laps."""
+    from f1telemetry.state import RaceState
+    from f1telemetry.packets import Session, CarDamage, CarStatus, LapData
+    import math
+
+    state = RaceState(ptt_action=1)
+    state.player = 0
+    state.last_packet_time = 100.0
+
+    # 1. Practice Session: Verify session type and real-time tyre wear fallback
+    state.session = Session(
+        weather=0, track_temp=35, air_temp=25, total_laps=0, track_length_m=5000,
+        session_type=1, track_id=17, time_left_s=2400, pit_speed_limit=80, paused=False,
+        safety_car=0, forecast=[], pit_ideal_lap=0, pit_latest_lap=0, pit_rejoin_pos=0
+    )
+    # Give player status (tyres 2 laps old, mediums) and damage (5.4% wear on front left)
+    state.status = [CarStatus(
+        fuel_mix=1, brake_bias=56, fuel_in_tank=20.0, fuel_capacity=110.0, fuel_laps_delta=0.0,
+        drs_allowed=True, actual_compound=17, visual_compound=17, tyre_age_laps=2,
+        fia_flag=0, ers_store_j=2000000.0, ers_mode=1
+    )]
+    state.damage = [CarDamage(
+        tyre_wear=(4.0, 4.2, 5.4, 4.8), tyre_damage=(0, 0, 0, 0), brake_damage=(0, 0, 0, 0),
+        front_left_wing=0, front_right_wing=0, rear_wing=0, floor=0, diffuser=0, sidepod=0,
+        gearbox=0, engine=0
+    )]
+    state.lap = [LapData(
+        last_lap_ms=0, current_lap_ms=45000, gap_to_car_ahead_ms=0, gap_to_leader_ms=0,
+        lap_distance=2500.0, position=3, lap_num=1, pit_status=0, num_pit_stops=0, sector=1,
+        lap_invalid=False, penalties_s=0, result_status=2
+    )]
+
+    snap = state.snapshot()
+    assert snap["is_practice"] is True
+    assert snap["is_quali"] is False
+    assert snap["is_race"] is False
+    assert snap["session_type_name"] == "Practice 1"
+    assert snap["session_time_left_s"] == 2400
+    # Wear per lap must be calculated in real-time even with 0 completed laps in self.laps!
+    assert snap["tyres"]["wear_pct_per_lap"] is not None
+    # 5.4% / (2 + 2500/5000 = 2.5 laps) = 2.16%
+    assert 2.0 <= snap["tyres"]["wear_pct_per_lap"] <= 2.3
+
+    # 2. Qualifying Session: Check cutoff and best flying laps in timing tower
+    state.session.session_type = 5  # Q1
+    state.best_laps_all_cars = {0: 91500, 1: 90800}
+    snap_q = state.snapshot()
+    assert snap_q["is_quali"] is True
+    assert snap_q["session_type_name"] == "Qualifying 1"
+    assert snap_q["best_lap_s"] == 91.5
+    assert snap_q["session_best_s"] == 90.8
+    assert snap_q["gap_to_pole"] == 0.7
+
+    tower = state.timing_tower()
+    assert len(tower) == 1
+    assert tower[0]["best_lap_s"] == 91.5
+    assert tower[0]["current_lap_s"] == 45.0
+    assert tower[0]["is_in_pit"] is False

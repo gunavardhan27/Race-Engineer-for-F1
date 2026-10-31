@@ -213,6 +213,10 @@ def build_live_payload(
         payload["car_positions"] = []
         payload["has_track_outline"] = False
 
+    t_mod = getattr(track_map, "track_model", None) if track_map else None
+    payload["has_track_model"] = bool(t_mod and getattr(t_mod, "is_ready", False))
+    payload["track_model_coverage_pct"] = getattr(t_mod, "coverage_pct", 0.0) if t_mod else 0.0
+
     payload["track_id"] = state.session.track_id if state.session else None
     payload["last_packet_time"] = state.last_packet_time
     payload["type"] = "telemetry"

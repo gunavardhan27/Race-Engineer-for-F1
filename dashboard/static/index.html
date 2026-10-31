@@ -74,6 +74,7 @@
       
       <div class="hud-bar">
         <span class="chip ok" id="flag-chip"><span class="dot"></span><span id="flag-text">Green flag</span></span>
+        <span class="chip info" id="session-chip"><span class="dot" style="background:var(--accent)"></span><span id="session-name">RACE</span> · <span id="session-timer">--</span></span>
         <span class="chip info" id="tyre-chip">
           <span class="tyre M" id="tyre-chip-badge" style="width:14px;height:14px;border-width:2px;font-size:0"></span>
           <span id="tyre-chip-text">Medium · 0 laps</span>
@@ -102,28 +103,28 @@
       <div class="full">
         <!-- Top Hero Stats Strip -->
         <div class="hero" id="hero">
-          <div class="card stat">
-            <span class="label">Position</span>
+          <div class="card stat" id="hero-card-pos">
+            <span class="label" id="h-pos-label">Position</span>
             <div class="value" id="h-pos">P--</div>
             <div class="sub" id="h-pos-s"><span class="up">▲ 0</span> from grid</div>
           </div>
-          <div class="card stat">
-            <span class="label">Lap</span>
+          <div class="card stat" id="hero-card-lap">
+            <span class="label" id="h-lap-label">Lap</span>
             <div class="value" id="h-lap">--<small> / --</small></div>
             <div class="bar"><i id="h-lap-bar" style="width:0%"></i></div>
           </div>
-          <div class="card stat">
-            <span class="label">Last lap</span>
+          <div class="card stat" id="hero-card-last">
+            <span class="label" id="h-last-label">Last lap</span>
             <div class="value" id="h-last">--:--.---</div>
             <div class="sub" id="h-last-s"><span class="muted">--</span> to best</div>
           </div>
-          <div class="card stat">
-            <span class="label">Gap ahead</span>
+          <div class="card stat" id="hero-card-ahead">
+            <span class="label" id="h-ahead-label">Gap ahead</span>
             <div class="value" id="h-ahead">--</div>
             <div class="sub" id="h-ahead-s"><span class="dim">--</span></div>
           </div>
-          <div class="card stat">
-            <span class="label">Gap behind</span>
+          <div class="card stat" id="hero-card-behind">
+            <span class="label" id="h-behind-label">Gap behind</span>
             <div class="value" id="h-behind">--</div>
             <div class="sub" id="h-behind-s"><span class="dim">--</span></div>
           </div>
@@ -383,7 +384,7 @@
                       <th>Driver</th>
                       <th class="r">Interval</th>
                       <th class="r">To Leader</th>
-                      <th class="r">Last Lap</th>
+                      <th class="r" id="th-lap-col">Last Lap</th>
                       <th>Tyre</th>
                       <th class="r">Stops</th>
                       <th class="r">Penalties</th>
@@ -1095,6 +1096,6 @@
     </section>
   </main>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20261031b"></script>
 </body>
 </html>

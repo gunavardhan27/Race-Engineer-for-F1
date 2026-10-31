@@ -18,9 +18,34 @@ from f1telemetry.state import TRACKS
 
 log = logging.getLogger("engineer.knowledge")
 
+TRACK_ALIASES: dict[str, str] = {
+    "red bull ring": "austria",
+    "red bull ring reverse": "austria",
+    "silverstone reverse": "silverstone",
+    "zandvoort reverse": "netherlands",
+    "zandvoort": "netherlands",
+    "melbourne": "australia",
+    "shanghai": "china",
+    "barcelona": "spain_catalunya",
+    "montreal": "canada",
+    "hungaroring": "hungary",
+    "spa": "belgium",
+    "monza": "italy_monza",
+    "suzuka": "japan",
+    "interlagos": "brazil",
+    "mexico city": "mexico",
+    "baku": "azerbaijan",
+    "losail": "qatar",
+    "jeddah": "saudi_arabia",
+    "imola": "imola",
+    "miami": "miami",
+    "las vegas": "las_vegas",
+    "monaco": "monaco",
+}
+
 
 def track_to_slug(track_id_or_name: int | str) -> str:
-    """Normalizes track id or name to filesystem slug."""
+    """Normalizes track id or name to filesystem slug, checking TRACK_ALIASES."""
     if isinstance(track_id_or_name, int):
         track_name = TRACKS.get(track_id_or_name, f"track_{track_id_or_name}")
     else:
@@ -28,31 +53,75 @@ def track_to_slug(track_id_or_name: int | str) -> str:
     slug = track_name.lower().replace(" ", "_").replace("-", "_")
     if slug.endswith(".md"):
         slug = slug[:-3]
+
+    raw_lower = track_name.lower()
+    if raw_lower in TRACK_ALIASES:
+        return TRACK_ALIASES[raw_lower]
+    slug_spaced = slug.replace("_", " ")
+    if slug_spaced in TRACK_ALIASES:
+        return TRACK_ALIASES[slug_spaced]
     return slug
 
 
 def parse_corners_list(corners_text: str) -> list[dict[str, Any]]:
-    """Parses Corners markdown section into list of {number, name, description}."""
+    """Parses Corners markdown section into list of {number, name, description}.
+    Supports numbered lists (1. Copse: Desc), bullet points (- 1. Copse: Desc),
+    and turn prefixes (- T1 Sainte Devote (sector 1): Desc, - Turn 3: Desc).
+    """
     corners: list[dict[str, Any]] = []
     for line in corners_text.splitlines():
         line_str = line.strip()
-        if not line_str:
+        if not line_str or line_str.startswith("<!--"):
             continue
-        m = re.match(r"^(\d+)\.\s*([^:]+?)\s*:\s*(.*)$", line_str)
+
+        # Format A: 1. Name: Description  OR  - 1. Name: Description
+        m = re.match(r"^(?:-\s*)?(\d+)\.\s*([^:]+?)\s*:\s*(.*)$", line_str)
         if m:
             corners.append({
                 "number": int(m.group(1)),
                 "name": m.group(2).strip(),
                 "description": m.group(3).strip(),
             })
-        else:
-            m2 = re.match(r"^(\d+)\.\s*(.*)$", line_str)
-            if m2:
-                corners.append({
-                    "number": int(m2.group(1)),
-                    "name": m2.group(2).strip(),
-                    "description": "",
-                })
+            continue
+
+        # Format B: - T1 Name (sector 1): Description  OR  - Turn 1: Description
+        m_turn = re.match(r"^(?:-\s*)?T(?:urn\s*)?(\d+)(?:[^\w\s]\d+)?\s*(.*?)\s*:\s*(.*)$", line_str, re.IGNORECASE)
+        if m_turn:
+            turn_num = int(m_turn.group(1))
+            turn_name_part = m_turn.group(2).strip()
+            if not turn_name_part:
+                turn_name = f"Turn {turn_num}"
+            elif turn_name_part.startswith("(") and turn_name_part.endswith(")"):
+                turn_name = f"Turn {turn_num} {turn_name_part}"
+            else:
+                turn_name = turn_name_part
+            corners.append({
+                "number": turn_num,
+                "name": turn_name,
+                "description": m_turn.group(3).strip(),
+            })
+            continue
+
+        # Format C: 1. Name without colon
+        m2 = re.match(r"^(?:-\s*)?(\d+)\.\s*(.*)$", line_str)
+        if m2:
+            corners.append({
+                "number": int(m2.group(1)),
+                "name": m2.group(2).strip(),
+                "description": "",
+            })
+            continue
+
+        # Format D: - T1 Name without colon
+        m3 = re.match(r"^(?:-\s*)?T(?:urn\s*)?(\d+)\s*(.*)$", line_str, re.IGNORECASE)
+        if m3:
+            turn_num = int(m3.group(1))
+            turn_name = m3.group(2).strip() or f"Turn {turn_num}"
+            corners.append({
+                "number": turn_num,
+                "name": turn_name,
+                "description": "",
+            })
     return corners
 
 
@@ -139,6 +208,11 @@ class KnowledgeBase:
         if not track_file.is_file():
             # Try matching with simple lowercase
             track_file = self.tracks_dir / f"{track_name.lower()}.md"
+
+        if not track_file.is_file():
+            alias = TRACK_ALIASES.get(track_name.lower())
+            if alias:
+                track_file = self.tracks_dir / f"{alias}.md"
 
         if not track_file.is_file():
             log.info("No track knowledge file found for '%s' (%s)", track_name, track_file.name)

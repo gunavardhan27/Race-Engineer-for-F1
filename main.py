@@ -643,26 +643,17 @@ class Engineer:
                 now_ts = self.state.session_time if self.state.session_time > 0 else time.monotonic()
                 if sig[0] == "ptt":
                     self.on_ptt(sig[1])
-                elif sig[0] == "new_session":
-                    self.pace.reset_session()
-                    self._reload_session_if_resumed()
-                    if self.tracker:
-                        self.tracker.on_reset(self.state.session_uid, sig[1])
-                    if self.state.my_setup:
-                        self._on_setup_change(self.state.my_setup, self.state.current_setup_fingerprint)
-                    if self.state.session and self.state.session.track_id is not None:
-                        t_id = self.state.session.track_id
-                        self.knowledge.load_track(t_id)
-                        t_len = self.state.track_length
-                        loaded_m = self.track_model_storage.load_model(t_id, t_len)
-                        if loaded_m:
-                            self.track_model = loaded_m
-                            self.overtake_detector.set_track_model(loaded_m)
-                            self.defend_detector.set_track_model(loaded_m)
-                        self.track_model_builder = TrackModelBuilder(t_id, t_len, knowledge_base=self.knowledge)
-                        tot_l = self.state.session.total_laps if self.state.session and self.state.session.total_laps else 52
-                        self.tyre_model = TyreDegradationModel(track_total_laps=tot_l)
-                        self.strategy_predictor = StrategyPredictor(deg_model=self.tyre_model)
+                elif sig[0] in ("new_session", "track_change"):
+                    if sig[0] == "new_session":
+                        self.pace.reset_session()
+                        self._reload_session_if_resumed()
+                        if self.tracker:
+                            self.tracker.on_reset(self.state.session_uid, sig[1])
+                        if self.state.my_setup:
+                            self._on_setup_change(self.state.my_setup, self.state.current_setup_fingerprint)
+                    t_id = sig[1] if sig[0] == "track_change" else (self.state.session.track_id if self.state.session else None)
+                    if t_id is not None:
+                        self._init_track_session(t_id)
                 elif sig[0] == "setup_change":
                     self._on_setup_change(sig[1], sig[2])
                 elif sig[0] == "lap":
@@ -674,7 +665,7 @@ class Engineer:
                     self._update_lap_analysis()
                     if self.broadcaster:
                         self.broadcaster.broadcast("lap_minisectors_update", {
-                            "car_idx": rec.car_idx,
+                            "car_idx": getattr(rec, "car_idx", self.state.player or 0),
                             "lap_num": rec.lap,
                             "theoretical_best": self.state.my_theoretical_best,
                             "biggest_loss": self.state.biggest_loss_segment,
@@ -815,6 +806,10 @@ class Engineer:
                         frame = encode_positions_frame(seq, ts_ms, t_id, cars)
                         self.positions_broadcaster.broadcast_frame(frame)
 
+                # Ensure track session is initialized
+                if self.track_model_builder is None and self.state.session and self.state.session.track_id is not None:
+                    self._init_track_session(self.state.session.track_id)
+
                 # Update track model from multi-car telemetry
                 if self.track_model_builder:
                     self.track_model_builder.feed_race_state(self.state)
@@ -823,6 +818,8 @@ class Engineer:
                         new_m = self.track_model_builder.build_model()
                         if new_m and (new_m.coverage_pct >= 20.0 or len(new_m.corners) > 0):
                             self.track_model = new_m
+                            if self.track_map:
+                                self.track_map.track_model = new_m
                             self.overtake_detector.set_track_model(new_m)
                             self.defend_detector.set_track_model(new_m)
                             if new_m.is_ready:
@@ -969,6 +966,27 @@ class Engineer:
                 self.state.best_setup_info = None
         except Exception as e:
             log.debug("Error in _on_setup_change: %s", e)
+
+    def _init_track_session(self, track_id: int):
+        """Initializes knowledge, track map, track model builder, and strategy predictor for current track."""
+        if self.track_model_builder and self.track_model_builder.track_id == track_id:
+            return
+        t_len = self.state.track_length
+        self.knowledge.load_track(track_id)
+        if self.track_map:
+            self.track_map.set_track(track_id)
+        loaded_m = self.track_model_storage.load_model(track_id, t_len)
+        if loaded_m:
+            self.track_model = loaded_m
+            if self.track_map:
+                self.track_map.track_model = loaded_m
+            self.overtake_detector.set_track_model(loaded_m)
+            self.defend_detector.set_track_model(loaded_m)
+        self.track_model_builder = TrackModelBuilder(track_id, t_len, knowledge_base=self.knowledge)
+        tot_l = self.state.session.total_laps if self.state.session and self.state.session.total_laps else 52
+        self.tyre_model = TyreDegradationModel(track_total_laps=tot_l)
+        self.strategy_predictor = StrategyPredictor(deg_model=self.tyre_model)
+        log.info("Initialized track session: track_id=%s, track_len=%.1fm", track_id, t_len)
 
     def on_ptt(self, down: bool):
         self.radio.ptt_down = down

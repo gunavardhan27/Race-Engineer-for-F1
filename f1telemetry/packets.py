@@ -24,6 +24,7 @@ KNOWN_FORMATS = {2025, 2026}
 LATEST_FORMAT = 2026
 
 HEADER = struct.Struct("<HBBBBBQfIIBB")                       # 29 bytes
+HEADER_SIZES = {2025: 29, 2026: 29}
 MOTION = struct.Struct("<ffffffhhhhhhffffff")                 # 2025: 60 bytes per car
 MOTION_2026 = struct.Struct("<ffffff6h3hfff")                 # 2026: 54 bytes per car (int16 g-force / 1000)
 LAP = struct.Struct("<IIHBHBHBHBfff" + "B" * 15 + "HHBfB")    # 57 bytes per car

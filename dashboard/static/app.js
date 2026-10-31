@@ -60,47 +60,47 @@
     // Tyres
     compoundBadge: document.getElementById('tyre-compound-badge'),
     tyreAge: document.getElementById('tyre-age-badge'),
-    tyreWearRate: document.getElementById('tyre-wear-rate'),
-    wearFL: document.getElementById('wear-fl'),
-    wearFR: document.getElementById('wear-fr'),
-    wearRL: document.getElementById('wear-rl'),
-    wearRR: document.getElementById('wear-rr'),
-    tempFL: document.getElementById('temp-fl'),
-    tempFR: document.getElementById('temp-fr'),
-    tempRL: document.getElementById('temp-rl'),
-    tempRR: document.getElementById('temp-rr'),
-    barFL: document.getElementById('bar-fl'),
-    barFR: document.getElementById('bar-fr'),
-    barRL: document.getElementById('bar-rl'),
-    barRR: document.getElementById('bar-rr'),
+    tyreWearRate: document.getElementById('wear-chip') || document.getElementById('tyre-wear-rate'),
+    wearFL: document.getElementById('fl-wear') || document.getElementById('wear-fl'),
+    wearFR: document.getElementById('fr-wear') || document.getElementById('wear-fr'),
+    wearRL: document.getElementById('rl-wear') || document.getElementById('wear-rl'),
+    wearRR: document.getElementById('rr-wear') || document.getElementById('wear-rr'),
+    tempFL: document.getElementById('fl-temp') || document.getElementById('temp-fl'),
+    tempFR: document.getElementById('fr-temp') || document.getElementById('temp-fr'),
+    tempRL: document.getElementById('rl-temp') || document.getElementById('temp-rl'),
+    tempRR: document.getElementById('rr-temp') || document.getElementById('temp-rr'),
+    barFL: document.getElementById('fl-bar') || document.getElementById('bar-fl'),
+    barFR: document.getElementById('fr-bar') || document.getElementById('bar-fr'),
+    barRL: document.getElementById('rl-bar') || document.getElementById('bar-rl'),
+    barRR: document.getElementById('rr-bar') || document.getElementById('bar-rr'),
 
     // Fuel & ERS
-    fuelKg: document.getElementById('val-fuel-kg'),
-    fuelDelta: document.getElementById('val-fuel-delta'),
-    fuelBurn: document.getElementById('val-fuel-burn'),
-    ersPct: document.getElementById('val-ers-pct'),
-    ersBar: document.getElementById('ers-bar-fill'),
+    fuelKg: document.getElementById('f-tank') || document.getElementById('val-fuel-kg'),
+    fuelDelta: document.getElementById('f-margin') || document.getElementById('val-fuel-delta'),
+    fuelBurn: document.getElementById('f-burn') || document.getElementById('val-fuel-burn'),
+    ersPct: document.getElementById('ers-v') || document.getElementById('val-ers-pct'),
+    ersBar: document.getElementById('ers-bar') || document.getElementById('ers-bar-fill'),
 
     // Strategy & Weather
-    weatherNow: document.getElementById('val-weather-now'),
-    ambientTemps: document.getElementById('val-ambient-temps'),
-    nextRain: document.getElementById('val-next-rain'),
+    weatherNow: document.getElementById('val-weather') || document.getElementById('val-weather-now'),
+    ambientTemps: document.getElementById('val-track-temp') || document.getElementById('val-ambient-temps'),
+    nextRain: document.getElementById('val-rain-prob') || document.getElementById('val-next-rain'),
     pitWindow: document.getElementById('val-pit-window'),
 
     // Damage
-    damageBadge: document.getElementById('damage-status-badge'),
-    dmgFlWing: document.getElementById('dmg-fl-wing'),
-    dmgFrWing: document.getElementById('dmg-fr-wing'),
+    damageBadge: document.getElementById('dmg-chip') || document.getElementById('damage-status-badge'),
+    dmgFlWing: document.getElementById('dmg-flw') || document.getElementById('dmg-fl-wing'),
+    dmgFrWing: document.getElementById('dmg-frw') || document.getElementById('dmg-fr-wing'),
     dmgRearWing: document.getElementById('dmg-rear-wing'),
     dmgFloor: document.getElementById('dmg-floor'),
     dmgDiffuser: document.getElementById('dmg-diffuser'),
-    dmgSidepod: document.getElementById('dmg-sidepod'),
-    dmgGearbox: document.getElementById('dmg-gearbox'),
-    dmgEngine: document.getElementById('dmg-engine'),
+    dmgSidepod: document.getElementById('dmg-side') || document.getElementById('dmg-sidepod'),
+    dmgGearbox: document.getElementById('dmg-gear') || document.getElementById('dmg-gearbox'),
+    dmgEngine: document.getElementById('dmg-eng') || document.getElementById('dmg-engine'),
 
     // Tower & Radio
-    towerTbody: document.getElementById('timing-tower-tbody'),
-    towerCount: document.getElementById('tower-count'),
+    towerTbody: document.getElementById('tower') || document.getElementById('timing-tower-tbody'),
+    towerCount: document.getElementById('cars-chip') || document.getElementById('tower-count'),
     radioLog: document.getElementById('radio-log'),
 
     // Track Map & G-Force (Prompt 23 Two-Layer Canvas & Replay)
@@ -231,23 +231,24 @@
     btnCloseDupModal: document.getElementById('btn-close-dup-modal'),
 
     // Track Notes Editor
-    tracksSearchInput: document.getElementById('tracks-search-input'),
-    tracksListContainer: document.getElementById('tracks-list-container'),
+    tracksSearchInput: document.getElementById('t-search') || document.getElementById('tracks-search-input'),
+    tracksListContainer: document.getElementById('track-list') || document.getElementById('tracks-list-container'),
     tracksCountBadge: document.getElementById('tracks-count-badge'),
-    trackEditorHeading: document.getElementById('track-editor-heading'),
-    trackEditorFileBadge: document.getElementById('track-editor-file-badge'),
+    trackEditorHeading: document.getElementById('tracks-h') || document.getElementById('track-editor-heading'),
+    trackEditorFileBadge: document.getElementById('tracks-file-path') || document.getElementById('track-editor-file-badge'),
     btnTrackModeForm: document.getElementById('btn-track-mode-form'),
     btnTrackModeRaw: document.getElementById('btn-track-mode-raw'),
     trackEditorFormView: document.getElementById('track-editor-form-view'),
     trackEditorRawView: document.getElementById('track-editor-raw-view'),
-    trackCornersTbody: document.getElementById('track-corners-tbody'),
-    btnAddCornerRow: document.getElementById('btn-add-corner-row'),
-    trackSectionOvertaking: document.getElementById('track-section-overtaking'),
+    trackCornersTbody: document.getElementById('corner-edit') || document.getElementById('track-corners-tbody'),
+    btnAddCornerRow: document.getElementById('btn-add-corner') || document.getElementById('btn-add-corner-row'),
+    trackSectionOvertaking: document.getElementById('t-ot') || document.getElementById('track-section-overtaking'),
     trackSectionTyres: document.getElementById('track-section-tyres'),
     trackSectionSetupNotes: document.getElementById('track-section-setup-notes'),
     trackRawContent: document.getElementById('track-raw-content'),
     trackSaveStatus: document.getElementById('track-save-status'),
-    btnSaveTrackNotes: document.getElementById('btn-save-track-notes'),
+    btnSaveTrackNotes: document.getElementById('btn-save-track') || document.getElementById('btn-save-track-notes'),
+    btnDiscardTrack: document.getElementById('btn-discard-track'),
 
     setupsRankTbody: document.getElementById('setups-rank-tbody'),
     diffSelectA: document.getElementById('diff-select-a'),
@@ -353,8 +354,10 @@
   let cachedTrackId = null;
   let isFetchingOutline = false;
   let isFetchingModel = false;
+  let lastModelPollTime = 0;
   let gHistory = []; // array of [lat, lon]
   let runningBounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
+  let sessionBreadcrumbs = []; // [[x, z], ...] live track breadcrumb trail
 
   let cachedSafetyCarStatus = 0;
   let cachedMarshalZones = [];
@@ -397,6 +400,7 @@
     markers: [],
   };
   let replayPollTimer = null;
+  let cachedIsQualiOrPractice = false;
 
   // --- Helper: Lap Time Formatter ---
   function formatLapTime(seconds) {
@@ -600,104 +604,110 @@
     }
 
     // 3. Hero Strip
-    el.position.textContent = data.position !== null ? data.position : '--';
-    el.lap.textContent = data.lap !== null ? data.lap : '--';
-    el.totalLaps.textContent = data.total_laps !== null ? data.total_laps : '--';
-    el.lastLap.textContent = formatLapTime(data.last_lap_s);
-    if (data.pit_stops !== null) {
+    if (el.position) el.position.textContent = data.position !== null ? data.position : '--';
+    if (el.lap) el.lap.textContent = data.lap !== null ? data.lap : '--';
+    if (el.totalLaps) el.totalLaps.textContent = data.total_laps !== null ? data.total_laps : '--';
+    if (el.lastLap) el.lastLap.textContent = formatLapTime(data.last_lap_s);
+    if (data.pit_stops !== null && el.stint) {
       el.stint.textContent = `STINT ${data.pit_stops + 1}`;
     }
 
     // Speed & Gear
-    if (data.speed_kph !== undefined && data.speed_kph !== null) {
+    if (el.speed && data.speed_kph !== undefined && data.speed_kph !== null) {
       el.speed.textContent = data.speed_kph;
     }
-    if (data.gear !== undefined && data.gear !== null) {
+    if (el.gear && data.gear !== undefined && data.gear !== null) {
       el.gear.textContent = data.gear === 0 ? 'N' : data.gear === -1 ? 'R' : data.gear;
     }
-    if (data.regs_2026) {
-      if (data.active_aero && data.active_aero.mode === 'straight') {
-        el.drs.textContent = 'STRAIGHT';
-        el.drs.classList.add('active');
-      } else if (data.overtake_mode && data.overtake_mode.active) {
-        el.drs.textContent = 'OT ACTIVE';
-        el.drs.classList.add('active');
-      } else if (data.overtake_mode && data.overtake_mode.available) {
-        el.drs.textContent = 'OT READY';
-        el.drs.classList.add('active');
+    if (el.drs) {
+      if (data.regs_2026) {
+        if (data.active_aero && data.active_aero.mode === 'straight') {
+          el.drs.textContent = 'STRAIGHT';
+          el.drs.classList.add('active');
+        } else if (data.overtake_mode && data.overtake_mode.active) {
+          el.drs.textContent = 'OT ACTIVE';
+          el.drs.classList.add('active');
+        } else if (data.overtake_mode && data.overtake_mode.available) {
+          el.drs.textContent = 'OT READY';
+          el.drs.classList.add('active');
+        } else {
+          el.drs.textContent = 'CORNER';
+          el.drs.classList.remove('active');
+        }
       } else {
-        el.drs.textContent = 'CORNER';
-        el.drs.classList.remove('active');
-      }
-    } else {
-      el.drs.textContent = 'DRS';
-      if (data.drs) {
-        el.drs.classList.add('active');
-      } else {
-        el.drs.classList.remove('active');
+        el.drs.textContent = 'DRS';
+        if (data.drs) {
+          el.drs.classList.add('active');
+        } else {
+          el.drs.classList.remove('active');
+        }
       }
     }
 
     // 4. Gaps
     if (data.car_ahead) {
-      el.gapAheadName.textContent = data.car_ahead.name || 'CAR AHEAD';
-      el.gapAheadTime.textContent = data.car_ahead.gap_s !== null ? `+${data.car_ahead.gap_s.toFixed(2)}s` : '--';
+      if (el.gapAheadName) el.gapAheadName.textContent = data.car_ahead.name || 'CAR AHEAD';
+      if (el.gapAheadTime) el.gapAheadTime.textContent = data.car_ahead.gap_s !== null ? `+${data.car_ahead.gap_s.toFixed(2)}s` : '--';
       const trend = data.car_ahead.trend_s_per_lap;
-      if (trend !== null) {
-        if (trend < 0) {
-          el.gapAheadTrend.className = 'trend-arrow gaining';
-          el.gapAheadTrend.textContent = `▲ ${trend.toFixed(2)}s/l (gaining)`;
-        } else if (trend > 0) {
-          el.gapAheadTrend.className = 'trend-arrow losing';
-          el.gapAheadTrend.textContent = `▼ +${trend.toFixed(2)}s/l (losing)`;
+      if (el.gapAheadTrend) {
+        if (trend !== null) {
+          if (trend < 0) {
+            el.gapAheadTrend.className = 'trend-arrow gaining';
+            el.gapAheadTrend.textContent = `▲ ${trend.toFixed(2)}s/l (gaining)`;
+          } else if (trend > 0) {
+            el.gapAheadTrend.className = 'trend-arrow losing';
+            el.gapAheadTrend.textContent = `▼ +${trend.toFixed(2)}s/l (losing)`;
+          } else {
+            el.gapAheadTrend.className = 'trend-arrow neutral';
+            el.gapAheadTrend.textContent = `▬ steady`;
+          }
         } else {
-          el.gapAheadTrend.className = 'trend-arrow neutral';
-          el.gapAheadTrend.textContent = `▬ steady`;
+          el.gapAheadTrend.textContent = '--';
         }
-      } else {
-        el.gapAheadTrend.textContent = '--';
       }
     } else {
-      el.gapAheadName.textContent = 'LEADER';
-      el.gapAheadTime.textContent = 'P1';
-      el.gapAheadTrend.textContent = '--';
+      if (el.gapAheadName) el.gapAheadName.textContent = 'LEADER';
+      if (el.gapAheadTime) el.gapAheadTime.textContent = 'P1';
+      if (el.gapAheadTrend) el.gapAheadTrend.textContent = '--';
     }
 
     if (data.car_behind) {
-      el.gapBehindName.textContent = data.car_behind.name || 'CAR BEHIND';
-      el.gapBehindTime.textContent = data.car_behind.gap_s !== null ? `+${data.car_behind.gap_s.toFixed(2)}s` : '--';
+      if (el.gapBehindName) el.gapBehindName.textContent = data.car_behind.name || 'CAR BEHIND';
+      if (el.gapBehindTime) el.gapBehindTime.textContent = data.car_behind.gap_s !== null ? `+${data.car_behind.gap_s.toFixed(2)}s` : '--';
       const trend = data.car_behind.trend_s_per_lap;
-      if (trend !== null) {
-        if (trend > 0) {
-          el.gapBehindTrend.className = 'trend-arrow gaining';
-          el.gapBehindTrend.textContent = `▲ +${trend.toFixed(2)}s/l (pulling away)`;
-        } else if (trend < 0) {
-          el.gapBehindTrend.className = 'trend-arrow losing';
-          el.gapBehindTrend.textContent = `▼ ${trend.toFixed(2)}s/l (closing)`;
+      if (el.gapBehindTrend) {
+        if (trend !== null) {
+          if (trend > 0) {
+            el.gapBehindTrend.className = 'trend-arrow gaining';
+            el.gapBehindTrend.textContent = `▲ +${trend.toFixed(2)}s/l (pulling away)`;
+          } else if (trend < 0) {
+            el.gapBehindTrend.className = 'trend-arrow losing';
+            el.gapBehindTrend.textContent = `▼ ${trend.toFixed(2)}s/l (closing)`;
+          } else {
+            el.gapBehindTrend.className = 'trend-arrow neutral';
+            el.gapBehindTrend.textContent = `▬ steady`;
+          }
         } else {
-          el.gapBehindTrend.className = 'trend-arrow neutral';
-          el.gapBehindTrend.textContent = `▬ steady`;
+          el.gapBehindTrend.textContent = '--';
         }
-      } else {
-        el.gapBehindTrend.textContent = '--';
       }
     } else {
-      el.gapBehindName.textContent = 'NONE';
-      el.gapBehindTime.textContent = '--';
-      el.gapBehindTrend.textContent = '--';
+      if (el.gapBehindName) el.gapBehindName.textContent = 'NONE';
+      if (el.gapBehindTime) el.gapBehindTime.textContent = '--';
+      if (el.gapBehindTrend) el.gapBehindTrend.textContent = '--';
     }
 
     // 5. Tyres
     if (data.tyres) {
       const t = data.tyres;
-      if (t.compound) {
+      if (t.compound && el.compoundBadge) {
         el.compoundBadge.textContent = t.compound.toUpperCase();
         el.compoundBadge.className = `compound-badge compound-${t.compound.toLowerCase()}`;
       }
-      if (t.age_laps !== null) {
+      if (t.age_laps !== null && el.tyreAge) {
         el.tyreAge.textContent = `${t.age_laps} LAPS`;
       }
-      if (t.wear_pct_per_lap !== null) {
+      if (t.wear_pct_per_lap !== null && el.tyreWearRate) {
         el.tyreWearRate.textContent = `${t.wear_pct_per_lap}% / lap`;
       }
 
@@ -716,12 +726,14 @@
         const w = wear[c.key];
         const temp = temps[c.key];
 
-        if (w !== undefined && w !== null) {
+        if (c.wearEl && w !== undefined && w !== null) {
           c.wearEl.textContent = `${Math.round(w)}%`;
-          c.barEl.style.width = `${Math.min(w, 100)}%`;
-          c.barEl.style.backgroundColor = getWearColor(w);
+          if (c.barEl) {
+            c.barEl.style.width = `${Math.min(w, 100)}%`;
+            c.barEl.style.backgroundColor = getWearColor(w);
+          }
         }
-        if (temp !== undefined && temp !== null) {
+        if (c.tempEl && temp !== undefined && temp !== null) {
           c.tempEl.textContent = `${temp}°C`;
           c.tempEl.className = `temp-val mono ${getTempClass(temp)}`;
         }
@@ -730,37 +742,41 @@
 
     // 6. Fuel & ERS
     if (data.fuel) {
-      el.fuelKg.textContent = `${data.fuel.kg} kg`;
+      if (el.fuelKg) el.fuelKg.textContent = `${data.fuel.kg} kg`;
       const delta = data.fuel.laps_delta;
-      if (delta !== null) {
+      if (delta !== null && el.fuelDelta) {
         el.fuelDelta.textContent = `${delta >= 0 ? '+' : ''}${delta.toFixed(2)} laps`;
         el.fuelDelta.style.color = delta >= 0 ? 'var(--color-green)' : 'var(--color-red)';
       }
-      el.fuelBurn.textContent = data.fuel.kg_per_lap ? `${data.fuel.kg_per_lap} kg/l` : '--';
+      if (el.fuelBurn) el.fuelBurn.textContent = data.fuel.kg_per_lap ? `${data.fuel.kg_per_lap} kg/l` : '--';
     }
 
     if (data.ers_pct !== null && data.ers_pct !== undefined) {
-      el.ersPct.textContent = `${data.ers_pct}%`;
-      el.ersBar.style.width = `${Math.min(Math.max(data.ers_pct, 0), 100)}%`;
+      if (el.ersPct) el.ersPct.textContent = `${data.ers_pct}%`;
+      if (el.ersBar) el.ersBar.style.width = `${Math.min(Math.max(data.ers_pct, 0), 100)}%`;
     }
 
     // 7. Strategy & Weather
     if (data.weather) {
-      el.weatherNow.textContent = (data.weather.now || '--').toUpperCase();
-      el.ambientTemps.textContent = `Track: ${data.weather.track_c || '--'}°C | Air: ${data.weather.air_c || '--'}°C`;
-      if (data.weather.next_rain) {
-        el.nextRain.textContent = `RAIN in ${data.weather.next_rain.in_min}m (${data.weather.next_rain.pct}%)`;
-        el.nextRain.className = 'stat-medium highlight-amber';
-      } else {
-        el.nextRain.textContent = 'NO RAIN FORECAST';
-        el.nextRain.className = 'stat-medium highlight-cyan';
+      if (el.weatherNow) el.weatherNow.textContent = (data.weather.now || '--').toUpperCase();
+      if (el.ambientTemps) el.ambientTemps.textContent = `Track: ${data.weather.track_c || '--'}°C | Air: ${data.weather.air_c || '--'}°C`;
+      if (el.nextRain) {
+        if (data.weather.next_rain) {
+          el.nextRain.textContent = `RAIN in ${data.weather.next_rain.in_min}m (${data.weather.next_rain.pct}%)`;
+          el.nextRain.className = 'stat-medium highlight-amber';
+        } else {
+          el.nextRain.textContent = 'NO RAIN FORECAST';
+          el.nextRain.className = 'stat-medium highlight-cyan';
+        }
       }
     }
 
-    if (data.pit_window) {
-      el.pitWindow.textContent = `Laps ${data.pit_window.ideal_lap} - ${data.pit_window.latest_lap}`;
-    } else {
-      el.pitWindow.textContent = 'NOT SCHEDULED';
+    if (el.pitWindow) {
+      if (data.pit_window) {
+        el.pitWindow.textContent = `Laps ${data.pit_window.ideal_lap} - ${data.pit_window.latest_lap}`;
+      } else {
+        el.pitWindow.textContent = 'NOT SCHEDULED';
+      }
     }
 
     // 8. Damage
@@ -778,26 +794,32 @@
 
     let hasDamage = false;
     partsMap.forEach(p => {
+      if (!p.el) return;
       const val = dmg[p.key] || 0;
       p.el.textContent = `${val}%`;
       const parent = p.el.closest('.dmg-item');
-      if (val > 0) {
-        hasDamage = true;
-        parent.classList.add('damaged');
-      } else {
-        parent.classList.remove('damaged');
+      if (parent) {
+        if (val > 0) {
+          hasDamage = true;
+          parent.classList.add('damaged');
+        } else {
+          parent.classList.remove('damaged');
+        }
       }
     });
 
-    if (hasDamage) {
-      el.damageBadge.className = 'meta-pill pill-warn';
-      el.damageBadge.textContent = 'AERO/MECH DAMAGE DETECTED';
-    } else {
-      el.damageBadge.className = 'meta-pill pill-ok';
-      el.damageBadge.textContent = 'ALL SYSTEMS NOMINAL';
+    if (el.damageBadge) {
+      if (hasDamage) {
+        el.damageBadge.className = 'meta-pill pill-warn';
+        el.damageBadge.textContent = 'AERO/MECH DAMAGE DETECTED';
+      } else {
+        el.damageBadge.className = 'meta-pill pill-ok';
+        el.damageBadge.textContent = 'ALL SYSTEMS NOMINAL';
+      }
     }
 
     // 9. Timing Tower & Car Metadata
+    cachedIsQualiOrPractice = Boolean(data.is_quali || data.is_practice || (data.session_type >= 1 && data.session_type <= 9));
     if (data.timing_tower && Array.isArray(data.timing_tower)) {
       renderTimingTower(data.timing_tower);
       data.timing_tower.forEach(c => {
@@ -820,10 +842,23 @@
 
     // 10. Track Outline, Model & Map
     if (data.track_id !== undefined && data.track_id !== null) {
-      if (data.track_id !== cachedTrackId || (data.has_track_outline && !cachedOutline)) {
+      if (data.track_id !== cachedTrackId) {
         cachedTrackId = data.track_id;
+        cachedOutline = null;
+        cachedTrackModel = null;
+        sessionBreadcrumbs = [];
+        runningBounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
         fetchTrackMap();
         fetchTrackModel();
+      } else {
+        const now = Date.now();
+        if (data.has_track_outline && !cachedOutline) {
+          fetchTrackMap();
+        }
+        if (!cachedTrackModel && (now - lastModelPollTime > 2500)) {
+          lastModelPollTime = now;
+          fetchTrackModel();
+        }
       }
     }
 
@@ -852,57 +887,352 @@
     const lastPktEl = document.getElementById('last-packet');
     if (lastPktEl) lastPktEl.textContent = lastPacketTime > 0 ? 'just now' : 'never';
 
-    // Hero Strip
-    const hPos = document.getElementById('h-pos');
-    if (hPos) hPos.textContent = data.position !== null ? `P${data.position}` : 'P--';
-    const hPosS = document.getElementById('h-pos-s');
-    if (hPosS && data.grid_position !== undefined && data.position !== null) {
-      const diff = data.grid_position - data.position;
-      hPosS.innerHTML = diff > 0 ? `<span class="up">▲ ${diff}</span> from grid` : diff < 0 ? `<span class="warn">▼ ${Math.abs(diff)}</span> from grid` : `<span>▬ 0</span> from grid`;
+    // Session state classification & adaptive HUD
+    const stype = data.session_type || 0;
+    const isQuali = Boolean(data.is_quali || (stype >= 5 && stype <= 9));
+    const isPractice = Boolean(data.is_practice || (stype >= 1 && stype <= 4));
+    const isRace = Boolean(data.is_race || (stype >= 10 && stype <= 12) || (!isQuali && !isPractice));
+    cachedIsQualiOrPractice = isQuali || isPractice;
+
+    // Helper: Format session time remaining (e.g. 42:15 or 1:12:05)
+    const formatTimeRemaining = (seconds) => {
+      if (seconds === null || seconds === undefined || isNaN(seconds) || seconds < 0) return '--:--';
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      const pad = (n) => (n < 10 ? '0' + n : '' + n);
+      return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+    };
+
+    // Update Session Badge
+    const sessionName = document.getElementById('session-name');
+    const sessionTimer = document.getElementById('session-timer');
+    if (sessionName) {
+      sessionName.textContent = (data.session_type_name || (isQuali ? 'Qualifying' : isPractice ? 'Practice' : 'Race')).toUpperCase();
     }
-    const hLap = document.getElementById('h-lap');
-    if (hLap) {
-      hLap.innerHTML = `${data.lap !== null ? data.lap : '--'}<small> / ${data.total_laps !== null ? data.total_laps : '--'}</small>`;
-    }
-    const hLapBar = document.getElementById('h-lap-bar');
-    if (hLapBar && data.lap && data.total_laps) {
-      hLapBar.style.width = `${Math.min(100, Math.round((data.lap / data.total_laps) * 100))}%`;
-    }
-    const hLast = document.getElementById('h-last');
-    if (hLast) hLast.textContent = formatLapTime(data.last_lap_s);
-    const hAhead = document.getElementById('h-ahead');
-    if (hAhead) {
-      hAhead.textContent = data.car_ahead && data.car_ahead.gap_s !== null ? `+${data.car_ahead.gap_s.toFixed(2)}s` : (data.position === 1 ? 'LEADER' : '--');
-    }
-    const hAheadS = document.getElementById('h-ahead-s');
-    if (hAheadS) {
-      hAheadS.textContent = data.car_ahead ? (data.car_ahead.name || 'Ahead') : '--';
-    }
-    const hBehind = document.getElementById('h-behind');
-    if (hBehind) {
-      hBehind.textContent = data.car_behind && data.car_behind.gap_s !== null ? `+${data.car_behind.gap_s.toFixed(2)}s` : '--';
-    }
-    const hBehindS = document.getElementById('h-behind-s');
-    if (hBehindS) {
-      hBehindS.textContent = data.car_behind ? (data.car_behind.name || 'Behind') : '--';
+    if (sessionTimer) {
+      if (data.session_time_left_s !== null && data.session_time_left_s !== undefined && data.session_time_left_s > 0) {
+        sessionTimer.textContent = formatTimeRemaining(data.session_time_left_s);
+      } else if (isRace && data.lap !== null && data.total_laps !== null) {
+        sessionTimer.textContent = `L${data.lap}/${data.total_laps}`;
+      } else {
+        sessionTimer.textContent = isLive ? 'LIVE' : 'STANDBY';
+      }
     }
 
-    // Glance HUD
+    // Adaptive Hero Strip Labels & Content
+    const hPosLabel = document.getElementById('h-pos-label');
+    const hLapLabel = document.getElementById('h-lap-label');
+    const hLastLabel = document.getElementById('h-last-label');
+    const hAheadLabel = document.getElementById('h-ahead-label');
+    const hBehindLabel = document.getElementById('h-behind-label');
+
+    const hPos = document.getElementById('h-pos');
+    const hPosS = document.getElementById('h-pos-s');
+    const hLap = document.getElementById('h-lap');
+    const hLapBar = document.getElementById('h-lap-bar');
+    const hLast = document.getElementById('h-last');
+    const hLastS = document.getElementById('h-last-s');
+    const hAhead = document.getElementById('h-ahead');
+    const hAheadS = document.getElementById('h-ahead-s');
+    const hBehind = document.getElementById('h-behind');
+    const hBehindS = document.getElementById('h-behind-s');
+
+    let playerPos = (data.position !== null && data.position !== undefined && data.position > 0) ? data.position : null;
+    if (!playerPos && data.timing_tower && Array.isArray(data.timing_tower)) {
+      const meCar = data.timing_tower.find(c => c.is_player);
+      if (meCar && meCar.position > 0) playerPos = meCar.position;
+    }
+    if (hPos) hPos.textContent = playerPos ? `P${playerPos}` : 'P--';
+
+    if (isQuali) {
+      // QUALIFYING ADAPTATION
+      if (hPosLabel) hPosLabel.textContent = 'Quali Pos';
+      const cutoff = data.elimination_cutoff || (stype === 6 ? 10 : (stype === 5 ? 15 : 10));
+      if (hPosS) {
+        if (playerPos !== null) {
+          const isSafe = playerPos <= cutoff;
+          hPosS.innerHTML = isSafe
+            ? `<span class="up" style="font-weight:600">● SAFE</span> (P${cutoff} cutoff)`
+            : `<span class="warn" style="font-weight:600">▲ DROP ZONE</span> (P${cutoff} cutoff)`;
+        } else {
+          hPosS.innerHTML = `<span>Cutoff: P${cutoff}</span>`;
+        }
+      }
+
+      if (hLapLabel) hLapLabel.textContent = 'Lap & Time Left';
+      const curLap = (data.lap !== null && data.lap !== undefined && data.lap > 0) ? data.lap : 1;
+      const timeLeftStr = formatTimeRemaining(data.session_time_left_s);
+      if (hLap) {
+        hLap.innerHTML = `L${curLap}<small style="font-size:16px; margin-left:8px; opacity:0.85;"> · ${timeLeftStr}</small>`;
+      }
+      if (hLapBar) {
+        const totalSessionS = (stype === 5 ? 1080 : (stype === 6 ? 900 : 720));
+        const pct = (data.session_time_left_s !== null && data.session_time_left_s !== undefined)
+          ? Math.max(0, Math.min(100, Math.round((data.session_time_left_s / totalSessionS) * 100)))
+          : 0;
+        hLapBar.style.width = `${pct}%`;
+      }
+
+      const hasBest = data.best_lap_s && data.best_lap_s > 0;
+      const hasLast = data.last_lap_s && data.last_lap_s > 0;
+      const hasCurrent = data.current_lap_s && data.current_lap_s > 0;
+
+      if (hasBest) {
+        if (hLastLabel) hLastLabel.textContent = 'Best Flying Lap';
+        if (hLast) hLast.textContent = formatLapTime(data.best_lap_s);
+        if (hLastS) {
+          if (hasCurrent) {
+            hLastS.innerHTML = `<span class="up" style="font-weight:600">● Live: ${formatLapTime(data.current_lap_s)}</span>`;
+          } else if (hasLast) {
+            const delta = data.last_lap_s - data.best_lap_s;
+            hLastS.innerHTML = delta <= 0.001
+              ? `<span class="up">Personal Best</span>`
+              : `<span class="muted">Last: ${formatLapTime(data.last_lap_s)} (+${delta.toFixed(3)}s)</span>`;
+          } else {
+            hLastS.innerHTML = `<span class="up">Personal Best</span>`;
+          }
+        }
+      } else if (hasCurrent) {
+        if (hLastLabel) hLastLabel.textContent = 'Live Running Lap';
+        if (hLast) hLast.textContent = formatLapTime(data.current_lap_s);
+        if (hLastS) hLastS.innerHTML = `<span class="up" style="font-weight:600">● Lap ${curLap} on track</span>`;
+      } else {
+        if (hLastLabel) hLastLabel.textContent = 'Lap Status';
+        if (hLast) hLast.textContent = 'OUT LAP';
+        if (hLastS) hLastS.innerHTML = `<span class="dim">Out lap / in pit</span>`;
+      }
+
+      if (hAheadLabel) hAheadLabel.textContent = 'Delta to Pole (P1)';
+      if (hAhead) {
+        if (data.gap_to_pole !== null && data.gap_to_pole !== undefined) {
+          hAhead.textContent = data.gap_to_pole === 0 ? 'POLE' : `+${data.gap_to_pole.toFixed(3)}s`;
+        } else if (playerPos === 1) {
+          hAhead.textContent = 'POLE';
+        } else {
+          hAhead.textContent = '--';
+        }
+      }
+      if (hAheadS) {
+        hAheadS.textContent = data.session_best_s ? `P1: ${formatLapTime(data.session_best_s)}` : 'Pole pace';
+      }
+
+      if (hBehindLabel) hBehindLabel.textContent = 'Cutoff Target';
+      if (hBehind) {
+        hBehind.textContent = `P${cutoff}`;
+      }
+      if (hBehindS) {
+        hBehindS.textContent = playerPos && playerPos <= cutoff ? 'Advancing to next round' : 'Elimination risk';
+      }
+
+    } else if (isPractice) {
+      // PRACTICE ADAPTATION
+      if (hPosLabel) hPosLabel.textContent = 'Practice Pos';
+      if (hPosS) {
+        hPosS.innerHTML = playerPos !== null ? `<span>Timesheet P${playerPos}</span>` : `<span>Standby</span>`;
+      }
+
+      if (hLapLabel) hLapLabel.textContent = 'Lap & Time Left';
+      const curLap = (data.lap !== null && data.lap !== undefined && data.lap > 0) ? data.lap : 1;
+      const timeLeftStr = formatTimeRemaining(data.session_time_left_s);
+      if (hLap) {
+        hLap.innerHTML = `L${curLap}<small style="font-size:16px; margin-left:8px; opacity:0.85;"> · ${timeLeftStr}</small>`;
+      }
+      if (hLapBar) {
+        const totalSessionS = 3600;
+        const pct = (data.session_time_left_s !== null && data.session_time_left_s !== undefined)
+          ? Math.max(0, Math.min(100, Math.round((data.session_time_left_s / totalSessionS) * 100)))
+          : 0;
+        hLapBar.style.width = `${pct}%`;
+      }
+
+      const hasBest = data.best_lap_s && data.best_lap_s > 0;
+      const hasLast = data.last_lap_s && data.last_lap_s > 0;
+      const hasCurrent = data.current_lap_s && data.current_lap_s > 0;
+
+      if (hasBest) {
+        if (hLastLabel) hLastLabel.textContent = 'Best Lap';
+        if (hLast) hLast.textContent = formatLapTime(data.best_lap_s);
+        if (hLastS) {
+          if (hasCurrent) {
+            hLastS.innerHTML = `<span class="up" style="font-weight:600">● Live: ${formatLapTime(data.current_lap_s)}</span>`;
+          } else if (hasLast) {
+            const delta = data.last_lap_s - data.best_lap_s;
+            hLastS.innerHTML = delta <= 0.001
+              ? `<span class="up">Personal Best</span>`
+              : `<span class="muted">Last: ${formatLapTime(data.last_lap_s)} (+${delta.toFixed(3)}s)</span>`;
+          } else {
+            hLastS.innerHTML = `<span class="up">Session Best</span>`;
+          }
+        }
+      } else if (hasCurrent) {
+        if (hLastLabel) hLastLabel.textContent = 'Live Running Lap';
+        if (hLast) hLast.textContent = formatLapTime(data.current_lap_s);
+        if (hLastS) hLastS.innerHTML = `<span class="up" style="font-weight:600">● Lap ${curLap} on track</span>`;
+      } else {
+        if (hLastLabel) hLastLabel.textContent = 'Lap Status';
+        if (hLast) hLast.textContent = 'OUT LAP';
+        if (hLastS) hLastS.innerHTML = `<span class="dim">Out lap / in pit</span>`;
+      }
+
+      if (hAheadLabel) hAheadLabel.textContent = 'Delta to P1';
+      if (hAhead) {
+        if (data.gap_to_pole !== null && data.gap_to_pole !== undefined) {
+          hAhead.textContent = data.gap_to_pole === 0 ? 'FASTEST' : `+${data.gap_to_pole.toFixed(3)}s`;
+        } else if (playerPos === 1) {
+          hAhead.textContent = 'FASTEST';
+        } else {
+          hAhead.textContent = '--';
+        }
+      }
+      if (hAheadS) {
+        hAheadS.textContent = data.session_best_s ? `P1: ${formatLapTime(data.session_best_s)}` : 'Session fastest';
+      }
+
+      if (hBehindLabel) hBehindLabel.textContent = 'Tyre Deg Rate';
+      if (hBehind) {
+        hBehind.textContent = data.tyres && data.tyres.wear_pct_per_lap ? `${data.tyres.wear_pct_per_lap}% / lap` : '--';
+      }
+      if (hBehindS) {
+        hBehindS.textContent = data.tyres ? `${data.tyres.compound || 'Medium'} (${data.tyres.age_laps || 0}l old)` : 'Stint wear';
+      }
+
+    } else {
+      // RACE (DEFAULT)
+      if (hPosLabel) hPosLabel.textContent = 'Position';
+      if (hPosS && data.grid_position !== undefined && playerPos !== null) {
+        const diff = data.grid_position - playerPos;
+        hPosS.innerHTML = diff > 0 ? `<span class="up">▲ ${diff}</span> from grid` : diff < 0 ? `<span class="warn">▼ ${Math.abs(diff)}</span> from grid` : `<span>▬ 0</span> from grid`;
+      }
+
+      if (hLapLabel) hLapLabel.textContent = 'Lap';
+      if (hLap) {
+        hLap.innerHTML = `${data.lap !== null ? data.lap : '--'}<small> / ${data.total_laps !== null ? data.total_laps : '--'}</small>`;
+      }
+      if (hLapBar && data.lap && data.total_laps) {
+        hLapBar.style.width = `${Math.min(100, Math.round((data.lap / data.total_laps) * 100))}%`;
+      }
+
+      const hasLast = data.last_lap_s && data.last_lap_s > 0;
+      const hasCurrent = data.current_lap_s && data.current_lap_s > 0;
+
+      if (hasLast) {
+        if (hLastLabel) hLastLabel.textContent = 'Last lap';
+        if (hLast) hLast.textContent = formatLapTime(data.last_lap_s);
+        if (hLastS) {
+          if (hasCurrent) {
+            hLastS.innerHTML = `<span class="up">● Live: ${formatLapTime(data.current_lap_s)}</span>`;
+          } else if (data.best_lap_s) {
+            const delta = data.last_lap_s - data.best_lap_s;
+            hLastS.innerHTML = delta <= 0.001
+              ? `<span class="up">Personal Best</span>`
+              : `<span class="muted">+${delta.toFixed(3)}s</span> to best`;
+          } else {
+            hLastS.innerHTML = `<span class="muted">--</span> to best`;
+          }
+        }
+      } else if (hasCurrent) {
+        if (hLastLabel) hLastLabel.textContent = `Live Lap ${data.lap || 1}`;
+        if (hLast) hLast.textContent = formatLapTime(data.current_lap_s);
+        if (hLastS) hLastS.innerHTML = `<span class="up">● Racing</span>`;
+      } else {
+        if (hLastLabel) hLastLabel.textContent = 'Opening Lap';
+        if (hLast) hLast.textContent = `LAP ${data.lap || 1}`;
+        if (hLastS) hLastS.innerHTML = `<span class="dim">Opening lap in progress</span>`;
+      }
+
+      if (hAheadLabel) hAheadLabel.textContent = 'Gap ahead';
+      if (hAhead) {
+        hAhead.textContent = data.car_ahead && data.car_ahead.gap_s !== null ? `+${data.car_ahead.gap_s.toFixed(2)}s` : (playerPos === 1 ? 'LEADER' : '--');
+      }
+      if (hAheadS) {
+        hAheadS.textContent = data.car_ahead ? (data.car_ahead.name || 'Ahead') : '--';
+      }
+
+      if (hBehindLabel) hBehindLabel.textContent = 'Gap behind';
+      if (hBehind) {
+        hBehind.textContent = data.car_behind && data.car_behind.gap_s !== null ? `+${data.car_behind.gap_s.toFixed(2)}s` : '--';
+      }
+      if (hBehindS) {
+        hBehindS.textContent = data.car_behind ? (data.car_behind.name || 'Behind') : '--';
+      }
+    }
+
+    // Glance HUD Adaptation
     const gPos = document.getElementById('g-pos');
-    if (gPos) gPos.textContent = data.position !== null ? `P${data.position}` : 'P--';
+    if (gPos) gPos.textContent = playerPos ? `P${playerPos}` : 'P--';
+    const gAheadLabel = document.getElementById('g-ahead-label');
     const gAhead = document.getElementById('g-ahead');
-    if (gAhead) gAhead.textContent = data.car_ahead && data.car_ahead.gap_s !== null ? `+${data.car_ahead.gap_s.toFixed(2)}s` : (data.position === 1 ? 'P1' : '--');
+    const gBehindLabel = document.getElementById('g-behind-label');
     const gBehind = document.getElementById('g-behind');
-    if (gBehind) gBehind.textContent = data.car_behind && data.car_behind.gap_s !== null ? `+${data.car_behind.gap_s.toFixed(2)}s` : '--';
     const gLast = document.getElementById('g-last');
-    if (gLast) gLast.textContent = formatLapTime(data.last_lap_s);
+    const gLastS = document.getElementById('g-last-s');
+
+    if (isQuali || isPractice) {
+      if (gAheadLabel) gAheadLabel.textContent = isQuali ? 'Delta to pole' : 'Delta to P1';
+      if (gAhead) {
+        gAhead.textContent = data.gap_to_pole !== null && data.gap_to_pole !== undefined
+          ? (data.gap_to_pole === 0 ? 'POLE' : `+${data.gap_to_pole.toFixed(3)}s`)
+          : (playerPos === 1 ? 'POLE' : '--');
+      }
+      if (gBehindLabel) gBehindLabel.textContent = isQuali ? 'Cutoff status' : 'Tyre deg';
+      if (gBehind) {
+        const cutoff = data.elimination_cutoff || 15;
+        gBehind.textContent = isQuali
+          ? (playerPos <= cutoff ? 'SAFE' : 'DROP')
+          : (data.tyres && data.tyres.wear_pct_per_lap ? `${data.tyres.wear_pct_per_lap}%/l` : '--');
+        gBehind.className = `big ${isQuali ? (playerPos <= cutoff ? 'up' : 'warn') : 'warn'}`;
+      }
+      const gLap = data.best_lap_s || data.last_lap_s || data.current_lap_s;
+      if (gLast) gLast.textContent = (gLap && gLap > 0) ? formatLapTime(gLap) : (data.lap ? `OUT L${data.lap}` : 'OUT LAP');
+      if (gLastS) {
+        if (data.best_lap_s && data.best_lap_s > 0) {
+          gLastS.textContent = isQuali ? 'Best flying lap' : 'Best session lap';
+        } else if (data.current_lap_s && data.current_lap_s > 0) {
+          gLastS.textContent = 'Live lap';
+        } else {
+          gLastS.textContent = 'Out lap';
+        }
+      }
+    } else {
+      if (gAheadLabel) gAheadLabel.textContent = 'Gap ahead';
+      if (gAhead) gAhead.textContent = data.car_ahead && data.car_ahead.gap_s !== null ? `+${data.car_ahead.gap_s.toFixed(2)}s` : (playerPos === 1 ? 'P1' : '--');
+      if (gBehindLabel) gBehindLabel.textContent = 'Gap behind';
+      if (gBehind) gBehind.textContent = data.car_behind && data.car_behind.gap_s !== null ? `+${data.car_behind.gap_s.toFixed(2)}s` : '--';
+      const gLap = data.last_lap_s || data.current_lap_s;
+      if (gLast) gLast.textContent = (gLap && gLap > 0) ? formatLapTime(gLap) : `LAP ${data.lap || 1}`;
+      if (gLastS) {
+        if (data.best_lap_s && data.last_lap_s) {
+          const delta = data.last_lap_s - data.best_lap_s;
+          gLastS.textContent = delta <= 0.001 ? 'Personal best' : `+${delta.toFixed(3)}s to best`;
+        } else if (data.current_lap_s) {
+          gLastS.textContent = 'Live lap';
+        } else {
+          gLastS.textContent = 'Opening lap';
+        }
+      }
+    }
+
+    // Keep legacy hidden elements updated for test assertions
+    const valPosition = document.getElementById('val-position');
+    if (valPosition) valPosition.textContent = playerPos ? `${playerPos}` : '--';
+    const valLap = document.getElementById('val-lap');
+    if (valLap) valLap.textContent = data.lap !== null && data.lap !== undefined ? `${data.lap}` : '--';
+    const valTotalLaps = document.getElementById('val-total-laps');
+    if (valTotalLaps) valTotalLaps.textContent = data.total_laps !== null && data.total_laps !== undefined ? `${data.total_laps}` : '--';
+    const valLastLap = document.getElementById('val-last-lap');
+    if (valLastLap) {
+      const vL = data.best_lap_s || data.last_lap_s;
+      valLastLap.textContent = (vL && vL > 0) ? formatLapTime(vL) : '--:--.---';
+    }
+
     const gFuel = document.getElementById('g-fuel');
     if (gFuel && data.fuel && data.fuel.laps_delta !== null) {
       gFuel.textContent = `${data.fuel.laps_delta >= 0 ? '+' : ''}${data.fuel.laps_delta.toFixed(1)}`;
       gFuel.className = `big ${data.fuel.laps_delta >= 0 ? 'up' : 'warn'}`;
     }
 
-    // Modern Tyres
+    // Modern Tyres & Degradation
     if (data.tyres) {
       const t = data.tyres;
       const wear = t.wear_pct || {};
@@ -935,13 +1265,15 @@
       setTile('rr', rrW, temps['rear right']);
 
       const gTyre = document.getElementById('g-tyre');
+      const worst = Math.round(Math.max(flW, frW, rlW, rrW));
       if (gTyre) {
-        const worst = Math.round(Math.max(flW, frW, rlW, rrW));
         gTyre.textContent = `${worst}%`;
       }
 
       const wearChip = document.getElementById('wear-chip');
-      if (wearChip) wearChip.textContent = t.wear_pct_per_lap ? `${t.wear_pct_per_lap}% / lap` : '-- / lap';
+      if (wearChip) {
+        wearChip.textContent = t.wear_pct_per_lap ? `${t.wear_pct_per_lap}% / lap` : (worst > 0 ? `${(worst / Math.max(1, t.age_laps || 1)).toFixed(1)}% / lap` : '-- / lap');
+      }
 
       const tyreChipText = document.getElementById('tyre-chip-text');
       const tyreChipBadge = document.getElementById('tyre-chip-badge');
@@ -951,6 +1283,29 @@
       if (tyreChipBadge && t.compound) {
         const cCode = t.compound[0].toUpperCase();
         tyreChipBadge.className = `tyre ${cCode}`;
+      }
+
+      const compBadge = document.getElementById('tyre-compound-badge');
+      if (compBadge && t.compound) {
+        compBadge.textContent = t.compound.toUpperCase();
+      }
+      const ageBadge = document.getElementById('tyre-age-badge');
+      if (ageBadge && t.age_laps !== null && t.age_laps !== undefined) {
+        ageBadge.textContent = `${t.age_laps} Laps`;
+      }
+
+      const cliffEl = document.getElementById('tyre-cliff');
+      if (cliffEl) {
+        const wpl = t.wear_pct_per_lap || (worst > 0 && t.age_laps ? (worst / t.age_laps) : 0);
+        if (worst >= 70) {
+          cliffEl.innerHTML = '<span class="warn" style="font-weight:700">CLIFF REACHED</span>';
+        } else if (wpl > 0.1) {
+          const remLaps = Math.max(0, (70 - worst) / wpl);
+          const cliffLap = (data.lap || 1) + Math.round(remLaps);
+          cliffEl.textContent = `Lap ${cliffLap} (~${Math.round(remLaps)} laps left)`;
+        } else {
+          cliffEl.textContent = 'Lap --';
+        }
       }
     }
 
@@ -1115,6 +1470,11 @@
         if (data && data.bins && data.bins.length > 0) {
           cachedTrackModel = data;
           staticLayerDirty = true;
+          if (el.mapStatusBadge) {
+            el.mapStatusBadge.className = 'meta-pill pill-ok';
+            el.mapStatusBadge.textContent = 'CIRCUIT MODELLED';
+          }
+          if (el.mapPlaceholderHint) el.mapPlaceholderHint.classList.add('hidden');
         }
       }
     } catch (e) {
@@ -1418,14 +1778,34 @@
     const cars = getInterpolatedPositions(timestamp);
     lastDynamicCars = cars;
 
-    // Update running bounds
+    // Update running bounds & record live session breadcrumbs
     if (cars.length > 0) {
+      let boundsChanged = false;
       cars.forEach(c => {
-        if (c.x < runningBounds.minX) runningBounds.minX = c.x;
-        if (c.x > runningBounds.maxX) runningBounds.maxX = c.x;
-        if (c.z < runningBounds.minZ) runningBounds.minZ = c.z;
-        if (c.z > runningBounds.maxZ) runningBounds.maxZ = c.z;
+        if (!c.is_pit && !c.is_retired && (Math.abs(c.x) > 0.1 || Math.abs(c.z) > 0.1)) {
+          if (c.x < runningBounds.minX) { runningBounds.minX = c.x; boundsChanged = true; }
+          if (c.x > runningBounds.maxX) { runningBounds.maxX = c.x; boundsChanged = true; }
+          if (c.z < runningBounds.minZ) { runningBounds.minZ = c.z; boundsChanged = true; }
+          if (c.z > runningBounds.maxZ) { runningBounds.maxZ = c.z; boundsChanged = true; }
+
+          if (!cachedTrackModel && !cachedOutline) {
+            if (sessionBreadcrumbs.length === 0) {
+              sessionBreadcrumbs.push([c.x, c.z]);
+              staticLayerDirty = true;
+            } else {
+              const lastPt = sessionBreadcrumbs[sessionBreadcrumbs.length - 1];
+              const distSq = (c.x - lastPt[0]) ** 2 + (c.z - lastPt[1]) ** 2;
+              if (distSq > 49) { // ~7m spacing
+                sessionBreadcrumbs.push([c.x, c.z]);
+                staticLayerDirty = true;
+              }
+            }
+          }
+        }
       });
+      if (boundsChanged) {
+        staticLayerDirty = true;
+      }
     }
 
     // Determine coordinate bounds & camera
@@ -1657,6 +2037,30 @@
       ctx.shadowBlur = 6;
       ctx.stroke();
       ctx.shadowBlur = 0;
+    } else if (sessionBreadcrumbs.length > 3) {
+      // In-progress live track outline sampled from cars driving this session
+      ctx.beginPath();
+      const first = toCanvas(sessionBreadcrumbs[0][0], sessionBreadcrumbs[0][1]);
+      ctx.moveTo(first.x, first.y);
+      for (let i = 1; i < sessionBreadcrumbs.length; i++) {
+        const p = toCanvas(sessionBreadcrumbs[i][0], sessionBreadcrumbs[i][1]);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
+      ctx.lineWidth = 6;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(first.x, first.y);
+      for (let i = 1; i < sessionBreadcrumbs.length; i++) {
+        const p = toCanvas(sessionBreadcrumbs[i][0], sessionBreadcrumbs[i][1]);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.strokeStyle = '#00e5ff';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
     }
 
     // Sector Markers & Finish Line from outline
@@ -2444,6 +2848,7 @@
         const gapAhead = c.position === 1 ? 'LEADER' : c.gap_ahead !== null ? `+${c.gap_ahead}s` : '--';
         const gapLeader = c.position === 1 ? '--' : c.gap_leader !== null ? `+${c.gap_leader}s` : '--';
         const pen = c.penalties > 0 ? `<span style="color: var(--color-red)">+${c.penalties}s</span>` : '0';
+        const displayedLap = cachedIsQualiOrPractice ? (c.best_lap_s || c.last_lap) : c.last_lap;
 
         return `
           <tr class="${isPlayer}">
@@ -2451,7 +2856,7 @@
             <td class="td-driver">${c.name || 'Car ' + c.car_idx}</td>
             <td class="mono">${gapAhead}</td>
             <td class="mono">${gapLeader}</td>
-            <td class="mono">${formatLapTime(c.last_lap)}</td>
+            <td class="mono">${formatLapTime(displayedLap)}</td>
             <td><span class="${badgeClass}">${(c.tyre_compound || '?').toUpperCase()}</span></td>
             <td class="mono">${c.tyre_age !== null ? c.tyre_age : '--'}</td>
             <td class="mono">${c.pit_stops !== null ? c.pit_stops : 0}</td>
@@ -2463,22 +2868,57 @@
     }
 
     if (modernTower) {
+      const thLap = document.getElementById('th-lap-col');
+      if (thLap) {
+        thLap.textContent = cachedIsQualiOrPractice ? 'Best Lap' : 'Last Lap';
+      }
+
       let prev = 0;
+      const poleCar = cachedIsQualiOrPractice ? cars.find(c => c.best_lap_s && c.best_lap_s > 0) : null;
+      const poleTime = poleCar ? poleCar.best_lap_s : null;
+      let prevQualiLap = poleTime;
+
       modernTower.innerHTML = cars.map((c, i) => {
         const isPlayer = !!c.is_player;
-        const gap = c.gap_leader !== null ? c.gap_leader : 0;
-        const interval = i === 0 ? 'Leader' : c.is_in_pit ? '—' : '+' + (c.gap_ahead !== null ? c.gap_ahead : (gap - prev).toFixed(3));
-        const lead = i === 0 ? '—' : c.is_in_pit ? 'In pit' : '+' + (c.gap_leader !== null ? c.gap_leader : gap.toFixed(3));
-        if (!c.is_in_pit) prev = gap;
         const cmp = (c.tyre_compound || 'M')[0].toUpperCase();
         const age = c.tyre_age !== null ? c.tyre_age : 0;
         const pen = c.penalties > 0 ? `+${c.penalties}s` : '';
+        const displayedLap = cachedIsQualiOrPractice ? (c.best_lap_s || c.last_lap) : c.last_lap;
+
+        let interval = '—';
+        let lead = '—';
+        let lapStr = '--:--.---';
+
+        if (cachedIsQualiOrPractice) {
+          if (displayedLap && displayedLap > 0) {
+            lapStr = formatLapTime(displayedLap);
+            if (i === 0 || displayedLap === poleTime) {
+              interval = 'Leader';
+              lead = '—';
+            } else {
+              lead = poleTime ? `+${(displayedLap - poleTime).toFixed(3)}s` : '—';
+              interval = prevQualiLap ? `+${Math.max(0, displayedLap - prevQualiLap).toFixed(3)}s` : lead;
+            }
+            prevQualiLap = displayedLap;
+          } else {
+            lapStr = c.is_in_pit ? '<span class="dim">In pit</span>' : (c.current_lap_s && c.current_lap_s > 0 ? `<span class="up">${formatLapTime(c.current_lap_s)}</span>` : '<span class="dim">Out lap</span>');
+            interval = c.is_in_pit ? 'In pit' : (c.current_lap_s && c.current_lap_s > 0 ? 'On lap' : 'Out lap');
+            lead = '—';
+          }
+        } else {
+          const gap = c.gap_leader !== null ? c.gap_leader : 0;
+          interval = i === 0 ? 'Leader' : c.is_in_pit ? '—' : '+' + (c.gap_ahead !== null ? c.gap_ahead : (gap - prev).toFixed(3));
+          lead = i === 0 ? '—' : c.is_in_pit ? 'In pit' : '+' + (c.gap_leader !== null ? c.gap_leader : gap.toFixed(3));
+          if (!c.is_in_pit) prev = gap;
+          lapStr = displayedLap ? formatLapTime(displayedLap) : (c.is_in_pit ? '<span class="dim">In pit</span>' : (c.current_lap_s && c.current_lap_s > 0 ? `<span class="up">${formatLapTime(c.current_lap_s)}</span>` : '--:--.---'));
+        }
+
         return `<tr class="${isPlayer ? 'me' : ''}">
           <td class="r"><b>${c.position}</b></td>
           <td><b>${c.name || (isPlayer ? 'You' : 'Car ' + c.car_idx)}</b> <span class="dim">${c.team || (isPlayer ? 'Player' : '')}</span></td>
           <td class="r">${interval}</td>
           <td class="r muted">${lead}</td>
-          <td class="r">${formatLapTime(c.last_lap)}</td>
+          <td class="r">${lapStr}</td>
           <td><span class="tyre ${cmp}" aria-label="${cmp}">${cmp}</span> <span class="muted">${age}</span></td>
           <td class="r">${c.pit_stops !== null ? c.pit_stops : 0}</td>
           <td class="r ${pen ? 'warn' : 'dim'}">${pen || '—'}</td>
@@ -5117,6 +5557,12 @@
     if (el.btnSaveTrackNotes) {
       el.btnSaveTrackNotes.addEventListener('click', saveCurrentTrackNotes);
     }
+
+    if (el.btnDiscardTrack) {
+      el.btnDiscardTrack.addEventListener('click', () => {
+        if (currentSelectedTrackSlug) selectTrack(currentSelectedTrackSlug);
+      });
+    }
   }
 
   function fetchTracksList() {
@@ -5131,8 +5577,10 @@
         renderTracksList(loadedTracksList);
 
         if (!currentSelectedTrackSlug && loadedTracksList.length > 0) {
-          const silverstone = loadedTracksList.find(t => t.slug === 'silverstone');
-          selectTrack(silverstone ? silverstone.slug : loadedTracksList[0].slug);
+          const curTrackName = (el.trackName && el.trackName.textContent || '').toLowerCase();
+          const activeTrack = loadedTracksList.find(t => curTrackName.includes(t.slug) || curTrackName.includes(t.name.toLowerCase()));
+          const defTrack = activeTrack || loadedTracksList.find(t => t.slug === 'austria') || loadedTracksList.find(t => t.slug === 'silverstone') || loadedTracksList[0];
+          selectTrack(defTrack.slug);
         }
       })
       .catch(err => console.error('Error fetching tracks:', err));
@@ -5143,22 +5591,26 @@
     el.tracksListContainer.innerHTML = '';
 
     tracks.forEach(t => {
-      const div = document.createElement('div');
-      div.className = `track-item-card ${t.slug === currentSelectedTrackSlug ? 'active' : ''}`;
-      div.dataset.slug = t.slug;
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = `#track-${t.slug}`;
+      const isActive = (t.slug === currentSelectedTrackSlug);
+      a.className = `track-item-card ${isActive ? 'active' : ''}`;
+      if (isActive) a.setAttribute('aria-current', 'true');
+      a.dataset.slug = t.slug;
 
-      div.innerHTML = `
-        <div class="track-item-main">
-          <span class="track-name-label">${t.name}</span>
-          <span class="track-item-badge ${t.has_file ? 'has-notes' : 'no-notes'}">
-            ${t.has_file ? `${t.corners_count} corners` : 'no notes'}
-          </span>
-        </div>
-        <div class="track-item-sub mono">${t.slug}.md</div>
+      const cornerCount = t.corners_count || t.corner_count || 0;
+      a.innerHTML = `
+        <span>${t.name}</span>
+        <span class="n">${t.has_file ? `${cornerCount} turns` : 'no notes'}</span>
       `;
 
-      div.addEventListener('click', () => selectTrack(t.slug));
-      el.tracksListContainer.appendChild(div);
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        selectTrack(t.slug);
+      });
+      li.appendChild(a);
+      el.tracksListContainer.appendChild(li);
     });
   }
 
@@ -5176,31 +5628,55 @@
   function selectTrack(slug) {
     currentSelectedTrackSlug = slug;
 
-    document.querySelectorAll('.track-item-card').forEach(item => {
-      if (item.dataset.slug === slug) {
-        item.classList.add('active');
-      } else {
-        item.classList.remove('active');
-      }
-    });
+    if (el.tracksListContainer) {
+      el.tracksListContainer.querySelectorAll('a').forEach(item => {
+        if (item.dataset.slug === slug) {
+          item.classList.add('active');
+          item.setAttribute('aria-current', 'true');
+        } else {
+          item.classList.remove('active');
+          item.removeAttribute('aria-current');
+        }
+      });
+    }
 
     const token = getToken();
     fetch(`/api/tracks/${encodeURIComponent(slug)}?token=${encodeURIComponent(token)}`)
       .then(res => res.json())
       .then(data => {
-        if (el.trackEditorHeading) el.trackEditorHeading.textContent = data.name.toUpperCase();
-        if (el.trackEditorFileBadge) el.trackEditorFileBadge.textContent = `knowledge/tracks/${data.slug}.md`;
+        if (el.trackEditorHeading) el.trackEditorHeading.textContent = data.title || data.name || slug.toUpperCase();
+        if (el.trackEditorFileBadge) el.trackEditorFileBadge.textContent = `knowledge/tracks/${data.slug || slug}.md`;
 
-        populateCornersTable(data.corners_list || []);
-        if (el.trackSectionOvertaking) el.trackSectionOvertaking.value = data.sections.overtaking || '';
-        if (el.trackSectionTyres) el.trackSectionTyres.value = data.sections.tyres || '';
-        if (el.trackSectionSetupNotes) el.trackSectionSetupNotes.value = data.sections.setup_notes || '';
+        let corners = data.corners_list || data.corners || [];
+        const sec = data.sections || {};
+        if ((!corners || corners.length === 0) && sec.Corners) {
+          const lines = sec.Corners.split('\n');
+          corners = [];
+          for (const line of lines) {
+            const tr = line.trim();
+            if (!tr || tr.startsWith('<!--')) continue;
+            const mN = tr.match(/^(?:-\s*)?(\d+)\.\s*([^:]+):\s*(.*)$/);
+            const mT = tr.match(/^(?:-\s*)?T(?:urn\s*)?(\d+)(?:[^\w\s]\d+)?\s*(.*?)\s*:\s*(.*)$/i);
+            if (mN) {
+              corners.push({ number: parseInt(mN[1], 10), name: mN[2].trim(), description: mN[3].trim() });
+            } else if (mT) {
+              const num = parseInt(mT[1], 10);
+              const np = mT[2].trim();
+              const name = (!np || (np.startsWith('(') && np.endsWith(')'))) ? `Turn ${num} ${np}`.trim() : np;
+              corners.push({ number: num, name: name, description: mT[3].trim() });
+            }
+          }
+        }
+        populateCornersTable(corners);
+        if (el.trackSectionOvertaking) el.trackSectionOvertaking.value = sec.Overtaking || sec.overtaking || '';
+        if (el.trackSectionTyres) el.trackSectionTyres.value = sec.Tyres || sec.tyres || '';
+        if (el.trackSectionSetupNotes) el.trackSectionSetupNotes.value = sec['Setup notes'] || sec.setup_notes || '';
 
-        if (el.trackRawContent) el.trackRawContent.value = data.raw_markdown || '';
+        if (el.trackRawContent) el.trackRawContent.value = data.raw_markdown || data.raw || '';
 
         if (el.trackSaveStatus) {
-          el.trackSaveStatus.textContent = 'Ready';
-          el.trackSaveStatus.className = 'track-status-pill';
+          el.trackSaveStatus.innerHTML = '<span class="dot" style="background:var(--green)"></span>Ready';
+          el.trackSaveStatus.className = 'chip ok';
         }
       })
       .catch(err => console.error('Error fetching track notes:', err));
@@ -5210,7 +5686,7 @@
     if (!el.trackCornersTbody) return;
     el.trackCornersTbody.innerHTML = '';
 
-    if (cornersList.length === 0) {
+    if (!cornersList || cornersList.length === 0) {
       addCornerRow({ number: 1, name: '', description: '' });
       return;
     }
@@ -5235,20 +5711,20 @@
 
     tr.innerHTML = `
       <td>
-        <input type="number" class="f1-input corner-num-input" value="${corner ? corner.number : nextNum}" min="1" max="99">
+        <input type="number" class="input mono corner-num-input" value="${corner ? corner.number : nextNum}" min="1" max="99" style="width:52px">
       </td>
       <td>
-        <input type="text" class="f1-input corner-name-input" value="${corner ? (corner.name || '') : ''}" placeholder="e.g. Copse (T9)">
+        <input type="text" class="input corner-name-input" value="${corner ? (corner.name || '') : ''}" placeholder="e.g. Copse (T9)">
       </td>
       <td>
-        <input type="text" class="f1-input corner-desc-input" value="${corner ? (corner.description || '') : ''}" placeholder="e.g. Fast right, flat in qualifying">
+        <input type="text" class="input corner-desc-input" value="${corner ? (corner.description || corner.notes || '') : ''}" placeholder="e.g. Fast right, flat in qualifying">
       </td>
       <td style="text-align: center;">
-        <button type="button" class="btn-del-corner" title="Remove corner">✕</button>
+        <button type="button" class="icon-btn del-corner" title="Remove corner" style="color:var(--red);cursor:pointer;font-size:16px">✕</button>
       </td>
     `;
 
-    tr.querySelector('.btn-del-corner').addEventListener('click', () => {
+    tr.querySelector('.del-corner').addEventListener('click', () => {
       tr.remove();
     });
 
@@ -5380,8 +5856,8 @@
     }
 
     if (el.trackSaveStatus) {
-      el.trackSaveStatus.textContent = 'Saving...';
-      el.trackSaveStatus.className = 'track-status-pill saving';
+      el.trackSaveStatus.innerHTML = '<span class="dot" style="background:var(--yellow)"></span>Saving...';
+      el.trackSaveStatus.className = 'chip wait';
     }
 
     const token = getToken();
@@ -5412,18 +5888,24 @@
       .then(data => {
         if (data.detail) {
           alert('Save error: ' + JSON.stringify(data.detail));
-          if (el.trackSaveStatus) el.trackSaveStatus.textContent = 'Error';
+          if (el.trackSaveStatus) {
+            el.trackSaveStatus.innerHTML = '<span class="dot" style="background:var(--red)"></span>Save error';
+            el.trackSaveStatus.className = 'chip bad';
+          }
           return;
         }
         if (el.trackSaveStatus) {
-          el.trackSaveStatus.textContent = `Saved & reloaded (${data.corners_count} corners)`;
-          el.trackSaveStatus.className = 'track-status-pill saved';
+          el.trackSaveStatus.innerHTML = `<span class="dot" style="background:var(--green)"></span>Saved (${data.corners_count || 0} corners)`;
+          el.trackSaveStatus.className = 'chip ok';
         }
         fetchTracksList();
       })
       .catch(err => {
         alert('Save error: ' + err);
-        if (el.trackSaveStatus) el.trackSaveStatus.textContent = 'Error';
+        if (el.trackSaveStatus) {
+          el.trackSaveStatus.innerHTML = '<span class="dot" style="background:var(--red)"></span>Save error';
+          el.trackSaveStatus.className = 'chip bad';
+        }
       });
   }
 

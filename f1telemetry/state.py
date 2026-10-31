@@ -25,6 +25,22 @@ TRACKS = {0: "Melbourne", 2: "Shanghai", 3: "Bahrain", 4: "Barcelona", 5: "Monac
           32: "Losail", 39: "Silverstone reverse", 40: "Red Bull Ring reverse", 41: "Zandvoort reverse"}
 ERS_MAX_J = 4_000_000
 RUNNING = {2, 3}
+SESSION_TYPES = {
+    0: "Unknown",
+    1: "Practice 1",
+    2: "Practice 2",
+    3: "Practice 3",
+    4: "Short Practice",
+    5: "Qualifying 1",
+    6: "Qualifying 2",
+    7: "Qualifying 3",
+    8: "Short Qualifying",
+    9: "One-Shot Qualifying",
+    10: "Race",
+    11: "Race 2",
+    12: "Race 3",
+    13: "Time Trial",
+}
 
 
 def _s(ms):
@@ -58,6 +74,7 @@ class LapRecord:
     weather_changed: bool = False
     blunder_moment: str | None = None
     excess_deg: bool = False
+    car_idx: int = 0
 
     @property
     def lap_time_s(self) -> float:
@@ -219,6 +236,8 @@ class RaceState:
                         prev_best = self.best_laps_all_cars.get(i)
                         if prev_best is None or c.last_lap_ms < prev_best:
                             self.best_laps_all_cars[i] = c.last_lap_ms
+                            if i == self.player:
+                                self.personal_best = round(c.last_lap_ms / 1000.0, 3)
                     if c.sector1_ms > 0 and not getattr(c, "lap_invalid", False):
                         if self.best_sectors_session[0] == 0 or c.sector1_ms < self.best_sectors_session[0]:
                             self.best_sectors_session[0] = c.sector1_ms
@@ -248,8 +267,11 @@ class RaceState:
                 if any(parts.get(k, 0) > self._damage_at_lap_start.get(k, 0) for k in parts):
                     self._new_damage_this_lap = True
         elif pid == PacketId.SESSION:
+            prev_track_id = self.session.track_id if self.session else None
             self.session = data
             if data:
+                if prev_track_id is None or data.track_id != prev_track_id:
+                    signals.append(("track_change", data.track_id))
                 if data.safety_car in (1, 2):
                     self._had_safety_car_this_lap = True
                 if self._weather_at_lap_start is None:
@@ -406,7 +428,8 @@ class RaceState:
             pit_status=me.pit_status,
             weather_changed=self._weather_changed_this_lap,
             blunder_moment=self._blunder_moment_this_lap,
-            excess_deg=excess_deg)
+            excess_deg=excess_deg,
+            car_idx=self.player if self.player is not None else 0)
 
         lap_signals = [("lap", rec)]
         if not self._lap_invalid and s3 > 0:
@@ -550,14 +573,40 @@ class RaceState:
         burns = [a - b for a, b in zip(vals, vals[1:]) if a > b]
         return sum(burns) / len(burns) if burns else None
 
+    def _realtime_wear_per_lap(self) -> float | None:
+        """Estimates tyre degradation rate (%/lap) in real-time before 2 full laps are finished."""
+        dmg, st, me, s = self.my_damage, self.my_status, self.me, self.session
+        if not dmg or not dmg.tyre_wear or not st:
+            return None
+        worst_wear = max(dmg.tyre_wear)
+        age = float(getattr(st, "tyre_age_laps", 0))
+        lap_dist = float(getattr(me, "lap_distance", 0.0)) if me else 0.0
+        track_len = float(getattr(s, "track_length_m", 0.0)) if s else 0.0
+        frac = (lap_dist / track_len) if (track_len > 0 and lap_dist > 0) else 0.0
+        effective_laps = age + min(1.0, max(0.0, frac))
+
+        if worst_wear > 0.05 and effective_laps >= 0.2:
+            return round(worst_wear / effective_laps, 2)
+        if age >= 1.0 and worst_wear > 0.0:
+            return round(worst_wear / age, 2)
+
+        comp_str = COMPOUNDS.get(getattr(st, "visual_compound", None), "")
+        base_comp = comp_str.rstrip("s").lower()
+        priors = {"soft": 4.2, "medium": 2.7, "hard": 1.7, "inter": 2.0, "wet": 1.5}
+        for k, v in priors.items():
+            if k in base_comp:
+                return v
+        return None
+
     def wear_per_lap(self):
-        if not self.laps:
-            return None
-        stint = self.laps[-1].stint
-        recs = [r for r in self.laps if r.stint == stint and r.tyre_wear]
-        if len(recs) < 2 or recs[-1].lap == recs[0].lap:
-            return None
-        return (max(recs[-1].tyre_wear) - max(recs[0].tyre_wear)) / (recs[-1].lap - recs[0].lap)
+        if self.laps:
+            stint = self.laps[-1].stint
+            recs = [r for r in self.laps if r.stint == stint and r.tyre_wear]
+            if len(recs) >= 2 and recs[-1].lap != recs[0].lap:
+                return (max(recs[-1].tyre_wear) - max(recs[0].tyre_wear)) / (recs[-1].lap - recs[0].lap)
+            elif len(recs) == 1 and recs[0].tyre_wear and recs[0].lap > 0:
+                return max(recs[0].tyre_wear) / max(1.0, float(recs[0].lap))
+        return self._realtime_wear_per_lap()
 
     def player_rolling_pace(self, n: int = 3) -> float | None:
         """Returns average lap time in seconds of the player's last n valid clean laps."""
@@ -701,11 +750,14 @@ class RaceState:
                     "gap_to_leader_s": _s(c.gap_to_leader_ms),
                     "last_lap": _s(c.last_lap_ms),
                     "last_lap_s": _s(c.last_lap_ms),
+                    "best_lap_s": self.get_car_best_lap_s(i),
+                    "current_lap_s": _s(c.current_lap_ms) if hasattr(c, "current_lap_ms") and c.current_lap_ms > 0 else None,
                     "tyre_compound": compound,
                     "compound": compound,
                     "tyre_age": tyre_age,
                     "tyre_age_laps": tyre_age,
                     "pit_stops": c.num_pit_stops,
+                    "is_in_pit": bool(getattr(c, "pit_status", 0) in (1, 2)),
                     "penalties": c.penalties_s,
                     "penalties_s": c.penalties_s,
                     "is_player": (i == self.player),
@@ -814,14 +866,52 @@ class RaceState:
         t_name = self.teammate_name()
         t_best = self.get_car_best_lap_s(t_idx)
         my_best = self.get_car_best_lap_s(self.player)
+        if self.personal_best is None and my_best is not None:
+            self.personal_best = my_best
         t_gap = round((my_best - t_best), 3) if (my_best and t_best) else None
+
+        raw_stype = getattr(s, "session_type", 0) if s else 0
+        try:
+            stype = int(raw_stype)
+        except (ValueError, TypeError):
+            stype = 0
+        stype_name = SESSION_TYPES.get(stype, "Unknown") if s else "Standby"
+        is_practice = bool(s and 1 <= stype <= 4)
+        is_quali = bool(s and 5 <= stype <= 9)
+        is_race = bool(s and 10 <= stype <= 12)
+        is_time_trial = bool(s and stype == 13)
+
+        raw_time_left = getattr(s, "time_left_s", None) if s else None
+        try:
+            time_left_s = int(raw_time_left) if raw_time_left is not None else None
+        except (ValueError, TypeError):
+            time_left_s = None
+
+        current_lap_s = _s(me.current_lap_ms) if (me and hasattr(me, "current_lap_ms") and isinstance(me.current_lap_ms, (int, float)) and me.current_lap_ms > 0) else None
+        sector1_s = _s(me.sector1_ms) if (me and hasattr(me, "sector1_ms") and isinstance(me.sector1_ms, (int, float)) and me.sector1_ms > 0) else None
+        sector2_s = _s(me.sector2_ms) if (me and hasattr(me, "sector2_ms") and isinstance(me.sector2_ms, (int, float)) and me.sector2_ms > 0) else None
+        session_best_ms = min(self.best_laps_all_cars.values()) if self.best_laps_all_cars else None
+        session_best_s = round(session_best_ms / 1000.0, 3) if session_best_ms else None
 
         return {
             "track": TRACKS.get(s.track_id, f"track {s.track_id}") if s else None,
+            "session_type": stype,
+            "session_type_name": stype_name,
+            "session_time_left_s": time_left_s,
+            "is_practice": is_practice,
+            "is_quali": is_quali,
+            "is_race": is_race,
+            "is_time_trial": is_time_trial,
             "lap": me.lap_num if me else None,
             "total_laps": s.total_laps if s else None,
             "position": me.position if me else None,
+            "grid_position": getattr(me, "grid_position", None) if me else None,
             "last_lap_s": _s(me.last_lap_ms) if me else None,
+            "current_lap_s": current_lap_s,
+            "best_lap_s": my_best,
+            "session_best_s": session_best_s,
+            "sector1_s": sector1_s,
+            "sector2_s": sector2_s,
             "pit_stops": me.num_pit_stops if me else None,
             "car_ahead": {"name": self.name(ai), "gap_s": _s(ga), "trend_s_per_lap": _s(self.gap_trend("ahead"))}
             if ai is not None else None,
