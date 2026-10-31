@@ -234,3 +234,150 @@ def test_battle_pace_and_retirements_query():
     ans_ret_hit = route("Who crashed or retired?", st)
     assert ans_ret_hit.kind == "answer"
     assert "lewis hamilton" in ans_ret_hit.text.lower() or "hamilton" in ans_ret_hit.text.lower()
+
+
+def test_proactive_strategy_plan_change():
+    """Verify StrategyPredictor detects plan switch from 1-stop to 2-stop."""
+    predictor = StrategyPredictor()
+    predictor.reset_session()
+
+    # Lap 2: Baseline 1-stop recommended
+    p1 = StrategyPlan(name="Plan A (1-Stop)", stops=[(20, "hard")], compounds=["medium", "hard"], expected_time_s=4500.0)
+    predictor.last_plans = [p1]
+    alerts_l2 = predictor.evaluate_proactive_strategy(
+        current_lap=2, total_laps=50, current_compound="medium", current_tyre_age=2,
+    )
+    assert len(alerts_l2) == 0  # Establishing baseline, no change alert yet
+
+    # Lap 8: Strategy converts to Plan B (2-Stop)
+    p2 = StrategyPlan(name="Plan B (2-Stop)", stops=[(14, "medium"), (32, "hard")], compounds=["medium", "medium", "hard"], expected_time_s=4480.0)
+    predictor.last_plans = [p2]
+    alerts_l8 = predictor.evaluate_proactive_strategy(
+        current_lap=8, total_laps=50, current_compound="medium", current_tyre_age=8,
+    )
+    assert any(a["event"] == "strategy_plan_change" for a in alerts_l8)
+    change_alert = next(a for a in alerts_l8 if a["event"] == "strategy_plan_change")
+    assert change_alert["context"]["plan"] == "2-Stop"
+    assert change_alert["context"]["lap"] == 14
+    assert change_alert["priority"] == 1
+
+
+def test_proactive_pit_window_and_box_calls():
+    """Verify window opening notice on target_lap - 1 and box call on target_lap."""
+    predictor = StrategyPredictor()
+    predictor.reset_session()
+
+    p = StrategyPlan(name="Plan A (1-Stop)", stops=[(15, "hard")], compounds=["medium", "hard"], expected_time_s=4500.0)
+    predictor.last_plans = [p]
+
+    # Lap 13: Normal running, no alerts
+    a13 = predictor.evaluate_proactive_strategy(13, 50, "medium", 13)
+    assert len(a13) == 0
+
+    # Lap 14: 1 lap before target stop (target = 15)
+    a14 = predictor.evaluate_proactive_strategy(14, 50, "medium", 14)
+    assert any(a["event"] == "pit_window_approaching" for a in a14)
+    win_alert = next(a for a in a14 if a["event"] == "pit_window_approaching")
+    assert win_alert["context"]["lap"] == 15
+    assert win_alert["priority"] == 1
+
+    # Deduplication on lap 14
+    a14_dup = predictor.evaluate_proactive_strategy(14, 50, "medium", 14)
+    assert not any(a["event"] == "pit_window_approaching" for a in a14_dup)
+
+    # Lap 15: Target stop lap -> Box this lap!
+    a15 = predictor.evaluate_proactive_strategy(15, 50, "medium", 15)
+    assert any(a["event"] == "box_this_lap" for a in a15)
+    box_alert = next(a for a in a15 if a["event"] == "box_this_lap")
+    assert box_alert["priority"] == 0
+    assert "box" in box_alert["text"].lower()
+
+
+def test_proactive_rival_behind_pitted():
+    """Verify rival behind pitting triggers undercut cover callout immediately."""
+    predictor = StrategyPredictor()
+    predictor.reset_session()
+
+    # Russell pits behind us
+    alerts = predictor.evaluate_proactive_strategy(
+        current_lap=16,
+        total_laps=50,
+        current_compound="medium",
+        current_tyre_age=16,
+        rival_behind_pitted=True,
+        rival_behind_name="George Russell",
+        rival_behind_gap_s=1.8,
+    )
+    assert any(a["event"] == "rival_pitted_cover" for a in alerts)
+    alert = next(a for a in alerts if a["event"] == "rival_pitted_cover")
+    assert alert["priority"] == 0
+    assert "George Russell" in alert["text"]
+    assert alert["context"]["name"] == "George Russell"
+
+    # Verify deduplication
+    alerts_dup = predictor.evaluate_proactive_strategy(
+        current_lap=16,
+        total_laps=50,
+        current_compound="medium",
+        current_tyre_age=16,
+        rival_behind_pitted=True,
+        rival_behind_name="George Russell",
+        rival_behind_gap_s=1.8,
+    )
+    assert not any(a["event"] == "rival_pitted_cover" for a in alerts_dup)
+
+
+def test_proactive_tyre_cliff_alert():
+    """Verify tyre cliff warning when wear exceeds 70%."""
+    predictor = StrategyPredictor()
+    predictor.reset_session()
+
+    # Normal wear 40% -> No cliff
+    a_norm = predictor.evaluate_proactive_strategy(
+        current_lap=18, total_laps=50, current_compound="medium", current_tyre_age=18,
+        tyre_wear=(38, 40, 42, 39),
+    )
+    assert not any(a["event"] == "tyre_cliff" for a in a_norm)
+
+    # Critical wear 75% -> Tyre cliff alert
+    a_cliff = predictor.evaluate_proactive_strategy(
+        current_lap=22, total_laps=50, current_compound="medium", current_tyre_age=22,
+        tyre_wear=(65, 75, 72, 68),
+    )
+    assert any(a["event"] == "tyre_cliff" for a in a_cliff)
+    c_alert = next(a for a in a_cliff if a["event"] == "tyre_cliff")
+    assert c_alert["priority"] == 0
+    assert "cliff" in c_alert["text"].lower()
+
+
+def test_personality_lines_for_proactive_strategy():
+    """Verify cocky personality lines load and format properly for all proactive strategy events."""
+    from personality import PersonalityEngine
+    from config import PersonaConfig
+    pers = PersonalityEngine(PersonaConfig(name="cocky", profanity="strong"))
+
+    # 1. strategy_plan_change
+    line_plan = pers.get_reaction_text("strategy_plan_change", {"plan": "Plan B (2-Stop)", "lap": 14})
+    assert line_plan is not None
+    assert "Plan B (2-Stop)" in line_plan or "14" in line_plan
+
+    # 2. pit_window_approaching
+    line_win = pers.get_reaction_text("pit_window_approaching", {"lap": 18, "compound": "hards"})
+    assert line_win is not None
+    assert "18" in line_win and "hards" in line_win
+
+    # 3. box_this_lap
+    line_box = pers.get_reaction_text("box_this_lap", {"compound": "hards"})
+    assert line_box is not None
+    assert "box" in line_box.lower()
+
+    # 4. rival_pitted_cover
+    line_cov = pers.get_reaction_text("rival_pitted_cover", {"name": "Lando Norris"})
+    assert line_cov is not None
+    assert "Lando Norris" in line_cov
+
+    # 5. tyre_cliff
+    line_cliff = pers.get_reaction_text("tyre_cliff", {"wear": "75"})
+    assert line_cliff is not None
+    assert "cliff" in line_cliff.lower() or "cooked" in line_cliff.lower()
+

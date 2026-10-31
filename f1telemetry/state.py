@@ -659,6 +659,7 @@ class RaceState:
                 delta_s = round(last_s - my_last, 3)
 
             pos_ahead = getattr(self.lap[idx_ahead], "position", 0) if self.lap and idx_ahead < len(self.lap) else 0
+            is_pitting_ahead = bool(getattr(self.lap[idx_ahead], "pit_status", 0) != 0) if self.lap and idx_ahead < len(self.lap) else False
             summary["ahead"] = {
                 "car_idx": idx_ahead,
                 "name": self.name(idx_ahead),
@@ -668,6 +669,7 @@ class RaceState:
                 "pace_s": round(pace_s, 3) if pace_s else None,
                 "delta_s": delta_s,
                 "is_fighting": bool(gap_s <= max_gap_s),
+                "is_pitting": is_pitting_ahead,
                 "tyre_compound": COMPOUNDS.get(getattr(self.status[idx_ahead], "visual_compound", 0), "unknown") if (self.status and idx_ahead < len(self.status)) else None,
                 "tyre_age_laps": getattr(self.status[idx_ahead], "tyre_age_laps", None) if (self.status and idx_ahead < len(self.status)) else None,
             }
@@ -685,6 +687,7 @@ class RaceState:
                 delta_s = round(my_last - last_s, 3)
 
             pos_behind = getattr(self.lap[idx_behind], "position", 0) if self.lap and idx_behind < len(self.lap) else 0
+            is_pitting_behind = bool(getattr(self.lap[idx_behind], "pit_status", 0) != 0) if self.lap and idx_behind < len(self.lap) else False
             summary["behind"] = {
                 "car_idx": idx_behind,
                 "name": self.name(idx_behind),
@@ -694,6 +697,7 @@ class RaceState:
                 "pace_s": round(pace_s, 3) if pace_s else None,
                 "delta_s": delta_s,
                 "is_fighting": bool(gap_s <= max_gap_s),
+                "is_pitting": is_pitting_behind,
                 "tyre_compound": COMPOUNDS.get(getattr(self.status[idx_behind], "visual_compound", 0), "unknown") if (self.status and idx_behind < len(self.status)) else None,
                 "tyre_age_laps": getattr(self.status[idx_behind], "tyre_age_laps", None) if (self.status and idx_behind < len(self.status)) else None,
             }

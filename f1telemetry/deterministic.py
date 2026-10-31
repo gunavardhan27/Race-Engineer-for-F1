@@ -553,6 +553,17 @@ class Callouts:
             return [_c(1, f"{d_name} is out of the race. {running} cars running.", ttl=8.0)]
         elif kind == "defend_warning":
             return self._on_defend_warning(sig[1])
+        elif kind == "overtake_confirmed":
+            rec = sig[1]
+            if rec.get("direction") == "pass":
+                cls_name = rec.get("classification", "clean")
+                other_name = rec.get("other_driver_name", "car")
+                if cls_name == "backmarker_pass":
+                    return [_c(1, f"Clean pass on {other_name}.", ttl=5.0)]
+                elif cls_name == "overtake_straight":
+                    return [_c(1, f"Easy pass on {other_name}, good job.", ttl=5.0)]
+                else:
+                    return [_c(1, f"Good pass on {other_name}.", ttl=5.0)]
         elif kind == "flashback":
             if self.pending_debrief and self.pending_debrief.lap_num > sig[1]:
                 self.pending_debrief = None

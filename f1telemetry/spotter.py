@@ -43,12 +43,16 @@ class Spotter:
         self.last_occupied_time: float = 0.0
         self.clear_debounce_s: float = 0.25
         self.suppress_until: float = 0.0
+        self.suppress_until_wall: float = 0.0
 
     def suppress(self, duration_s: float = 3.0, now: Optional[float] = None) -> None:
         """Temporarily suppresses spotter output (e.g. during overtake compliment)."""
+        wall_now = time.monotonic()
+        self.suppress_until_wall = max(getattr(self, "suppress_until_wall", 0.0), wall_now + duration_s)
         if now is None:
-            now = time.monotonic()
+            now = wall_now
         self.suppress_until = max(self.suppress_until, now + duration_s)
+        self.state = SpotterState.CLEAR
 
     def reset(self) -> None:
         """Resets spotter tracking state."""
@@ -56,17 +60,23 @@ class Spotter:
         self.last_callout_time = 0.0
         self.last_occupied_time = 0.0
         self.suppress_until = 0.0
+        self.suppress_until_wall = 0.0
 
     def process(self, state: RaceState, now: Optional[float] = None) -> Optional[str]:
         """Evaluates car motion and returns a spotter phrase if state changed, or None."""
         if not self.config.enabled:
             return None
 
-        if now is None:
-            now = time.monotonic()
-
-        if now < self.suppress_until:
-            return None
+        wall_now = time.monotonic()
+        if now is not None:
+            if now < self.suppress_until:
+                self.state = SpotterState.CLEAR
+                return None
+        else:
+            now = wall_now
+            if wall_now < self.suppress_until_wall or wall_now < self.suppress_until:
+                self.state = SpotterState.CLEAR
+                return None
 
         # Speed filter: disable at pit speeds, grid, or spin recovery
         p_tel = state.my_telemetry

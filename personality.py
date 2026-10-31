@@ -30,6 +30,7 @@ BIG_MOMENTS = {
     "win", "podium", "points", "no_points",
     "practice_finish", "quali_pole", "quali_finish",
     "retirement", "beat_teammate", "lost_to_teammate",
+    "box_this_lap", "rival_pitted_cover",
 }
 BLUNDER_EVENTS = {"spin", "collision", "flashback", "penalty", "lost_positions"}
 
@@ -89,6 +90,8 @@ BASE_COOLDOWNS = {
     "overtake_switchback": 5.0,
     "overtake_straight": 5.0,
     "backmarker_pass": 5.0,
+    "overtake_mode_pass": 5.0,
+    "around_the_outside": 5.0,
     "defend_warning": 20.0,
     "inside_look": 20.0,
     "told_you": 0.0,
@@ -96,6 +99,11 @@ BASE_COOLDOWNS = {
     "car_ahead_pulling_away": 30.0,
     "dropping_car_behind": 30.0,
     "car_behind_closing": 30.0,
+    "strategy_plan_change": 60.0,
+    "pit_window_approaching": 60.0,
+    "box_this_lap": 20.0,
+    "rival_pitted_cover": 20.0,
+    "tyre_cliff": 60.0,
 }
 
 FREQ_MULTIPLIERS = {
@@ -419,10 +427,9 @@ class PersonalityEngine:
         - No reactions while spotter has active overlap or PTT is held.
         - Big moments override cooldowns.
         """
-        if spotter_active or state.ptt_down:
-            return None
-
         kind = sig[0]
+        if (spotter_active and kind != "overtake_confirmed") or (state and state.ptt_down):
+            return None
         if now is None:
             now = time.monotonic()
 
@@ -695,33 +702,42 @@ class PersonalityEngine:
             pos = rec.get("position", state.me.position if state.me else 0)
 
             ctx = {"name": name, "pos": pos, "corner": corner}
+            ev_name = "overtake_clean"
             if cls_name == "passed_stricken_car":
-                return self.trigger("passed_stricken_car", state, ctx, now=now)
+                ev_name = "passed_stricken_car"
             elif cls_name == "backmarker_pass":
-                return self.trigger("backmarker_pass", state, ctx, now=now)
+                ev_name = "backmarker_pass"
             elif cls_name == "overtake_straight":
-                return self.trigger("overtake_straight", state, ctx, now=now)
+                ev_name = "overtake_straight"
             elif cls_name == "overtake_switchback":
-                return self.trigger("overtake_switchback", state, ctx, now=now)
+                ev_name = "overtake_switchback"
             elif cls_name == "overtake_mode_pass":
-                return self.trigger("overtake_mode_pass", state, ctx, now=now)
+                ev_name = "overtake_mode_pass"
             elif cls_name == "around_the_outside":
-                return self.trigger("around_the_outside", state, ctx, now=now)
+                ev_name = "around_the_outside"
             elif cls_name == "divebomb":
                 self._last_divebomb_time = now
                 self._last_divebomb_driver = name
-                return self.trigger("overtake_divebomb", state, ctx, now=now)
+                ev_name = "overtake_divebomb"
             elif cls_name == "divebomb_contact":
                 self._last_divebomb_time = now
                 self._last_divebomb_driver = name
-                return self.trigger("divebomb_contact", state, ctx, now=now)
+                ev_name = "divebomb_contact"
             elif cls_name == "brave":
-                return self.trigger("overtake_brave", state, ctx, now=now)
-            else:
-                res = self.trigger("overtake_clean", state, ctx, now=now)
-                if not res:
-                    res = self.trigger("overtake_made", state, ctx, now=now)
-                return res
+                ev_name = "overtake_brave"
+
+            # Check per-event cooldown for this specific overtake event
+            eff_cd = BASE_COOLDOWNS.get(ev_name, 5.0) * FREQ_MULTIPLIERS.get(self.config.reaction_frequency, 1.0)
+            last = self.last_fired_per_event.get(ev_name, -999.0)
+            if (now - last) < eff_cd:
+                return None
+
+            res = self.trigger(ev_name, state, ctx, now=now, bypass_cooldown=True)
+            if not res and ev_name == "overtake_clean":
+                res = self.trigger("overtake_made", state, ctx, now=now, bypass_cooldown=True)
+            if res:
+                res.priority = 1
+            return res
 
         elif kind == "overtaken_confirmed":
             rec = sig[1]

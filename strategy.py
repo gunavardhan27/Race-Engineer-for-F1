@@ -69,6 +69,11 @@ class StrategyPredictor:
         self.last_plans: list[StrategyPlan] = []
         self.last_undercut: Optional[UndercutOpportunity] = None
         self.last_sc_call_fired: bool = False
+        self.last_recommended_plan_type: Optional[str] = None
+        self.last_window_alert_lap: int = -1
+        self.last_box_call_lap: int = -1
+        self.last_cliff_alert_lap: int = -1
+        self.last_rival_pit_alerted: set[int] = set()
 
     def update_pit_loss(self, measured_time_s: float) -> None:
         """Updates measured pit lane loss from actual stop."""
@@ -408,3 +413,128 @@ class StrategyPredictor:
             ],
             "tyre_degradation": self.deg_model.summary(),
         }
+
+    def reset_session(self) -> None:
+        """Resets all session-level strategy tracking flags."""
+        self.last_plans = []
+        self.last_undercut = None
+        self.last_sc_call_fired = False
+        self.last_recommended_plan_type = None
+        self.last_window_alert_lap = -1
+        self.last_box_call_lap = -1
+        self.last_cliff_alert_lap = -1
+        self.last_rival_pit_alerted = set()
+
+    def evaluate_proactive_strategy(
+        self,
+        current_lap: int,
+        total_laps: int,
+        current_compound: str,
+        current_tyre_age: int,
+        tyre_wear: Optional[tuple] = None,
+        ideal_lap: Optional[int] = None,
+        latest_lap: Optional[int] = None,
+        rival_behind_pitted: bool = False,
+        rival_behind_name: Optional[str] = None,
+        rival_behind_gap_s: Optional[float] = None,
+    ) -> list[dict[str, Any]]:
+        """Evaluates live race state and returns proactive pit wall strategy callouts.
+
+        Returns a list of callout dicts:
+        {"event": event_name, "text": text, "priority": priority, "context": context_dict}
+        """
+        alerts: list[dict[str, Any]] = []
+        best = self.last_plans[0] if self.last_plans else None
+
+        # 1. Strategy Plan Change Detection (e.g. converting 1-stop -> 2-stop or vice-versa)
+        if best:
+            plan_name_lower = best.name.lower()
+            plan_type = "1-Stop" if "1-stop" in plan_name_lower else ("2-Stop" if "2-stop" in plan_name_lower else ("No-Stop" if "no stop" in plan_name_lower else best.name))
+
+            if self.last_recommended_plan_type is not None and plan_type != self.last_recommended_plan_type and current_lap >= 3:
+                stop_lap, comp = best.stops[0] if best.stops else (ideal_lap or current_lap + 5, "hard")
+                comp_str = comp.lower().rstrip("s") + "s"
+                if plan_type == "2-Stop":
+                    txt = f"Strategy update: converting to Plan B, two stops. Target stop lap {stop_lap} for {comp_str}."
+                elif plan_type == "1-Stop":
+                    txt = f"Strategy update: tyres holding up well. Converting back to Plan A, one stop. Target lap {stop_lap}."
+                else:
+                    txt = f"Strategy update: switching to {best.name}. Target stop lap {stop_lap}."
+
+                self.last_recommended_plan_type = plan_type
+                alerts.append({
+                    "event": "strategy_plan_change",
+                    "text": txt,
+                    "priority": 1,
+                    "context": {"plan": plan_type, "lap": stop_lap, "compound": comp_str},
+                })
+            elif self.last_recommended_plan_type is None and current_lap in (1, 2, 3):
+                self.last_recommended_plan_type = plan_type
+
+        # Target stop lap & compound from recommended plan (fallback to session pit window)
+        target_lap = None
+        target_comp = "hards"
+        if best and best.stops:
+            target_lap, target_comp = best.stops[0]
+        elif ideal_lap and ideal_lap > 0:
+            target_lap = ideal_lap
+
+        comp_str = target_comp.lower().rstrip("s") + "s"
+
+        # 2. Pit Window Opening Notice (1 Lap Before Target Stop)
+        if target_lap is not None and current_lap == target_lap - 1 and self.last_window_alert_lap != current_lap:
+            self.last_window_alert_lap = current_lap
+            txt = f"Pit window opens next lap. Preparing {comp_str} for lap {target_lap}."
+            alerts.append({
+                "event": "pit_window_approaching",
+                "text": txt,
+                "priority": 1,
+                "context": {"lap": target_lap, "compound": comp_str},
+            })
+
+        # 3. Box This Lap Call (In-Lap Call)
+        if target_lap is not None and current_lap == target_lap and self.last_box_call_lap != current_lap:
+            self.last_box_call_lap = current_lap
+            txt = f"Box this lap, box box! Fitting {comp_str}. Confirm in-lap."
+            alerts.append({
+                "event": "box_this_lap",
+                "text": txt,
+                "priority": 0,
+                "context": {"compound": comp_str},
+            })
+        elif latest_lap and latest_lap > 0 and current_lap == latest_lap and self.last_box_call_lap != current_lap:
+            self.last_box_call_lap = current_lap
+            txt = "Box now, box this lap! This is the end of the pit window."
+            alerts.append({
+                "event": "box_this_lap",
+                "text": txt,
+                "priority": 0,
+                "context": {"compound": "tyres"},
+            })
+
+        # 4. Rival Behind Pitted (Cover Undercut Threat)
+        if rival_behind_pitted and rival_behind_name and rival_behind_name not in self.last_rival_pit_alerted:
+            self.last_rival_pit_alerted.add(rival_behind_name)
+            txt = f"{rival_behind_name} has just pitted! Box this lap to cover the undercut."
+            alerts.append({
+                "event": "rival_pitted_cover",
+                "text": txt,
+                "priority": 0,
+                "context": {"name": rival_behind_name},
+            })
+
+        # 5. Tyre Cliff Drop-off Alert
+        m = self.deg_model.get_compound_model(current_compound)
+        cliff = m.cliff_lap or 35
+        max_wear = max(tyre_wear) if tyre_wear else 0.0
+        if (current_tyre_age >= cliff or max_wear >= 70.0) and self.last_cliff_alert_lap != current_lap:
+            self.last_cliff_alert_lap = current_lap
+            txt = "Tyres are dropping off the cliff! High wear. Box this lap, box box."
+            alerts.append({
+                "event": "tyre_cliff",
+                "text": txt,
+                "priority": 0,
+                "context": {"wear": f"{max_wear:.0f}"},
+            })
+
+        return alerts

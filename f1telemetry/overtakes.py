@@ -294,25 +294,40 @@ class OvertakeDetector:
             dist_diff = my_total - their_total
             abs_gap = abs(dist_diff)
 
+            is_backmarker = bool(my_lap_num > getattr(other, "lap_num", 0))
+            track_dist = (my_lap_dist - getattr(other, "lap_distance", 0.0)) % track_len if track_len > 0 else dist_diff
+            if track_len > 0 and track_dist > track_len / 2:
+                track_dist -= track_len
+
+            prox_m = getattr(self.config, "proximity_m", 60.0)
+
+            # Use dist_diff if within proximity (covers synthetic tests), else track_dist for real backmarkers
+            if abs_gap < prox_m:
+                effective_gap = dist_diff
+            elif is_backmarker and abs(track_dist) < prox_m:
+                effective_gap = track_dist
+            else:
+                effective_gap = dist_diff
+            effective_abs_gap = abs(effective_gap)
+
             # Slipstream tracking on straight: within 1.0s behind (e.g. 0 < their_total - my_total < 50m)
             is_on_straight = True
             if self.track_model:
                 curr_corner = self.track_model.get_corner_at_dist(my_lap_dist)
                 if curr_corner is not None:
                     is_on_straight = False
-            if is_on_straight and -50.0 <= dist_diff < 0:
+            if is_on_straight and -50.0 <= effective_gap < 0:
                 prev_slip = self._slipstream_duration.get(i, 0.0)
                 self._slipstream_duration[i] = prev_slip + 0.1
             else:
                 self._slipstream_duration[i] = 0.0
 
-            # Proximity check (default 60m per Prompt 21)
-            prox_m = getattr(self.config, "proximity_m", 60.0)
-            if abs_gap < prox_m:
-                sign = 1 if dist_diff > 0 else -1
-                prev_sign = self._prev_signs.get(i)
+            sign = 1 if effective_gap > 0 else -1
+            prev_sign = self._prev_signs.get(i)
+            if effective_abs_gap < 120.0:
                 self._prev_signs[i] = sign
 
+            if effective_abs_gap < prox_m:
                 if prev_sign is not None and sign != prev_sign:
                     # If this car was already an active candidate, sign flipped -> side-by-side flicker!
                     if i in self._candidates:
@@ -326,9 +341,8 @@ class OvertakeDetector:
                     candidate_dir = "pass" if sign > 0 else "loss"
                     is_rejected = False
                     reject_reason = ""
-                    is_backmarker = False
-                    if candidate_dir == "pass" and my_lap_num > other.lap_num:
-                        is_backmarker = True
+                    if candidate_dir != "pass":
+                        is_backmarker = False
 
                     # 1. Other car in pit lane or just exited (< 5s)
                     if other.pit_status != 0 or (now - self._pit_exit_time.get(i, 0) < 5.0):
@@ -341,7 +355,7 @@ class OvertakeDetector:
                         reject_reason = "not_active"
 
                     # 3. Lapped / lapping
-                    elif (my_lap_num < other.lap_num) or (candidate_dir == "loss" and other.lap_num > my_lap_num) or (track_len > 0 and abs(abs_gap - track_len) < 200):
+                    elif (my_lap_num < other.lap_num) or (candidate_dir == "loss" and other.lap_num > my_lap_num) or (not is_backmarker and track_len > 0 and abs(abs_gap - track_len) < 200):
                         is_rejected = True
                         reject_reason = "lapped_traffic"
 
@@ -801,9 +815,23 @@ class DefendWarningDetector:
         if me is None or p_mot is None:
             return []
 
-        my_lap_dist = me.lap_distance
-        my_lap_num = me.lap_num
-        track_len = state.track_length
+        # Ignore if player is in pit lane or not actively running
+        if getattr(me, "pit_status", 0) != 0 or getattr(me, "result_status", 0) != 2:
+            return []
+
+        # Only valid during a race session (no defend warnings in practice, quali, or time trial)
+        if getattr(state, "is_practice", False) or getattr(state, "is_quali", False):
+            return []
+        if state.session is not None and not getattr(state, "is_race", True):
+            return []
+
+        # Suppress during Safety Car, VSC, or Formation Lap (overtaking forbidden)
+        if state.session and getattr(state.session, "safety_car", 0) in (1, 2, 3):
+            return []
+
+        my_lap_dist = getattr(me, "lap_distance", 0.0)
+        my_lap_num = getattr(me, "lap_num", 0)
+        track_len = state.track_length or 0.0
 
         # Find upcoming corner/braking zone 300-150m ahead
         target_name = "corner"
@@ -846,10 +874,30 @@ class DefendWarningDetector:
             if i == p_idx:
                 continue
             other = state.lap[i]
-            if other is None or other.result_status != 2 or other.pit_status != 0:
+            if other is None or getattr(other, "result_status", 0) != 2 or getattr(other, "pit_status", 0) != 0:
                 continue
             if i >= len(state.motion) or state.motion[i] is None:
                 continue
+
+            # 1. Defend is ONLY against the rival fighting immediately behind us for position
+            my_pos = getattr(me, "position", 0)
+            other_pos = getattr(other, "position", 0)
+            if my_pos > 0 and other_pos > 0 and other_pos != my_pos + 1:
+                continue
+
+            # 2. Check that the rival is on the same lap (ignore lapped cars or cars laps down)
+            other_lap_num = getattr(other, "lap_num", 0)
+            if other_lap_num > 0 and my_lap_num > 0 and abs(other_lap_num - my_lap_num) > 1:
+                continue
+
+            # 3. Reject cars on parallel track / hairpin switchback loops by verifying track spline distance
+            if track_len > 0:
+                other_lap_dist = getattr(other, "lap_distance", None)
+                if other_lap_dist is not None:
+                    track_dist_behind = (my_lap_dist - other_lap_dist) % track_len
+                    # Must be physically behind us along the track within 25m
+                    if track_dist_behind > 25.0:
+                        continue
 
             o_mot = state.motion[i]
             dx = o_mot.x - p_mot.x
@@ -862,10 +910,10 @@ class DefendWarningDetector:
                 self._motion_history[i] = deque(maxlen=60)
             self._motion_history[i].append((now, d_fwd, d_rt))
 
-            # Car behind check: within 15m or gap < 0.4s
+            # 4. Car behind check: within 15m or gap < 0.4s
             behind_ms = getattr(other, "gap_to_car_ahead_ms", None)
             is_close_meters = (-self.config.close_distance_m <= d_fwd <= 0.0)
-            is_close_seconds = (other.position == me.position + 1 and behind_ms is not None and behind_ms < int(self.config.close_time_s * 1000))
+            is_close_seconds = (behind_ms is not None and 0 < behind_ms < int(self.config.close_time_s * 1000))
 
             if is_close_meters or is_close_seconds:
                 # Closing check: gap shrank over last ~1.0s
@@ -878,7 +926,9 @@ class DefendWarningDetector:
                 if not old_samples:
                     continue
                 old_time, old_fwd, old_rt = old_samples[-1]
-                is_closing = (d_fwd > old_fwd + 0.2) or (behind_ms is not None)
+                # Car must actually be closing in forward distance (moving closer forward)
+                # or within 400ms time gap without falling back
+                is_closing = (d_fwd > old_fwd + 0.2) or (is_close_seconds and d_fwd >= old_fwd - 0.2)
 
                 if not is_closing:
                     continue

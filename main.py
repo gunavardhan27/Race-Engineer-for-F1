@@ -672,6 +672,7 @@ class Engineer:
                 elif sig[0] in ("new_session", "track_change"):
                     if sig[0] == "new_session":
                         self.pace.reset_session()
+                        self.strategy_predictor.reset_session()
                         self._reload_session_if_resumed()
                         if self.tracker:
                             self.tracker.on_reset(self.state.session_uid, sig[1])
@@ -750,6 +751,31 @@ class Engineer:
                         )
                         if opp and opp.recommended_action == "box_now":
                             self.radio.push(Callout(0, time.monotonic(), opp.text, ttl=8.0))
+
+                        # Evaluate proactive pit wall strategy calls (plan switches, window notices, box in-lap calls, cliff drop)
+                        rival_behind_pitted = bool(behind and behind.get("is_pitting", False) and (behind.get("gap_s") or 99.0) <= 4.0)
+                        proactive_alerts = self.strategy_predictor.evaluate_proactive_strategy(
+                            current_lap=rec.lap,
+                            total_laps=tot_l,
+                            current_compound=c_name,
+                            current_tyre_age=c_stat.tyre_age_laps if c_stat else 1,
+                            tyre_wear=rec.tyre_wear,
+                            ideal_lap=s_sess.pit_ideal_lap if s_sess else None,
+                            latest_lap=s_sess.pit_latest_lap if s_sess else None,
+                            rival_behind_pitted=rival_behind_pitted,
+                            rival_behind_name=behind.get("name") if behind else None,
+                            rival_behind_gap_s=behind.get("gap_s") if behind else None,
+                        )
+                        for alert in proactive_alerts:
+                            call_text = alert["text"]
+                            if self.personality:
+                                pers_text = self.personality.get_reaction_text(
+                                    alert["event"],
+                                    alert.get("context", {}),
+                                )
+                                if pers_text:
+                                    call_text = pers_text
+                            self.radio.push(Callout(alert["priority"], time.monotonic(), call_text, ttl=10.0))
 
                         self.state.strategy_summary = self.strategy_predictor.summary()
                         if self.broadcaster:
@@ -856,7 +882,7 @@ class Engineer:
                 for ot in ot_records:
                     if ot["direction"] == "pass":
                         if self.spotter:
-                            self.spotter.suppress(3.0, now=now_ts)
+                            self.spotter.suppress(4.0, now=now_ts)
                         if self.player:
                             self.player.interrupt()
                     sig_name = "overtake_confirmed" if ot["direction"] == "pass" else "overtaken_confirmed"
@@ -865,13 +891,15 @@ class Engineer:
                         self.tracker.on_overtake(ot)
                     if self.broadcaster:
                         self.broadcaster.broadcast("overtake", ot)
-                    for c in self.callouts.process(sig_ot, self.state):
-                        self.radio.push(c)
+                    c_pers = None
                     if self.personality:
-                        spotter_active = (self.spotter.state != SpotterState.CLEAR) if self.spotter else False
+                        spotter_active = False if ot["direction"] == "pass" else ((self.spotter.state != SpotterState.CLEAR) if self.spotter else False)
                         c_pers = self.personality.on_signal(sig_ot, self.state, spotter_active=spotter_active, now=now_ts)
                         if c_pers:
                             self.radio.push(c_pers)
+                    if not c_pers:
+                        for c in self.callouts.process(sig_ot, self.state):
+                            self.radio.push(c)
 
                 # 2. Defend warning detection
                 df_records = self.defend_detector.update(self.state, now=now_ts)
@@ -890,7 +918,7 @@ class Engineer:
             # Check spotter and personality spin on motion update
             if h.packet_id == packets.PacketId.MOTION:
                 if self.spotter:
-                    phrase = self.spotter.process(self.state)
+                    phrase = self.spotter.process(self.state, now=now_ts)
                     if phrase:
                         self._play_spotter(phrase)
                 if self.personality:
@@ -904,6 +932,38 @@ class Engineer:
             # Check debrief release on telemetry ticks
             for c in self.callouts.check_debrief_release(self.state):
                 self.radio.push(c)
+
+            # Live check if rival behind enters the pit lane
+            if h.packet_id == packets.PacketId.LAP_DATA:
+                try:
+                    b = self.state.battle_summary(max_gap_s=4.0)
+                    behind = b.get("behind")
+                    if behind and behind.get("is_pitting", False) and (behind.get("gap_s") or 99.0) <= 4.0:
+                        cur_l = self.state.me.lap_num if self.state.me else 1
+                        tot_l = self.state.session.total_laps if self.state.session else 52
+                        c_stat = self.state.my_status
+                        c_name = packets.COMPOUNDS.get(c_stat.visual_compound, "medium") if c_stat else "medium"
+                        p_alerts = self.strategy_predictor.evaluate_proactive_strategy(
+                            current_lap=cur_l,
+                            total_laps=tot_l,
+                            current_compound=c_name,
+                            current_tyre_age=c_stat.tyre_age_laps if c_stat else 1,
+                            rival_behind_pitted=True,
+                            rival_behind_name=behind.get("name"),
+                            rival_behind_gap_s=behind.get("gap_s"),
+                        )
+                        for alert in p_alerts:
+                            call_text = alert["text"]
+                            if self.personality:
+                                pers_text = self.personality.get_reaction_text(
+                                    alert["event"],
+                                    alert.get("context", {}),
+                                )
+                                if pers_text:
+                                    call_text = pers_text
+                            self.radio.push(Callout(alert["priority"], time.monotonic(), call_text, ttl=10.0))
+                except Exception as e:
+                    log.debug("Live rival pit check error: %s", e)
 
             # Check track loading & session ingestion on session packet
             if h.packet_id == packets.PacketId.SESSION and self.state.session:

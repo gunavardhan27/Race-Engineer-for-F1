@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+from collections import deque
 import math
 import tempfile
 import time
@@ -385,6 +386,86 @@ def test_defend_warning_with_track_model():
     assert w_inside[0]["inside_look"] is True
 
 
+def test_defend_warning_false_positive_rejection():
+    """Verify defend warnings do not fire for false positives:
+    - Non-rival cars (e.g. backmarkers / cars in P18)
+    - Cars across hairpins / parallel track switchbacks
+    - Cars dropping back (gap opening)
+    - Qualifying / Practice / Time Trial sessions
+    - Safety Car / VSC periods
+    - Player in pit lane
+    """
+    model = TrackModel(
+        track_id=1,
+        track_length_m=5000.0,
+        corners=[
+            Corner(
+                number=3,
+                name="Copse",
+                start_dist_m=1200.0,
+                apex_dist_m=1250.0,
+                end_dist_m=1300.0,
+                direction="right",
+                field_median_min_speed_kph=180.0,
+                braking_start_median_m=1180.0,
+                braking_start_p10_m=1160.0,
+                braking_start_p90_m=1200.0,
+                median_entry_speed_kph=240.0,
+            )
+        ]
+    )
+    detector = DefendWarningDetector(config=DefendConfig(cooldown_overall_s=20.0), track_model=model)
+    state = RaceState()
+    state.player = 0
+    state.track_length = 5000.0
+
+    p_lap = type("Lap", (), {"lap_distance": 980.0, "lap_num": 3, "position": 2, "result_status": 2, "pit_status": 0})()
+    p_mot = type("Mot", (), {
+        "x": 0.0, "y": 0.0, "z": 0.0,
+        "fwd_x": 0.0, "fwd_y": 0.0, "fwd_z": 1.0,
+        "right_x": 1.0, "right_y": 0.0, "right_z": 0.0
+    })()
+
+    # 1. Backmarker (P18) physically nearby in 3D: should NOT trigger defend warning
+    o_backmarker = type("Lap", (), {"lap_distance": 968.0, "lap_num": 2, "position": 18, "result_status": 2, "pit_status": 0, "gap_to_car_ahead_ms": 300})()
+    o_mot_bm = type("Mot", (), {"x": 0.0, "y": 0.0, "z": -8.0})()
+    state.lap = [p_lap, o_backmarker]
+    state.motion = [p_mot, o_mot_bm]
+    detector._motion_history[1] = deque([(10.0, -12.0, 0.0)])
+    assert detector.update(state, now=11.0) == []
+
+    # 2. Car on parallel track / hairpin switchback (close in 3D, far in track spline: 1800m vs 980m)
+    o_rival_hairpin = type("Lap", (), {"lap_distance": 1800.0, "lap_num": 3, "position": 3, "result_status": 2, "pit_status": 0, "gap_to_car_ahead_ms": 300})()
+    o_mot_hp = type("Mot", (), {"x": 0.0, "y": 0.0, "z": -8.0})()
+    state.lap = [p_lap, o_rival_hairpin]
+    state.motion = [p_mot, o_mot_hp]
+    detector._motion_history[1] = deque([(10.0, -12.0, 0.0)])
+    assert detector.update(state, now=11.0) == []
+
+    # 3. Car dropping back (distance widening from -8m to -14m)
+    o_rival_real = type("Lap", (), {"lap_distance": 968.0, "lap_num": 3, "position": 3, "result_status": 2, "pit_status": 0, "gap_to_car_ahead_ms": 800})()
+    o_mot_real = type("Mot", (), {"x": 0.0, "y": 0.0, "z": -14.0})()
+    state.lap = [p_lap, o_rival_real]
+    state.motion = [p_mot, o_mot_real]
+    detector._motion_history[1] = deque([(10.0, -8.0, 0.0)])
+    assert detector.update(state, now=11.0) == []
+
+    # 4. Qualifying / Practice session: should NOT trigger defend warning
+    state.session = type("Session", (), {"session_type": 5, "safety_car": 0})()  # 5 = Q1
+    o_mot_real.z = -7.0
+    detector._motion_history[1] = deque([(10.0, -12.0, 0.0)])
+    assert detector.update(state, now=11.0) == []
+
+    # 5. Safety Car active (session_type=10 race, safety_car=1): should NOT trigger defend warning
+    state.session = type("Session", (), {"session_type": 10, "safety_car": 1})()
+    assert detector.update(state, now=11.0) == []
+
+    # 6. Player in pit lane (pit_status=1): should NOT trigger defend warning
+    state.session = type("Session", (), {"session_type": 10, "safety_car": 0})()
+    p_lap.pit_status = 1
+    assert detector.update(state, now=11.0) == []
+
+
 # ==============================================================================
 # 6. Corner Name Persistence Across Rebuilds
 # ==============================================================================
@@ -520,3 +601,66 @@ def test_spotter_suppressed_on_overtake():
     call_after = spotter.process(st, now=104.0)
     assert call_after is not None
     assert "right" in call_after.lower()
+
+
+def test_overtake_pass_suppresses_spotter_and_plays_praise():
+    """Confirms overtake pass suppresses spotter and plays praise without 'Car left' / 'Still there' collision."""
+    from f1telemetry.spotter import Spotter, SpotterConfig, SpotterState
+    from f1telemetry.overtakes import OvertakeDetector, OvertakeConfig
+    from f1telemetry.packets import CarMotion, LapData
+    from personality import PersonalityEngine, PersonaConfig
+
+    spotter = Spotter(SpotterConfig())
+    pers = PersonalityEngine(PersonaConfig(name="cocky"))
+    ot_det = OvertakeDetector(OvertakeConfig())
+
+    st = RaceState()
+    st.player = 0
+    p_mot = CarMotion(x=0.0, y=0.0, z=0.0, yaw=0.0, g_lat=0.0, g_lon=0.0, g_vert=0.0,
+                      fwd_x=0.0, fwd_y=0.0, fwd_z=1.0, right_x=1.0, right_y=0.0, right_z=0.0)
+    opp_left = CarMotion(x=-2.0, y=0.0, z=-1.0, yaw=0.0, g_lat=0.0, g_lon=0.0, g_vert=0.0)
+
+    p_lap = LapData(last_lap_ms=80000, current_lap_ms=10000, gap_to_car_ahead_ms=0, gap_to_leader_ms=0,
+                    lap_distance=500.0, position=1, lap_num=2, pit_status=0, num_pit_stops=0, sector=0,
+                    lap_invalid=False, penalties_s=0, result_status=2)
+    opp_lap = LapData(last_lap_ms=80000, current_lap_ms=10000, gap_to_car_ahead_ms=0, gap_to_leader_ms=0,
+                      lap_distance=500.0, position=2, lap_num=2, pit_status=0, num_pit_stops=0, sector=0,
+                      lap_invalid=False, penalties_s=0, result_status=2)
+
+    class FakeTel:
+        speed_kph = 200
+
+    st.tel = [FakeTel(), FakeTel()]
+    st.motion = [p_mot, opp_left]
+    st.lap = [p_lap, opp_lap]
+
+    # Pre-overtake: car on left
+    phrase = spotter.process(st, now=10.0)
+    assert phrase == "Car left"
+    assert spotter.state == SpotterState.CAR_LEFT
+
+    # Overtake happens on straight
+    ot_record = {
+        "direction": "pass",
+        "classification": "overtake_straight",
+        "other_driver_name": "Russell",
+        "corner_name": "Straight",
+        "position": 2,
+    }
+
+    # As in main.py upon pass confirmation:
+    spotter.suppress(4.0, now=12.0)
+    assert spotter.state == SpotterState.CLEAR
+
+    # Personality praise must succeed with Priority 1 even if spotter had been occupied
+    praise = pers.on_signal(("overtake_confirmed", ot_record), st, spotter_active=False, now=12.0)
+    assert praise is not None
+    assert praise.priority == 1
+    assert "easy pass" in praise.text.lower() or "russell" in praise.text.lower()
+
+    # During suppression window (now=13.0, 14.0), opponent still alongside (-1.0m rear quarter)
+    # Spotter MUST remain silent and NOT emit 'Car left' or 'Still there'
+    assert spotter.process(st, now=13.0) is None
+    assert spotter.process(st, now=14.0) is None
+    assert spotter.state == SpotterState.CLEAR
+

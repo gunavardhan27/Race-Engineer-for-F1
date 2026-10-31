@@ -378,3 +378,25 @@ car_behind_closing:
 - text: "{name} behind is within {gap} seconds and lapping faster. {tyre_info} Speed up, we need to defend."
 - text: "Watch your mirrors, {name} is closing, gap is {gap}s. {tyre_info} Pick up the pace!"
 - text: "{name} is catching you by {delta}s a lap. Gap is {gap}s. {tyre_info} Fasten your pace and defend."
+
+strategy_plan_change:
+- text: "Strategy update: converting to {plan}. Target stop on lap {lap}."
+- text: "Radio check, changing plan: we're switching to {plan}. Stop on lap {lap}."
+- text: "Switching to {plan}. High tyre deg, let's make this work."
+
+pit_window_approaching:
+- text: "Pit window opens next lap. Target is box lap {lap} for {compound}."
+- text: "Heads up, pit window opens next lap. Preparing {compound} for lap {lap}."
+
+box_this_lap:
+- text: "Box this lap, box box! Fitting {compound}."
+- text: "Box this lap! Box box, {compound} ready in the pit lane."
+- text: "In this lap, box box box! Fresh {compound} ready."
+
+rival_pitted_cover:
+- text: "{name} has pitted to undercut us! Box now, box this lap to cover him."
+- text: "{name} in the pit lane! Box this lap, let's protect the position."
+
+tyre_cliff:
+- text: "Tyres are dropping off the cliff! We can't stay out. Box this lap, box box."
+- text: "Tyres are cooked, massive drop-off. Box now, box this lap."
