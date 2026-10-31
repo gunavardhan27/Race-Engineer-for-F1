@@ -842,7 +842,8 @@ class Engineer:
             if self.trace_collector:
                 self.trace_collector.on_tick(self.state)
             if hasattr(self, "minisector_tracker") and self.minisector_tracker:
-                self.minisector_tracker.on_tick(self.state, now)
+                now_tick = self.state.session_time if self.state.session_time > 0 else time.monotonic()
+                self.minisector_tracker.on_tick(self.state, now_tick)
         except Exception:
             log.exception("packet handling failed")
 
@@ -1154,7 +1155,7 @@ async def selftest(engineer: Engineer):
     print("Self-test completed successfully!\n")
 
 
-async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, redis_url: str | None, redis_hz: float):
+async def amain(args, cfg: AppConfig, host: str, port: int, ptt_action: int, redis_url: str | None, redis_hz: float, stop_event: asyncio.Event | None = None):
     loop = asyncio.get_running_loop()
     recorder = Recorder(args.record) if args.record else None
     latency = LatencyTracker()
@@ -1684,4 +1685,9 @@ def main(argv=None):
     finally:
         if instance_lock:
             instance_lock.release()
+
+
+if __name__ == "__main__":
+    main()
+
 
