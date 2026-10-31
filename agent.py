@@ -20,15 +20,15 @@ from llm import LLMClient
 log = logging.getLogger("engineer.agent")
 
 
-CORE_KEYS = {"lap", "lap_num", "position", "pos", "driver_name", "gear", "speed", "me"}
+CORE_KEYS = {"lap", "lap_num", "position", "pos", "driver_name", "gear", "speed", "me", "strategy", "battle_pace", "retirements"}
 
 INTENT_MAP = {
-    ("tyre", "tire", "wear", "compound", "pit", "box"): {"tyres", "tyre_wear", "weather", "track_temp", "air_temp", "pit_status"},
-    ("gap", "behind", "ahead", "delta", "battle", "catch", "drs", "overtake"): {"ahead", "behind", "drs", "gap_ahead", "gap_behind", "rival"},
+    ("tyre", "tire", "wear", "compound", "pit", "box", "strategy", "plan", "undercut", "overcut", "stop"): {"tyres", "tyre_wear", "weather", "track_temp", "air_temp", "pit_status", "strategy"},
+    ("gap", "behind", "ahead", "delta", "battle", "catch", "drs", "overtake", "fighting"): {"ahead", "behind", "drs", "gap_ahead", "gap_behind", "rival", "battle_pace"},
     ("engine", "ers", "battery", "fuel", "mode", "deploy", "harvest"): {"engine", "ers", "fuel", "drs"},
-    ("weather", "rain", "track", "temp", "conditions"): {"weather", "air_temp", "track_temp", "rain_percentage"},
-    ("damage", "wing", "puncture", "warning", "penalty"): {"damage", "car_damage", "penalties", "warnings"},
-    ("pace", "sector", "time", "best", "delta"): {"sectors", "last_lap", "best_lap", "delta_to_best"},
+    ("weather", "rain", "track", "temp", "conditions", "crossover"): {"weather", "air_temp", "track_temp", "rain_percentage"},
+    ("damage", "wing", "puncture", "warning", "penalty", "crash", "retire", "dnf"): {"damage", "car_damage", "penalties", "warnings", "retirements"},
+    ("pace", "sector", "time", "best", "delta", "laps"): {"sectors", "last_lap", "best_lap", "delta_to_best", "battle_pace"},
 }
 
 

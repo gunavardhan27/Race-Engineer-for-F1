@@ -116,7 +116,7 @@ class TTSConfig:
 
 @dataclass
 class GroqConfig:
-    model: str = "llama-3.1-8b-instant"
+    model: str = "qwen/qwen3.8-27b"
     api_key_env: str = "GROQ_API_KEY"
 
 

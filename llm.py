@@ -43,7 +43,7 @@ class GroqProvider:
         api_key: Optional[str] = None,
         usage_guard: Optional[Any] = None,
     ):
-        self.model = model
+        self.model = os.getenv("GROQ_MODEL") or model
         self.api_key = (
             api_key
             or os.getenv("GROQ_API_KEY", "")

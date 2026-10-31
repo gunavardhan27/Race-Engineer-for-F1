@@ -37,7 +37,7 @@ def test_load_config_yaml():
     assert cfg.telemetry.port == 20777
     assert cfg.stt.model == "small.en"
     assert cfg.tts.engine == "piper"
-    assert cfg.llm.groq.model == "llama-3.1-8b-instant"
+    assert cfg.llm.groq.model == "qwen/qwen3.8-27b"
 
 
 def test_unknown_keys_emit_warning_not_crash(caplog):

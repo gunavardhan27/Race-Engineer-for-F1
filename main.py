@@ -64,6 +64,8 @@ from minisectors import MiniSectorTracker, MiniSectorStorage
 from trackmap import TrackMapManager
 from positions import PositionsBroadcaster, encode_positions_frame, extract_car_positions
 from replay_manager import ReplayController
+from tyres import TyreDegradationModel
+from strategy import StrategyPredictor, StrategyPlan, UndercutOpportunity
 
 log = logging.getLogger("engineer")
 FRAME = struct.Struct("<dI")   # recording: seconds since start, payload length
@@ -291,6 +293,9 @@ class Engineer:
             voice=voice_str,
             max_mb=max_mb,
         )
+
+        self.tyre_model = TyreDegradationModel()
+        self.strategy_predictor = StrategyPredictor(deg_model=self.tyre_model)
 
         if self.config.stt.ptt_source == "joystick":
             self._joystick_thread = start_joystick_listener(
@@ -655,6 +660,9 @@ class Engineer:
                             self.overtake_detector.set_track_model(loaded_m)
                             self.defend_detector.set_track_model(loaded_m)
                         self.track_model_builder = TrackModelBuilder(t_id, t_len, knowledge_base=self.knowledge)
+                        tot_l = self.state.session.total_laps if self.state.session and self.state.session.total_laps else 52
+                        self.tyre_model = TyreDegradationModel(track_total_laps=tot_l)
+                        self.strategy_predictor = StrategyPredictor(deg_model=self.tyre_model)
                 elif sig[0] == "setup_change":
                     self._on_setup_change(sig[1], sig[2])
                 elif sig[0] == "lap":
@@ -675,6 +683,63 @@ class Engineer:
                     self.pace.quiet_mode = self.quiet_mode
                     for c_pace in self.pace.on_lap(rec):
                         self.radio.push(c_pace)
+
+                    # Strategy & Tyre Degradation simulation update (Prompt 24)
+                    try:
+                        s_sess = self.state.session
+                        tot_l = s_sess.total_laps if s_sess and s_sess.total_laps else 52
+                        c_stat = self.state.my_status
+                        c_name = packets.COMPOUNDS.get(c_stat.visual_compound, "medium") if c_stat else "medium"
+                        stint_laps = [r for r in self.state.laps if r.stint == rec.stint and not r.invalid]
+                        if len(stint_laps) >= 3:
+                            ages = [r.lap - stint_laps[0].lap + 1 for r in stint_laps]
+                            times = [r.lap_time_s for r in stint_laps]
+                            fuels = [r.fuel_kg for r in stint_laps if r.fuel_kg is not None]
+                            wears = [max(r.tyre_wear) for r in stint_laps if r.tyre_wear]
+                            self.tyre_model.feed_stint(
+                                c_name, ages, times,
+                                fuels if len(fuels) == len(times) else None,
+                                wears if len(wears) == len(times) else None,
+                            )
+
+                        avail_comps = ["soft", "medium", "hard"]
+                        if self.state.tyre_sets and hasattr(self.state.tyre_sets, "sets"):
+                            avail_comps = [packets.COMPOUNDS.get(ts.visual_compound, "medium") for ts in self.state.tyre_sets.sets if getattr(ts, "available", False)] or ["medium", "hard"]
+
+                        plans = self.strategy_predictor.enumerate_plans(
+                            current_lap=rec.lap,
+                            total_laps=tot_l,
+                            current_compound=c_name,
+                            current_tyre_age=c_stat.tyre_age_laps if c_stat else 1,
+                            available_compounds=avail_comps,
+                            base_lap_time=rec.lap_time_s or 90.0,
+                            fuel_remaining_kg=c_stat.fuel_in_tank if c_stat else 40.0,
+                            sc_status=s_sess.safety_car if s_sess else 0,
+                        )
+                        self.strategy_predictor.run_monte_carlo(plans, samples=200)
+
+                        b = self.state.battle_summary(max_gap_s=4.0)
+                        ahead = b.get("ahead")
+                        behind = b.get("behind")
+                        opp = self.strategy_predictor.evaluate_undercut_threat(
+                            current_lap=rec.lap,
+                            gap_ahead_s=ahead.get("gap_s") if ahead else None,
+                            ahead_name=ahead.get("name") if ahead else None,
+                            ahead_car_idx=ahead.get("car_idx") if ahead else None,
+                            gap_behind_s=behind.get("gap_s") if behind else None,
+                            behind_name=behind.get("name") if behind else None,
+                            behind_car_idx=behind.get("car_idx") if behind else None,
+                            current_position=self.state.me.position if self.state.me else 3,
+                        )
+                        if opp and opp.recommended_action == "box_now":
+                            self.radio.push(Callout(0, time.monotonic(), opp.text, ttl=8.0))
+
+                        self.state.strategy_summary = self.strategy_predictor.summary()
+                        if self.broadcaster:
+                            self.broadcaster.broadcast("strategy_update", self.state.strategy_summary)
+                    except Exception as e:
+                        log.debug("Strategy calculation error on lap: %s", e)
+
                     # Update braking zones if clean reference lap
                     if not rec.invalid and self.storage and self.state.session and self.state.session.track_id is not None:
                         try:
@@ -820,6 +885,27 @@ class Engineer:
                     self.trace_collector.on_session_packet(self.state)
                 if self.state.my_setup and not self.state.current_setup_id:
                     self._on_setup_change(self.state.my_setup, self.state.current_setup_fingerprint)
+
+                # Safety Car cheap pit stop & Rain crossover check
+                try:
+                    sc_call = self.strategy_predictor.evaluate_sc_opportunity(
+                        self.state.session.safety_car,
+                        self.state.me.lap_num if self.state.me else 1,
+                        self.state.session.total_laps or 52,
+                        self.state.my_status.tyre_age_laps if self.state.my_status else 1,
+                        packets.COMPOUNDS.get(self.state.my_status.visual_compound, "medium") if self.state.my_status else "medium",
+                    )
+                    if sc_call:
+                        self.radio.push(Callout(0, time.monotonic(), sc_call, ttl=10.0))
+
+                    rain_call = self.strategy_predictor.evaluate_rain_crossover(
+                        self.state.session.forecast,
+                        packets.COMPOUNDS.get(self.state.my_status.visual_compound, "medium") if self.state.my_status else "medium",
+                    )
+                    if rain_call:
+                        self.radio.push(Callout(1, time.monotonic(), rain_call, ttl=15.0))
+                except Exception as e:
+                    log.debug("Session strategy evaluation error: %s", e)
 
             # Session start radio check: 3s after first packets of a new session
             if self.state.session_uid:

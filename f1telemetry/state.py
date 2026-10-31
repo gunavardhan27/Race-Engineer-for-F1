@@ -59,6 +59,10 @@ class LapRecord:
     blunder_moment: str | None = None
     excess_deg: bool = False
 
+    @property
+    def lap_time_s(self) -> float:
+        return round(self.lap_time_ms / 1000.0, 3) if self.lap_time_ms else 0.0
+
 
 class RaceState:
     def __init__(self, ptt_action: int = 1, history: int = 120):
@@ -103,6 +107,12 @@ class RaceState:
         self.speed_traps_all_cars: dict[int, float] = {}  # car_idx -> max speed kph
         self.last_lap_vs_previous: dict | None = None
         self.expected_performance: dict = {"position": None, "basis": "none", "confidence": 0.0}
+
+        # Battle pace, lap history and retirements
+        self.car_laps_history: dict[int, list[dict]] = {}
+        self._last_seen_lap_per_car: dict[int, int] = {}
+        self.retirements: list[dict] = []
+        self.retired_car_indices: set[int] = set()
 
         # Per-lap tracking accumulators
         self._lap_start_time = time.monotonic()
@@ -174,6 +184,35 @@ class RaceState:
                         )
                         signals.append(("finished", finish_info))
                 for i, c in enumerate(data):
+                    prev_l = self._last_seen_lap_per_car.get(i, 0)
+                    curr_l = getattr(c, "current_lap_num", 0)
+                    last_ms = getattr(c, "last_lap_ms", 0)
+                    if curr_l > prev_l and prev_l > 0 and last_ms > 0:
+                        inv = bool(getattr(c, "lap_invalid", False))
+                        self.car_laps_history.setdefault(i, []).append({
+                            "lap_num": prev_l,
+                            "lap_time_ms": last_ms,
+                            "lap_time_s": round(last_ms / 1000.0, 3),
+                            "valid": not inv,
+                        })
+                    self._last_seen_lap_per_car[i] = curr_l
+
+                    # DNF / retirement check on status transition
+                    status = getattr(c, "result_status", 0)
+                    if status in (4, 7) and i not in self.retired_car_indices:
+                        self.retired_car_indices.add(i)
+                        d_name = self.name(i)
+                        ret_rec = {
+                            "car_idx": i,
+                            "name": d_name,
+                            "position": getattr(c, "position", 0),
+                            "lap": curr_l,
+                            "reason": "DNF" if status == 4 else "Retired",
+                            "timestamp": time.monotonic(),
+                        }
+                        self.retirements.append(ret_rec)
+                        signals.append(("retirement", ret_rec))
+
                     if hasattr(c, "speed_trap_kph") and c.speed_trap_kph > self.speed_traps_all_cars.get(i, 0.0):
                         self.speed_traps_all_cars[i] = c.speed_trap_kph
                     if c.last_lap_ms > 0 and not getattr(c, "lap_invalid", False):
@@ -263,9 +302,30 @@ class RaceState:
             elif data.code == "PENA" and data.vehicle_idx == self.player:
                 signals.append(("penalty", data))
                 self._blunder_moment_this_lap = "penalty"
-            elif data.code == "COLL" and (data.vehicle_1_idx == self.player or data.vehicle_2_idx == self.player):
+            elif data.code == "COLL":
+                v1 = getattr(data, "vehicle_1_idx", getattr(data, "vehicle_idx", None))
+                v2 = getattr(data, "vehicle_2_idx", getattr(data, "other_vehicle_idx", None))
+                if v1 == self.player or v2 == self.player:
+                    self._blunder_moment_this_lap = "contact"
                 signals.append(("event", data))
-                self._blunder_moment_this_lap = "contact"
+            elif data.code == "RTMT":
+                car_i = getattr(data, "vehicle_idx", None)
+                if car_i is not None and car_i not in self.retired_car_indices:
+                    self.retired_car_indices.add(car_i)
+                    d_name = self.name(car_i)
+                    pos = getattr(self.lap[car_i], "position", 0) if self.lap and car_i < len(self.lap) else 0
+                    lap_num = getattr(self.lap[car_i], "current_lap_num", 0) if self.lap and car_i < len(self.lap) else 0
+                    ret_rec = {
+                        "car_idx": car_i,
+                        "name": d_name,
+                        "position": pos,
+                        "lap": lap_num,
+                        "reason": "Retired",
+                        "timestamp": time.monotonic(),
+                    }
+                    self.retirements.append(ret_rec)
+                    signals.append(("retirement", ret_rec))
+                signals.append(("event", data))
             else:
                 signals.append(("event", data))
         return signals
@@ -499,6 +559,106 @@ class RaceState:
             return None
         return (max(recs[-1].tyre_wear) - max(recs[0].tyre_wear)) / (recs[-1].lap - recs[0].lap)
 
+    def player_rolling_pace(self, n: int = 3) -> float | None:
+        """Returns average lap time in seconds of the player's last n valid clean laps."""
+        valid_laps = [r.lap_time_s for r in self.laps if not r.invalid and r.lap_time_s > 0]
+        if not valid_laps:
+            return None
+        recent = valid_laps[-n:]
+        return sum(recent) / len(recent)
+
+    def car_last_lap_s(self, idx: int) -> float | None:
+        """Returns the last completed lap time in seconds for the given car index."""
+        if not self.lap or idx >= len(self.lap):
+            return None
+        ms = getattr(self.lap[idx], "last_lap_ms", 0)
+        return (ms / 1000.0) if ms > 0 else None
+
+    def car_rolling_pace(self, idx: int, n: int = 3) -> float | None:
+        """Returns rolling average lap time in seconds for a specific car."""
+        history = self.car_laps_history.get(idx, [])
+        valid_times = [l["lap_time_s"] for l in history if l.get("valid", True) and l.get("lap_time_s", 0) > 0]
+        if valid_times:
+            recent = valid_times[-n:]
+            return sum(recent) / len(recent)
+        return self.car_last_lap_s(idx)
+
+    def battle_summary(self, max_gap_s: float = 4.0) -> dict:
+        """Returns battle pace and gap analysis for player and rivals within max_gap_s."""
+        my_last = self.laps[-1].lap_time_s if self.laps and self.laps[-1].lap_time_s > 0 else None
+        if my_last is None and self.player is not None:
+            my_last = self.car_last_lap_s(self.player)
+        my_pace = self.player_rolling_pace(n=3) or my_last
+
+        summary = {
+            "my_last_lap_s": my_last,
+            "my_avg_pace_s": my_pace,
+            "ahead": None,
+            "behind": None,
+        }
+
+        # Car ahead
+        idx_ahead, ms_ahead = self.gap_ahead()
+        if idx_ahead is not None and ms_ahead is not None:
+            gap_s = ms_ahead / 1000.0
+            last_s = self.car_last_lap_s(idx_ahead)
+            pace_s = self.car_rolling_pace(idx_ahead, n=3)
+            delta_s = None
+            if my_pace and pace_s:
+                delta_s = round(pace_s - my_pace, 3)
+            elif my_last and last_s:
+                delta_s = round(last_s - my_last, 3)
+
+            pos_ahead = getattr(self.lap[idx_ahead], "position", 0) if self.lap and idx_ahead < len(self.lap) else 0
+            summary["ahead"] = {
+                "car_idx": idx_ahead,
+                "name": self.name(idx_ahead),
+                "position": pos_ahead,
+                "gap_s": round(gap_s, 2),
+                "last_lap_s": round(last_s, 3) if last_s else None,
+                "pace_s": round(pace_s, 3) if pace_s else None,
+                "delta_s": delta_s,
+                "is_fighting": bool(gap_s <= max_gap_s),
+            }
+
+        # Car behind
+        idx_behind, ms_behind = self.gap_behind()
+        if idx_behind is not None and ms_behind is not None:
+            gap_s = ms_behind / 1000.0
+            last_s = self.car_last_lap_s(idx_behind)
+            pace_s = self.car_rolling_pace(idx_behind, n=3)
+            delta_s = None
+            if my_pace and pace_s:
+                delta_s = round(my_pace - pace_s, 3)
+            elif my_last and last_s:
+                delta_s = round(my_last - last_s, 3)
+
+            pos_behind = getattr(self.lap[idx_behind], "position", 0) if self.lap and idx_behind < len(self.lap) else 0
+            summary["behind"] = {
+                "car_idx": idx_behind,
+                "name": self.name(idx_behind),
+                "position": pos_behind,
+                "gap_s": round(gap_s, 2),
+                "last_lap_s": round(last_s, 3) if last_s else None,
+                "pace_s": round(pace_s, 3) if pace_s else None,
+                "delta_s": delta_s,
+                "is_fighting": bool(gap_s <= max_gap_s),
+            }
+
+        return summary
+
+    def retirements_summary(self) -> dict:
+        """Returns summary of all DNFs/retirements in the session."""
+        running = len([c for c in (self.lap or []) if getattr(c, "result_status", 0) in RUNNING])
+        return {
+            "total_retired": len(self.retirements),
+            "cars_running": running,
+            "retired_drivers": [r["name"] for r in self.retirements],
+            "retirements": list(self.retirements),
+            "latest": self.retirements[-1] if self.retirements else None,
+        }
+
+
     def next_rain(self, min_pct: int = 30):
         if not self.session:
             return None
@@ -710,6 +870,9 @@ class RaceState:
             } if t_idx is not None else None,
             "expected_position": self.expected_performance,
             "last_lap_vs_previous": self.last_lap_vs_previous,
+            "battle_pace": self.battle_summary(),
+            "retirements": self.retirements_summary(),
+            "strategy": getattr(self, "strategy_summary", None),
             "speed_trap": {
                 "speed_kph": st_spd,
                 "rank": st_rank,

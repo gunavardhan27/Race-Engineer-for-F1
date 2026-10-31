@@ -763,6 +763,14 @@ def create_app(
                 log.warning("Failed to decompress timeline chunk: %s", e)
         return {"session_uid": uid, "samples": samples}
 
+    @app.get("/api/strategy/summary")
+    async def get_strategy_summary(token_param: str | None = Query(None, alias="token")):
+        if not verify_token(token_param, token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+        if engineer and hasattr(engineer, "strategy_predictor") and engineer.strategy_predictor:
+            return engineer.strategy_predictor.summary()
+        return {"recommended_plan": None, "plans": [], "tyre_degradation": {}}
+
     @app.get("/api/session/overtakes")
     async def get_session_overtakes(
         session_uid: str | None = None,

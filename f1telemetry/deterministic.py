@@ -42,6 +42,8 @@ _INTENTS = [(name, re.compile(p, re.I)) for name, p in [
     ("teammate", r"\b(where('s| is) my teammate|where('s| is) (the )?other car|how am i doing vs teammate|how('s| is) my teammate doing|teammate pace|vs teammate)\b"),
     ("car_capability", r"\b(what('s| is) the car capable of|what can the car do|what should we be doing|car potential|expected position)\b"),
     ("delta_best", r"\b(losing time|how was my (?:last )?lap|pace vs best|delta to best)\b"),
+    ("battle_pace", r"\b(lap times?|battle pace|pace vs (?:ahead|behind)|who am i fighting|gaps? and lap times?|how are my lap times|what lap times)\b"),
+    ("retirements", r"\b(who('s| is)? (?:crashed|out|retired)|any (?:crashes|retirements|dnfs?)|how many cars (?:out|running)|did anyone crash)\b"),
     ("setup", r"\b(what('s| is)? (my )?setup|what setup am i (on|running)|current setup|best setup( here)?|setup info)\b"),
     ("radio_check", r"\b(radio check|comms check|can you hear me|do you copy)\b"),
     ("drs", r"\b(drs|overtake mode|active aero)\b"),
@@ -126,7 +128,29 @@ def _position(st: RaceState):
     me, s = st.me, st.session
     if not me:
         return NO_DATA
-    return f"P{me.position}" + (f", lap {me.lap_num} of {s.total_laps}." if s and s.total_laps else ".")
+    pos_str = f"P{me.position}"
+    if s and s.total_laps:
+        pos_str += f", lap {me.lap_num} of {s.total_laps}."
+    else:
+        pos_str += "."
+
+    # Gap to leader if not leading
+    if me.position > 1 and me.gap_to_leader_ms:
+        leader_idx = st.car_in_position(1)
+        leader_name = st.name(leader_idx) if leader_idx is not None else "the lead"
+        pos_str += f" {sec(me.gap_to_leader_ms)} off {leader_name} in P1."
+
+    # Gap to podium if P4 or P5
+    if me.position in (4, 5):
+        p3_idx = st.car_in_position(3)
+        if p3_idx is not None and st.lap and p3_idx < len(st.lap):
+            p3_lead_ms = getattr(st.lap[p3_idx], "gap_to_leader_ms", None)
+            if me.gap_to_leader_ms is not None and p3_lead_ms is not None:
+                gap_p3 = (me.gap_to_leader_ms - p3_lead_ms) / 1000.0
+                if gap_p3 > 0:
+                    pos_str += f" {gap_p3:.1f} seconds off the podium."
+
+    return pos_str
 
 
 def _laps(st: RaceState):
@@ -301,12 +325,84 @@ def _ideal_lap(st: RaceState, text: str = ""):
     return "No ideal lap calculated yet."
 
 
+def _format_lap_time(s: float | None) -> str:
+    if not s or s <= 0:
+        return "--"
+    m = int(s // 60)
+    rem = s % 60
+    return f"{m}:{rem:04.1f}" if m > 0 else f"{rem:.1f}s"
+
+
+def _battle_pace(st: RaceState) -> str:
+    """Answers driver query for their own lap times and relative battle pace against rivals within 3-4s."""
+    b = st.battle_summary(max_gap_s=4.0)
+    my_avg = b.get("my_avg_pace_s")
+    my_last = b.get("my_last_lap_s")
+    if not my_avg and not my_last:
+        return "No clean lap times recorded yet."
+
+    parts = []
+    if my_avg:
+        parts.append(f"Your average pace is {_format_lap_time(my_avg)}.")
+    elif my_last:
+        parts.append(f"Your last lap was {_format_lap_time(my_last)}.")
+
+    ahead = b.get("ahead")
+    behind = b.get("behind")
+
+    if ahead and ahead.get("is_fighting"):
+        name = ahead["name"]
+        gap = ahead["gap_s"]
+        last_s = ahead.get("last_lap_s")
+        delta = ahead.get("delta_s")
+        pace_txt = f", last lap {_format_lap_time(last_s)}" if last_s else ""
+        if delta is not None:
+            comp_txt = f"{abs(delta):.1f} quicker" if delta < 0 else f"{abs(delta):.1f} slower"
+            parts.append(f"{name} is {gap:.1f} ahead{pace_txt}, {comp_txt}.")
+        else:
+            parts.append(f"{name} is {gap:.1f} ahead{pace_txt}.")
+
+    if behind and behind.get("is_fighting"):
+        name = behind["name"]
+        gap = behind["gap_s"]
+        last_s = behind.get("last_lap_s")
+        delta = behind.get("delta_s")
+        pace_txt = f", last lap {_format_lap_time(last_s)}" if last_s else ""
+        if delta is not None:
+            comp_txt = f"closing {abs(delta):.1f} a lap" if delta < 0 else f"you're pulling {abs(delta):.1f} a lap"
+            parts.append(f"{name} is {gap:.1f} behind{pace_txt}, {comp_txt}.")
+        else:
+            parts.append(f"{name} is {gap:.1f} behind{pace_txt}.")
+
+    if not (ahead and ahead.get("is_fighting")) and not (behind and behind.get("is_fighting")):
+        parts.append("Clean air ahead and behind. Nobody within 4 seconds.")
+
+    return " ".join(parts)
+
+
+def _retirements(st: RaceState) -> str:
+    """Answers driver query on crashes, retirements, and DNFs."""
+    ret = st.retirements_summary()
+    total = ret.get("total_retired", 0)
+    running = ret.get("cars_running", 0)
+    drivers = ret.get("retired_drivers", [])
+
+    if total == 0:
+        return f"All {running} cars running, no retirements or DNFs so far."
+
+    names_str = ", ".join(drivers[:3])
+    if len(drivers) > 3:
+        names_str += f" and {len(drivers) - 3} others"
+    return f"{total} retirement{'s' if total > 1 else ''} so far: {names_str}. {running} cars still running."
+
+
 ANSWERS = {"gap_ahead": _gap_ahead, "gap_behind": _gap_behind, "fuel": _fuel, "tyres": _tyres,
            "damage": _damage, "weather": _weather, "position": _position, "laps": _laps,
            "pit_window": _pit_window, "delta_best": _delta_best, "setup": _setup,
            "radio_check": _radio_check, "gap_to_pole": _gap_to_pole, "am_i_through": _am_i_through,
            "teammate": _teammate, "car_capability": _car_capability, "drs": _drs,
-           "where_slow": _where_slow, "fastest_sector": _fastest_sector, "ideal_lap": _ideal_lap}
+           "where_slow": _where_slow, "fastest_sector": _fastest_sector, "ideal_lap": _ideal_lap,
+           "battle_pace": _battle_pace, "retirements": _retirements}
 
 
 @dataclass(slots=True)
@@ -450,6 +546,11 @@ class Callouts:
             return [_c(1, "Overtake mode available.", ttl=5.0)]
         elif kind == "penalty":
             return self._on_penalty(sig[1], st, now)
+        elif kind == "retirement":
+            info = sig[1]
+            d_name = info.get("name", "A car")
+            running = len([c for c in (st.lap or []) if getattr(c, "result_status", 0) in packets.RUNNING])
+            return [_c(1, f"{d_name} is out of the race. {running} cars running.", ttl=8.0)]
         elif kind == "defend_warning":
             return self._on_defend_warning(sig[1])
         elif kind == "flashback":
