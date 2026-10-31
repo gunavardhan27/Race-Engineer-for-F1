@@ -59,6 +59,19 @@ no_points:
 - text: P{pos}. We'll look at the data and come back stronger.
 - text: P{pos}. Bit of a crap one. We go again.
   level: mild
+practice_finish:
+- text: That's the chequered flag. P{pos} in practice. Box this lap.
+- text: P{pos} to finish the practice session. Good data gathered. Bring it in.
+- text: Session done. That's P{pos} in practice. Box now.
+quali_pole:
+- text: Pole position! Brilliant lap! You start on pole for the race!
+- text: P1, pole position! Fucking mega lap!
+  level: strong
+- text: Get in there! Pole position! Incredible lap.
+quali_finish:
+- text: That's the chequered flag. P{pos} for the grid.
+- text: P{pos} in qualifying. We start P{pos} for the race.
+- text: Session over, P{pos}. We can race from there on Sunday.
 spin:
 - text: Did you just spin? Get it pointed the right way.
 - text: Round and round. Feet in, get going.

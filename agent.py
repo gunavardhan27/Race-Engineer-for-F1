@@ -288,10 +288,20 @@ class RaceEngineerAgent:
         self,
         summary: dict,
     ) -> str:
-        """Generates a 2-3 sentence post-race radio debrief message in persona from race summary."""
+        """Generates a 2-3 sentence post-session radio debrief message in persona from summary."""
+        session_type = str(summary.get("session_type", "race")).lower()
+        pos = summary.get("finish_position", 10)
+        points = summary.get("points", 0)
+
         system = (
             "You are the driver's race engineer speaking over team radio right after crossing the finish line.\n"
-            "Write a concise 2 to 3 sentence post-race message reacting to the race results."
+            "Write a concise 2 to 3 sentence radio debrief message reacting to the session results.\n\n"
+            "CRITICAL SESSION & POINTS RULES:\n"
+            "- Practice sessions award 0 points. Do NOT mention championship points or scoring. Focus on practice pace, setup work, and preparing for qualifying.\n"
+            "- Qualifying sessions award 0 points. Do NOT mention championship points. Focus on grid position for the race (P1 is Pole Position).\n"
+            "- Race sessions award official FIA championship points strictly: P1=25 pts, P2=18 pts, P3=15 pts, P4=12 pts, P5=10 pts, P6=8 pts, P7=6 pts, P8=4 pts, P9=2 pts, P10=1 pt. P11 or lower receives 0 points. Mention points accurately if referencing points.\n\n"
+            "CRITICAL TONE RULES:\n"
+            "- Do NOT count, tally, or mention driving mistakes, blunders, corner time losses, or off-tracks. This is the post-session debrief where you acknowledge the finish and celebrate or encourage the driver."
         )
         if self.persona_name and self.persona_name != "professional":
             p_persona = Path("prompts/personas") / f"{self.persona_name}.txt"
@@ -302,7 +312,7 @@ class RaceEngineerAgent:
             system += f"\n\nProfanity guidelines: {prof_inst}"
 
         summary_json = json.dumps(summary, indent=2)
-        user = f"RACE SUMMARY:\n{summary_json}\n\nDeliver the post-race debrief over the radio now."
+        user = f"SESSION SUMMARY:\n{summary_json}\n\nDeliver the radio debrief over the radio now."
 
         post_chars = len(system) + len(user)
         log.info("Prompt size for post-race AI request: ~%d tokens (%d chars)", int(post_chars / 4), post_chars)
@@ -317,11 +327,22 @@ class RaceEngineerAgent:
         except Exception as e:
             log.warning("Post-race LLM message generation failed: %s", e)
 
-        pos = summary.get("finish_position", 10)
-        if pos == 1:
-            return "P1! You've won it! Absolutely mega drive!"
-        elif 2 <= pos <= 3:
-            return f"P{pos}! On the podium, mate! Great drive today."
-        elif pos <= 10:
-            return f"P{pos}, points in the bag. Solid job today."
-        return f"P{pos}. Not our day today, but we'll come back stronger."
+        if "practice" in session_type:
+            if pos == 1:
+                return f"P{pos} to finish the practice session! Car looks very strong. Box this lap."
+            return f"That's the chequered flag, P{pos}. Good data gathered across the run. Box this lap."
+        elif "quali" in session_type:
+            if pos == 1:
+                return "Pole position! Brilliant lap! You start on pole for the race!"
+            elif pos <= 10:
+                return f"P{pos} in qualifying. That puts us into the top 10 on the grid. Good job."
+            return f"That's P{pos} for the grid. We can race from there."
+        else:
+            if pos == 1:
+                return "P1! You've won it! Absolutely mega drive! 25 points!"
+            elif 2 <= pos <= 3:
+                return f"P{pos}! On the podium, mate! That's {points} points. Fantastic drive today."
+            elif 4 <= pos <= 10:
+                pts_str = f"{points} points" if points != 1 else "1 point"
+                return f"P{pos}, {pts_str} in the bag. Solid job today."
+            return f"P{pos}. Outside the points today, but good fight. We'll come back stronger."

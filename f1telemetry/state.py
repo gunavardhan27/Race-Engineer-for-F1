@@ -997,3 +997,51 @@ class RaceState:
                 for ts in self.tyre_sets.sets
             ] if self.tyre_sets else None,
         }
+
+    @property
+    def is_practice(self) -> bool:
+        s = self.session
+        return bool(s and 1 <= getattr(s, "session_type", 0) <= 4)
+
+    @property
+    def is_quali(self) -> bool:
+        s = self.session
+        return bool(s and 5 <= getattr(s, "session_type", 0) <= 9)
+
+    @property
+    def is_race(self) -> bool:
+        s = self.session
+        stype = getattr(s, "session_type", 0) if s else 0
+        if not s:
+            return False
+        return bool(10 <= stype <= 12 or (stype not in range(1, 10) and stype != 13))
+
+    def get_points(self, position: int | None = None) -> int:
+        """Returns official F1 championship points awarded for this session.
+        Practice, Qualifying and Time Trial award 0 points.
+        Race awards: P1=25, P2=18, P3=15, P4=12, P5=10, P6=8, P7=6, P8=4, P9=2, P10=1, P11+=0.
+        """
+        if self.is_practice or self.is_quali:
+            return 0
+        s = self.session
+        stype = getattr(s, "session_type", 0) if s else 0
+        if stype == 13:
+            return 0
+        pos = position if position is not None else (self.me.position if self.me else None)
+        if pos is None:
+            return 0
+        return F1_RACE_POINTS.get(pos, 0)
+
+
+F1_RACE_POINTS = {
+    1: 25,
+    2: 18,
+    3: 15,
+    4: 12,
+    5: 10,
+    6: 8,
+    7: 6,
+    8: 4,
+    9: 2,
+    10: 1,
+}

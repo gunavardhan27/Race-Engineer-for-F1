@@ -22,11 +22,15 @@ import yaml
 from config import PersonaConfig
 from f1telemetry import packets
 from f1telemetry.deterministic import Callout, _c
-from f1telemetry.state import RaceState
+from f1telemetry.state import RaceState, F1_RACE_POINTS
 
 log = logging.getLogger("engineer.personality")
 
-BIG_MOMENTS = {"win", "podium", "points", "no_points", "retirement", "beat_teammate", "lost_to_teammate"}
+BIG_MOMENTS = {
+    "win", "podium", "points", "no_points",
+    "practice_finish", "quali_pole", "quali_finish",
+    "retirement", "beat_teammate", "lost_to_teammate",
+}
 BLUNDER_EVENTS = {"spin", "collision", "flashback", "penalty", "lost_positions"}
 
 BASE_COOLDOWNS = {
@@ -41,6 +45,9 @@ BASE_COOLDOWNS = {
     "podium": 0.0,
     "points": 0.0,
     "no_points": 0.0,
+    "practice_finish": 0.0,
+    "quali_pole": 0.0,
+    "quali_finish": 0.0,
     "spin": 30.0,
     "collision": 20.0,
     "flashback": 20.0,
@@ -605,6 +612,26 @@ class PersonalityEngine:
                 "higher": pos - 1 if pos > 1 else 1,
             }
 
+            if getattr(state, "is_practice", False):
+                spoken = self.trigger("practice_finish", state, ctx, now=now, bypass_cooldown=True)
+                if not spoken:
+                    spoken = Callout(1, now, f"Chequered flag. That's P{pos} in practice. Bring it into the box.", ttl=15.0)
+                return spoken
+
+            if getattr(state, "is_quali", False):
+                if pos == 1:
+                    spoken = self.trigger("quali_pole", state, ctx, now=now, bypass_cooldown=True)
+                    if not spoken:
+                        spoken = Callout(1, now, "Pole position! Brilliant lap! You start on pole for the race!", ttl=15.0)
+                else:
+                    spoken = self.trigger("quali_finish", state, ctx, now=now, bypass_cooldown=True)
+                    if not spoken:
+                        spoken = Callout(1, now, f"Chequered flag. That's P{pos} for the grid.", ttl=15.0)
+                return spoken
+
+            pts = state.get_points(pos) if hasattr(state, "get_points") else F1_RACE_POINTS.get(pos, 0)
+            ctx["points"] = pts
+
             if pos == 1:
                 if gap_behind_s < photo_m:
                     line_key = "win_photo_finish"
@@ -635,6 +662,17 @@ class PersonalityEngine:
             if not spoken:
                 fallback_key = "win" if pos == 1 else ("podium" if pos <= 3 else ("points" if pos <= 10 else "no_points"))
                 spoken = self.trigger(fallback_key, state, ctx, now=now, bypass_cooldown=True)
+
+            if not spoken:
+                if pos == 1:
+                    spoken = Callout(1, now, "P1! You've won the Grand Prix! 25 points, mega drive!", ttl=15.0)
+                elif 2 <= pos <= 3:
+                    spoken = Callout(1, now, f"P{pos}! On the podium, mate! That's {pts} points.", ttl=15.0)
+                elif pos <= 10:
+                    pts_str = f"{pts} points" if pts != 1 else "1 point"
+                    spoken = Callout(1, now, f"P{pos} across the line. That's {pts_str} in the bag.", ttl=15.0)
+                else:
+                    spoken = Callout(1, now, f"P{pos} across the line. Outside the points today, but good fight.", ttl=15.0)
 
             if penalties_s > 0 and spoken:
                 pen_word = {5: "five", 10: "ten", 3: "three"}.get(penalties_s, str(penalties_s))

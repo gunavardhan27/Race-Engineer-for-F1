@@ -42,7 +42,7 @@ from config import AppConfig, load_config
 from f1telemetry import packets
 from f1telemetry.deterministic import Callout, Callouts, RadioQueue, route
 from f1telemetry.spotter import Spotter, SPOTTER_PHRASES, SpotterState
-from f1telemetry.state import RaceState, TRACKS, LapRecord
+from f1telemetry.state import RaceState, TRACKS, LapRecord, F1_RACE_POINTS, SESSION_TYPES
 from f1telemetry.overtakes import BrakingZoneDetector, OvertakeDetector, DefendWarningDetector
 from trackmodel import TrackModel, TrackModelBuilder, TrackModelStorage
 from knowledge import KnowledgeBase
@@ -453,7 +453,7 @@ class Engineer:
             print(f"[SPOTTER] {phrase}", flush=True)
 
     def _on_final_classification(self, cars):
-        """Builds race summary and triggers post-race agent message in persona."""
+        """Builds session summary and triggers post-session agent message in persona."""
         p = self.state.player
         if not cars or p >= len(cars):
             return
@@ -466,21 +466,28 @@ class Engineer:
             grid_pos = self.state.me.grid_position
 
         gained = (grid_pos - pos) if grid_pos > 0 else 0
-        blunders = len(self.personality.blunders) if self.personality else 0
 
         best_lap_s = None
         if self.state.personal_best:
             best_lap_s = self.state.personal_best.get("lap_time_s")
 
+        is_practice = getattr(self.state, "is_practice", False)
+        is_quali = getattr(self.state, "is_quali", False)
+        session_type = "practice" if is_practice else ("qualifying" if is_quali else "race")
+        points = self.state.get_points(pos) if hasattr(self.state, "get_points") else (
+            F1_RACE_POINTS.get(pos, 0) if session_type == "race" else 0
+        )
+
         summary = {
-            "grid": grid_pos,
+            "session_type": session_type,
+            "session_name": SESSION_TYPES.get(getattr(self.state.session, "session_type", 0), session_type.title()),
             "finish_position": pos,
-            "positions_gained": gained,
+            "grid": grid_pos if session_type == "race" else None,
+            "positions_gained": gained if session_type == "race" else None,
+            "points": points,
             "fastest_lap": False,
             "penalties_s": self.state.me.penalties_s if self.state.me else 0,
-            "blunder_count": blunders,
             "best_lap": f"{best_lap_s:.2f}s" if best_lap_s else "N/A",
-            "biggest_loss_segment": self.state.biggest_loss_segment,
         }
 
         async def _run_post_race():
@@ -489,18 +496,36 @@ class Engineer:
                 try:
                     msg = await self.agent.generate_post_race_message(summary)
                 except Exception as e:
-                    log.warning("Agent post-race debrief failed: %s", e)
+                    log.warning("Agent post-session debrief failed: %s", e)
             if not msg and self.personality:
-                evt = "win" if pos == 1 else ("podium" if 2 <= pos <= 3 else ("points" if pos <= 10 else "no_points"))
-                c_fallback = self.personality.trigger(evt, self.state, {"pos": pos})
+                if is_practice:
+                    c_fallback = self.personality.trigger("practice_finish", self.state, {"pos": pos, "points": 0})
+                elif is_quali:
+                    evt = "quali_pole" if pos == 1 else "quali_finish"
+                    c_fallback = self.personality.trigger(evt, self.state, {"pos": pos, "points": 0})
+                else:
+                    evt = "win" if pos == 1 else ("podium" if 2 <= pos <= 3 else ("points" if pos <= 10 else "no_points"))
+                    c_fallback = self.personality.trigger(evt, self.state, {"pos": pos, "points": points})
                 if c_fallback:
                     msg = c_fallback.text
             if not msg:
-                loss = self.state.biggest_loss_segment
-                if loss and loss.get("name") and loss.get("delta_s"):
-                    msg = f"P{pos} across the line. Main time loss was {loss['name']}, {loss['delta_s']:.1f}s off the fastest driver."
+                if is_practice:
+                    msg = f"P{pos} in practice. Good data gathered, bring it into the box."
+                elif is_quali:
+                    if pos == 1:
+                        msg = "Pole position! Brilliant lap, you start on pole for the race!"
+                    else:
+                        msg = f"That's P{pos} for the grid. Solid qualifying session."
                 else:
-                    msg = f"P{pos} across the line. That's the chequered flag."
+                    if pos == 1:
+                        msg = "P1! You've won the race! 25 points, mega drive!"
+                    elif 2 <= pos <= 3:
+                        msg = f"P{pos} across the line! Podium finish, {points} points in the bag!"
+                    elif pos <= 10:
+                        pts_str = f"{points} points" if points != 1 else "1 point"
+                        msg = f"P{pos} across the line. That's {pts_str} in the bag, solid drive."
+                    else:
+                        msg = f"P{pos} across the line. Outside the points, but good effort out there."
 
             self.radio.push(Callout(1, time.monotonic(), msg, ttl=15.0))
 
