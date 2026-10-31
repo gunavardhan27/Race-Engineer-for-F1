@@ -272,6 +272,8 @@ class Engineer:
         self.stopping: bool = False
         self.engine_error: str | None = None
         self._stop_event: asyncio.Event | None = None
+        self._post_race_spoken_session_uid: int | None = None
+        self._final_classification_handled_uid: int | None = None
         self.track_map = TrackMapManager()
         self.positions_broadcaster = PositionsBroadcaster()
         self._last_pos_time: float = 0.0
@@ -453,13 +455,22 @@ class Engineer:
         else:
             print(f"[SPOTTER] {phrase}", flush=True)
 
-    def _on_final_classification(self, cars):
-        """Builds session summary and triggers post-session agent message in persona."""
-        p = self.state.player
-        if not cars or p >= len(cars):
+    def _trigger_post_session_debrief(self, cars=None):
+        """Builds session summary and triggers post-session agent message once per session right across the finish line."""
+        s_uid = self.state.session_uid
+        if s_uid is not None and self._post_race_spoken_session_uid == s_uid:
             return
-        fc = cars[p]
-        pos = fc.position
+        if s_uid is not None:
+            self._post_race_spoken_session_uid = s_uid
+
+        p = self.state.player
+        pos = 1
+        if cars and p < len(cars):
+            fc = cars[p]
+            pos = getattr(fc, "position", 1)
+        elif self.state.me:
+            pos = getattr(self.state.me, "position", 1)
+
         grid_pos = 0
         if self.state.laps:
             grid_pos = self.state.laps[0].grid_position
@@ -469,8 +480,12 @@ class Engineer:
         gained = (grid_pos - pos) if grid_pos > 0 else 0
 
         best_lap_s = None
-        if self.state.personal_best:
-            best_lap_s = self.state.personal_best.get("lap_time_s")
+        pb = self.state.personal_best
+        if pb is not None:
+            if isinstance(pb, dict):
+                best_lap_s = pb.get("lap_time_s")
+            elif isinstance(pb, (int, float)):
+                best_lap_s = float(pb)
 
         is_practice = getattr(self.state, "is_practice", False)
         is_quali = getattr(self.state, "is_quali", False)
@@ -538,6 +553,10 @@ class Engineer:
                 loop.create_task(_run_post_race())
             except RuntimeError:
                 asyncio.run(_run_post_race())
+
+    def _on_final_classification(self, cars):
+        """Backwards compatible alias for final classification packet."""
+        self._trigger_post_session_debrief(cars)
 
     def _on_lap_completed_debrief(self, rec):
         """Asynchronously calculates worst-corner analysis and queues debrief."""
@@ -803,6 +822,7 @@ class Engineer:
                 elif sig[0] == "finished":
                     if self.tracker:
                         self.tracker.on_finish(sig[1])
+                    self._trigger_post_session_debrief()
                 elif sig[0] == "penalty":
                     if self.tracker:
                         self.tracker.on_penalty(sig[1])
@@ -832,11 +852,13 @@ class Engineer:
                     if c_pers:
                         self.radio.push(c_pers)
 
-                # Post-race trigger on final classification
+                # Post-race trigger on final classification (fallback if not already triggered across line)
                 if sig[0] == "final_classification":
-                    self._on_final_classification(sig[1])
-                    for c_pace in self.pace.on_final_classification(sig[1]):
-                        self.radio.push(c_pace)
+                    self._trigger_post_session_debrief(sig[1])
+                    if self._final_classification_handled_uid != self.state.session_uid:
+                        self._final_classification_handled_uid = self.state.session_uid
+                        for c_pace in self.pace.on_final_classification(sig[1]):
+                            self.radio.push(c_pace)
 
             # Check overtakes and defend warnings on motion and lap data updates
             if h.packet_id in (packets.PacketId.LAP_DATA, packets.PacketId.MOTION):

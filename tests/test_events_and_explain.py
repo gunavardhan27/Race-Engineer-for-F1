@@ -466,3 +466,51 @@ def test_explain_tracker_report_generation(capsys):
     assert "--- LAP 2 ---" in captured
     assert "5s" in captured
     assert "FINISH" in captured
+
+
+def test_final_lap_crossing_line_triggers_finish_and_deduplicates():
+    """Crossing line on lap 25 of 25 immediately emits finished; results page does not repeat."""
+    from f1telemetry.packets import Session
+    state = RaceState()
+    eng = Engineer()
+    eng.state = state
+
+    # Configure 25-lap race
+    state.session = Session(
+        weather=0, track_temp=30, air_temp=25, total_laps=25,
+        track_length_m=5000, session_type=10,  # 10 = Race
+        track_id=1, time_left_s=1000, pit_speed_limit=80,
+        paused=False, safety_car=0, forecast=[],
+        pit_ideal_lap=10, pit_latest_lap=15, pit_rejoin_pos=5,
+    )
+    state.session_uid = 9999
+
+    # Lap 25 in progress (lap_num = 25)
+    cars_lap25 = {0: {"position": 1, "lap_num": 25, "lap_distance": 4900.0, "result_status": 2, "last_lap_ms": 80000}}
+    h_l25, d_l25 = packets.parse(make_lap_packet(cars_lap25, uid=9999))
+    sigs_l25 = state.update(h_l25, d_l25)
+    assert not any(s[0] == "finished" for s in sigs_l25)
+
+    # Cross finish line! Lap advances to 26 (completing lap 25)
+    cars_finish = {0: {"position": 1, "lap_num": 26, "lap_distance": 20.0, "result_status": 2, "last_lap_ms": 81000}}
+    h_fin, d_fin = packets.parse(make_lap_packet(cars_finish, uid=9999))
+    sigs_fin = state.update(h_fin, d_fin)
+
+    # Finished signal MUST be emitted immediately as the line is crossed!
+    fin_sigs = [s for s in sigs_fin if s[0] == "finished"]
+    assert len(fin_sigs) == 1
+    assert fin_sigs[0][1]["position"] == 1
+
+    # Simulate main.py handling
+    eng._trigger_post_session_debrief()
+    assert eng._post_race_spoken_session_uid == 9999
+    initial_radio_len = len(eng.radio._heap)
+    assert initial_radio_len >= 1
+
+    # On results screen: multiple FINAL_CLASSIFICATION packets arrive
+    fc_data = [packets.FinalClassification(position=1, num_laps=25, grid_position=1, points=25, num_pit_stops=1, result_status=3, best_lap_time_ms=80000, total_race_time=2000.0, penalties_time=0, num_penalties=0)]
+    for _ in range(5):
+        eng._trigger_post_session_debrief(fc_data)
+
+    # Must NOT have queued any additional debrief messages!
+    assert len(eng.radio._heap) == initial_radio_len

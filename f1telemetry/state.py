@@ -116,6 +116,7 @@ class RaceState:
         self.biggest_loss_segment = None
         self.fastest_sectors = None
         self.final_classification = None
+        self._finish_emitted = False
 
         # Pace, qualifying and time trial tracking
         self.time_trial: packets.TimeTrialData | None = None
@@ -144,6 +145,7 @@ class RaceState:
         self._player_s1_evaluated = False
         self._player_s2_evaluated = False
         self._player_prev_result_status = 0
+        self._finish_emitted = False
 
     # ---- ingestion -------------------------------------------------------
     def update(self, h: packets.Header, data) -> list[tuple]:
@@ -177,7 +179,8 @@ class RaceState:
                     me_c = data[self.player]
                     prev_status = getattr(self, "_player_prev_result_status", 0)
                     self._player_prev_result_status = me_c.result_status
-                    if prev_status == 2 and me_c.result_status == 3:
+                    if prev_status == 2 and me_c.result_status == 3 and not getattr(self, "_finish_emitted", False):
+                        self._finish_emitted = True
                         pos = me_c.position
                         gap_ahead_ms = me_c.gap_to_car_ahead_ms
                         gap_behind_ms = None
@@ -436,6 +439,40 @@ class RaceState:
             if self.best_sectors_session[2] == 0 or s3 <= self.best_sectors_session[2]:
                 self.best_sectors_session[2] = s3
                 lap_signals.append(("purple_sector", 3))
+
+        # Check if the player completed the final race lap (crossing finish line on lap 25 of 25)
+        total_laps = getattr(self.session, "total_laps", 0) if self.session else 0
+        is_race = getattr(self, "is_race", True)
+        if (
+            total_laps > 0
+            and rec.lap >= total_laps
+            and is_race
+            and not getattr(self, "_finish_emitted", False)
+        ):
+            self._finish_emitted = True
+            pos = me.position
+            gap_ahead_ms = me.gap_to_car_ahead_ms
+            gap_behind_ms = None
+            behind_idx = None
+            if self.lap:
+                for ci, c in enumerate(self.lap):
+                    if c and c.position == pos + 1:
+                        gap_behind_ms = c.gap_to_car_ahead_ms
+                        behind_idx = ci
+                        break
+            finish_info = {
+                "position": pos,
+                "gap_ahead_ms": gap_ahead_ms,
+                "gap_behind_ms": gap_behind_ms,
+                "penalties_s": getattr(me, "penalties_s", 0),
+                "behind_idx": behind_idx,
+                "session_uid": self.session_uid,
+            }
+            log_detectors.info(
+                "Final race lap completed across line: lap=%d/%d, pos=%d, finish emitted",
+                rec.lap, total_laps, pos
+            )
+            lap_signals.append(("finished", finish_info))
 
         self.laps.append(rec)
         self._lap_num, self._lap_invalid = me.lap_num, me.lap_invalid
