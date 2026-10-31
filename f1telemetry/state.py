@@ -668,6 +668,8 @@ class RaceState:
                 "pace_s": round(pace_s, 3) if pace_s else None,
                 "delta_s": delta_s,
                 "is_fighting": bool(gap_s <= max_gap_s),
+                "tyre_compound": COMPOUNDS.get(getattr(self.status[idx_ahead], "visual_compound", 0), "unknown") if (self.status and idx_ahead < len(self.status)) else None,
+                "tyre_age_laps": getattr(self.status[idx_ahead], "tyre_age_laps", None) if (self.status and idx_ahead < len(self.status)) else None,
             }
 
         # Car behind
@@ -692,6 +694,8 @@ class RaceState:
                 "pace_s": round(pace_s, 3) if pace_s else None,
                 "delta_s": delta_s,
                 "is_fighting": bool(gap_s <= max_gap_s),
+                "tyre_compound": COMPOUNDS.get(getattr(self.status[idx_behind], "visual_compound", 0), "unknown") if (self.status and idx_behind < len(self.status)) else None,
+                "tyre_age_laps": getattr(self.status[idx_behind], "tyre_age_laps", None) if (self.status and idx_behind < len(self.status)) else None,
             }
 
         return summary
@@ -913,10 +917,20 @@ class RaceState:
             "sector1_s": sector1_s,
             "sector2_s": sector2_s,
             "pit_stops": me.num_pit_stops if me else None,
-            "car_ahead": {"name": self.name(ai), "gap_s": _s(ga), "trend_s_per_lap": _s(self.gap_trend("ahead"))}
-            if ai is not None else None,
-            "car_behind": {"name": self.name(bi), "gap_s": _s(gb), "trend_s_per_lap": _s(self.gap_trend("behind"))}
-            if bi is not None else None,
+            "car_ahead": {
+                "name": self.name(ai),
+                "gap_s": _s(ga),
+                "trend_s_per_lap": _s(self.gap_trend("ahead")),
+                "tyre_compound": COMPOUNDS.get(getattr(self.status[ai], "visual_compound", 0), "unknown") if (self.status and ai < len(self.status)) else None,
+                "tyre_age_laps": getattr(self.status[ai], "tyre_age_laps", None) if (self.status and ai < len(self.status)) else None,
+            } if ai is not None else None,
+            "car_behind": {
+                "name": self.name(bi),
+                "gap_s": _s(gb),
+                "trend_s_per_lap": _s(self.gap_trend("behind")),
+                "tyre_compound": COMPOUNDS.get(getattr(self.status[bi], "visual_compound", 0), "unknown") if (self.status and bi < len(self.status)) else None,
+                "tyre_age_laps": getattr(self.status[bi], "tyre_age_laps", None) if (self.status and bi < len(self.status)) else None,
+            } if bi is not None else None,
             "fuel": {"kg": round(st.fuel_in_tank, 1), "laps_delta": round(st.fuel_laps_delta, 2),
                      "kg_per_lap": round(fpl, 2) if fpl else None} if st else None,
             "tyres": {"compound": COMPOUNDS.get(st.visual_compound, "unknown"), "age_laps": st.tyre_age_laps,
@@ -984,7 +998,7 @@ class RaceState:
             "drs": (
                 {"allowed": tel2.active_aero_available, "open": (tel2.active_aero_mode == 1)}
                 if regs_2026 and tel2 else
-                {"allowed": st.drs_allowed if st else False, "open": tel.drs if tel else False}
+                {"allowed": getattr(st, "drs_allowed", False) if st else False, "open": getattr(tel, "drs", False) if tel else False}
             ),
             "tyre_sets": [
                 {

@@ -87,9 +87,15 @@ BASE_COOLDOWNS = {
     "overtake_divebomb": 10.0,
     "divebomb_contact": 10.0,
     "overtake_switchback": 5.0,
+    "overtake_straight": 5.0,
+    "backmarker_pass": 5.0,
     "defend_warning": 20.0,
     "inside_look": 20.0,
     "told_you": 0.0,
+    "catching_car_ahead": 30.0,
+    "car_ahead_pulling_away": 30.0,
+    "dropping_car_behind": 30.0,
+    "car_behind_closing": 30.0,
 }
 
 FREQ_MULTIPLIERS = {
@@ -353,7 +359,7 @@ class PersonalityEngine:
         if me:
             ctx.setdefault("pos", me.position)
 
-        current_lap = me.lap_num if me else 1
+        current_lap = getattr(me, "lap_num", 1) if me else 1
 
         # Check for escalation: 3+ blunders within the last 5 laps
         if event_name in BLUNDER_EVENTS:
@@ -691,6 +697,10 @@ class PersonalityEngine:
             ctx = {"name": name, "pos": pos, "corner": corner}
             if cls_name == "passed_stricken_car":
                 return self.trigger("passed_stricken_car", state, ctx, now=now)
+            elif cls_name == "backmarker_pass":
+                return self.trigger("backmarker_pass", state, ctx, now=now)
+            elif cls_name == "overtake_straight":
+                return self.trigger("overtake_straight", state, ctx, now=now)
             elif cls_name == "overtake_switchback":
                 return self.trigger("overtake_switchback", state, ctx, now=now)
             elif cls_name == "overtake_mode_pass":

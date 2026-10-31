@@ -15,7 +15,7 @@ from typing import Any, Optional
 from config import AppConfig
 from f1telemetry import packets
 from f1telemetry.deterministic import Callout
-from f1telemetry.state import RUNNING, LapRecord, RaceState
+from f1telemetry.state import RUNNING, LapRecord, RaceState, COMPOUNDS
 from personality import PersonalityEngine
 from storage import SessionStorage
 
@@ -146,6 +146,11 @@ class PaceAnalyzer:
         c_exp = self.evaluate_expected_performance(rec)
         if c_exp:
             callouts.append(c_exp)
+
+        # 5. Relative gap, pace, and tyre intel (cars ahead and behind within 2-3s)
+        c_rel = self.evaluate_relative_gaps_and_tyres(rec)
+        if c_rel:
+            callouts.append(c_rel)
 
         return callouts
 
@@ -311,6 +316,151 @@ class PaceAnalyzer:
                 {"pos": rec.position, "expected": expected_pos},
                 lap_num=rec.lap,
             )
+
+        return None
+
+    def evaluate_relative_gaps_and_tyres(self, rec: LapRecord) -> Optional[Callout]:
+        """Evaluates tactical gaps (2-3s window), pace deltas, and tyre deltas to cars ahead/behind."""
+        s = self.state.session
+        # Only evaluate in race sessions (10: Race, 11: Race 2, 12: Race 3)
+        if not s or not (10 <= s.session_type <= 12):
+            return None
+
+        def get_tyre_info(rival_idx: int) -> str:
+            my_idx = self.state.player
+            if not self.state.status or my_idx is None:
+                return ""
+            if my_idx >= len(self.state.status) or rival_idx >= len(self.state.status):
+                return ""
+
+            my_st = self.state.status[my_idx]
+            rival_st = self.state.status[rival_idx]
+            my_comp = COMPOUNDS.get(getattr(my_st, "visual_compound", 0), "tyres")
+            rival_comp = COMPOUNDS.get(getattr(rival_st, "visual_compound", 0), "tyres")
+            my_age = int(getattr(my_st, "tyre_age_laps", 0) or 0)
+            rival_age = int(getattr(rival_st, "tyre_age_laps", 0) or 0)
+
+            age_diff = rival_age - my_age
+            if rival_comp != "tyres":
+                if abs(age_diff) >= 3:
+                    if age_diff > 0:
+                        return f"He's on {rival_age}-lap-old {rival_comp}, {age_diff} laps older than yours."
+                    else:
+                        return f"He's on {rival_age}-lap-old {rival_comp}, {abs(age_diff)} laps fresher than yours."
+                elif rival_comp != my_comp and my_comp != "tyres":
+                    return f"He's on {rival_comp} versus your {my_comp}."
+                elif rival_age > 0:
+                    return f"He's on {rival_comp}, {rival_age} laps old."
+            return ""
+
+        bs = self.state.battle_summary(max_gap_s=4.0)
+        ahead = bs.get("ahead")
+        behind = bs.get("behind")
+
+        # Resolve car ahead info
+        gap_ahead_s = None
+        idx_ahead = None
+        delta_ahead = None
+        if ahead and ahead.get("car_idx") is not None:
+            gap_ahead_s = ahead.get("gap_s")
+            idx_ahead = ahead.get("car_idx")
+            delta_ahead = ahead.get("delta_s")
+        elif rec.gap_ahead_ms is not None and rec.ahead_idx is not None:
+            gap_ahead_s = rec.gap_ahead_ms / 1000.0
+            idx_ahead = rec.ahead_idx
+
+        if delta_ahead is None and idx_ahead is not None:
+            rival_lap_s = self.state.car_last_lap_s(idx_ahead)
+            if rec.lap_time_s > 0 and rival_lap_s and rival_lap_s > 0:
+                delta_ahead = round(rival_lap_s - rec.lap_time_s, 3)
+
+        # Resolve car behind info
+        gap_behind_s = None
+        idx_behind = None
+        delta_behind = None
+        if behind and behind.get("car_idx") is not None:
+            gap_behind_s = behind.get("gap_s")
+            idx_behind = behind.get("car_idx")
+            delta_behind = behind.get("delta_s")
+        elif rec.gap_behind_ms is not None and rec.behind_idx is not None:
+            gap_behind_s = rec.gap_behind_ms / 1000.0
+            idx_behind = rec.behind_idx
+
+        if delta_behind is None and idx_behind is not None:
+            rival_lap_s = self.state.car_last_lap_s(idx_behind)
+            if rec.lap_time_s > 0 and rival_lap_s and rival_lap_s > 0:
+                delta_behind = round(rec.lap_time_s - rival_lap_s, 3)
+
+        # Tactical checks:
+        # 1. Threat behind: car behind closing fast
+        if gap_behind_s is not None and 0.4 <= gap_behind_s <= 3.5 and delta_behind is not None and delta_behind >= 0.15:
+            rival_name = self.state.name(idx_behind) if idx_behind is not None else "car behind"
+            tyre_str = get_tyre_info(idx_behind) if idx_behind is not None else ""
+            ctx = {
+                "name": rival_name,
+                "gap": f"{gap_behind_s:.1f}",
+                "delta": f"{abs(delta_behind):.1f}",
+                "tyre_info": tyre_str,
+            }
+            c = self.trigger_pace_remark("car_behind_closing", ctx, lap_num=rec.lap)
+            if c:
+                return c
+
+        # 2. Opportunity ahead: catching car ahead
+        if gap_ahead_s is not None and 0.4 <= gap_ahead_s <= 3.5 and delta_ahead is not None and delta_ahead >= 0.10:
+            rival_name = self.state.name(idx_ahead) if idx_ahead is not None else "car ahead"
+            tyre_str = get_tyre_info(idx_ahead) if idx_ahead is not None else ""
+            ctx = {
+                "name": rival_name,
+                "gap": f"{gap_ahead_s:.1f}",
+                "delta": f"{abs(delta_ahead):.1f}",
+                "tyre_info": tyre_str,
+            }
+            c = self.trigger_pace_remark("catching_car_ahead", ctx, lap_num=rec.lap)
+            if c:
+                return c
+
+        # 3. Urgency ahead: car ahead pulling away
+        if gap_ahead_s is not None and 0.4 <= gap_ahead_s <= 3.5 and delta_ahead is not None and delta_ahead <= -0.15:
+            rival_name = self.state.name(idx_ahead) if idx_ahead is not None else "car ahead"
+            tyre_str = get_tyre_info(idx_ahead) if idx_ahead is not None else ""
+            ctx = {
+                "name": rival_name,
+                "gap": f"{gap_ahead_s:.1f}",
+                "delta": f"{abs(delta_ahead):.1f}",
+                "tyre_info": tyre_str,
+            }
+            c = self.trigger_pace_remark("car_ahead_pulling_away", ctx, lap_num=rec.lap)
+            if c:
+                return c
+
+        # 4. Praise: dropping car behind
+        if gap_behind_s is not None and 0.4 <= gap_behind_s <= 3.5 and delta_behind is not None and delta_behind <= -0.10:
+            rival_name = self.state.name(idx_behind) if idx_behind is not None else "car behind"
+            tyre_str = get_tyre_info(idx_behind) if idx_behind is not None else ""
+            ctx = {
+                "name": rival_name,
+                "gap": f"{gap_behind_s:.1f}",
+                "delta": f"{abs(delta_behind):.1f}",
+                "tyre_info": tyre_str,
+            }
+            c = self.trigger_pace_remark("dropping_car_behind", ctx, lap_num=rec.lap)
+            if c:
+                return c
+
+        # 5. Moderate threat behind: car behind closing (0.08 to 0.15s)
+        if gap_behind_s is not None and 0.4 <= gap_behind_s <= 3.5 and delta_behind is not None and delta_behind >= 0.08:
+            rival_name = self.state.name(idx_behind) if idx_behind is not None else "car behind"
+            tyre_str = get_tyre_info(idx_behind) if idx_behind is not None else ""
+            ctx = {
+                "name": rival_name,
+                "gap": f"{gap_behind_s:.1f}",
+                "delta": f"{abs(delta_behind):.1f}",
+                "tyre_info": tyre_str,
+            }
+            c = self.trigger_pace_remark("car_behind_closing", ctx, lap_num=rec.lap)
+            if c:
+                return c
 
         return None
 

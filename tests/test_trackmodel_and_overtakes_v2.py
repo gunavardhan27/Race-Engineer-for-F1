@@ -257,6 +257,22 @@ def test_overtake_classes():
     )
     assert c_st == "passed_stricken_car"
 
+    # 8. Straight pass without overtake mode -> overtake_straight
+    c_str = detector._classify_overtake(
+        features={"braking_delta_m": 0.0, "contact": False}, is_inside_corner=False, corner_or_zone=None,
+        switchback=False, is_stricken=False, direction="pass", side="inside",
+        overtake_mode_active=False, location="straight"
+    )
+    assert c_str == "overtake_straight"
+
+    # 9. Backmarker pass (lapped car) -> backmarker_pass
+    c_bm = detector._classify_overtake(
+        features={"braking_delta_m": 0.0, "contact": False}, is_inside_corner=False, corner_or_zone=None,
+        switchback=False, is_stricken=False, direction="pass", side="inside",
+        overtake_mode_active=False, location="straight", is_backmarker=True
+    )
+    assert c_bm == "backmarker_pass"
+
 
 # ==============================================================================
 # 4. Lost Pass Classification Tests
@@ -407,3 +423,100 @@ def test_corner_name_persistence_across_rebuilds(tmp_path):
     loaded = storage.load_model(track_id=1, track_length_m=5000.0)
     assert loaded is not None
     assert loaded.corners[1].name == "Copse"
+
+
+def test_backmarker_overtake_flow():
+    """Passing a lapped car creates a candidate flagged as is_backmarker and confirms as backmarker_pass."""
+    detector = OvertakeDetector(config=OvertakeConfig(confirm_time_s=1.0, proximity_m=60.0))
+    state = RaceState()
+    state.player = 0
+
+    laps = [
+        type("Lap", (), {"total_distance": 2000.0, "lap_distance": 500.0, "lap_num": 3, "pit_status": 0, "result_status": 2, "corner_cutting_warnings": 0, "lap_invalid": False, "position": 2})(),
+        type("Lap", (), {"total_distance": 2010.0, "lap_distance": 510.0, "lap_num": 2, "pit_status": 0, "result_status": 2, "corner_cutting_warnings": 0, "lap_invalid": False, "position": 18})(),
+    ]
+    state.lap = laps
+    state.names = {0: "Player", 1: "Logan Sargeant"}
+
+    # Frame 1: Establish baseline signs
+    detector.update(state, now=10.0)
+
+    # Frame 2: Player passes car 1 (lapped backmarker)
+    laps[0].total_distance = 2020.0
+    detector.update(state, now=10.5)
+    assert 1 in detector._candidates
+    assert detector._candidates[1].is_backmarker is True
+
+    # Frame 3: Confirm after hold duration
+    laps[0].total_distance = 2060.0
+    confirmed = detector.update(state, now=12.0)
+    assert len(confirmed) == 1
+    assert confirmed[0]["classification"] == "backmarker_pass"
+
+    # Verify personality response
+    from personality import PersonalityEngine
+    from config import AppConfig
+    cfg = AppConfig()
+    engine = PersonalityEngine(config=cfg.persona)
+    callout = engine.on_signal(("overtake_confirmed", confirmed[0]), state)
+    assert callout is not None
+    assert "Clean pass" in callout.text or "clean pass" in callout.text.lower()
+
+
+def test_straight_pass_personality_flow():
+    """Straight pass produces simple praise 'Easy pass, good job'."""
+    from personality import PersonalityEngine
+    from config import AppConfig
+    cfg = AppConfig()
+    engine = PersonalityEngine(config=cfg.persona)
+    state = RaceState()
+    state.player = 0
+    state.lap = [type("Lap", (), {"position": 3, "lap_num": 5})()]
+
+    callout = engine.on_signal(("overtake_confirmed", {
+        "classification": "overtake_straight",
+        "other_driver_name": "Russell",
+        "corner_name": "Straight",
+        "position": 3,
+    }), state)
+    assert callout is not None
+    assert "Easy pass" in callout.text and "good job" in callout.text.lower()
+
+
+def test_spotter_suppressed_on_overtake():
+    """Spotter calls are suppressed for 3 seconds during an overtake to prevent audio collision."""
+    from f1telemetry.spotter import Spotter, SpotterConfig
+    from f1telemetry.packets import CarMotion, LapData
+    spotter = Spotter(SpotterConfig())
+
+    # Trigger suppression at now=100.0
+    spotter.suppress(3.0, now=100.0)
+    assert spotter.suppress_until == 103.0
+
+    st = RaceState()
+    st.player = 0
+    p_mot = CarMotion(x=0.0, y=0.0, z=0.0, yaw=0.0, g_lat=0.0, g_lon=0.0, g_vert=0.0,
+                      fwd_x=0.0, fwd_y=0.0, fwd_z=1.0, right_x=1.0, right_y=0.0, right_z=0.0)
+    opp_right = CarMotion(x=2.0, y=0.0, z=0.0, yaw=0.0, g_lat=0.0, g_lon=0.0, g_vert=0.0)
+    p_lap = LapData(last_lap_ms=80000, current_lap_ms=10000, gap_to_car_ahead_ms=0, gap_to_leader_ms=0,
+                    lap_distance=500.0, position=1, lap_num=2, pit_status=0, num_pit_stops=0, sector=0,
+                    lap_invalid=False, penalties_s=0, result_status=2)
+    opp_lap = LapData(last_lap_ms=80000, current_lap_ms=10000, gap_to_car_ahead_ms=0, gap_to_leader_ms=0,
+                      lap_distance=500.0, position=2, lap_num=2, pit_status=0, num_pit_stops=0, sector=0,
+                      lap_invalid=False, penalties_s=0, result_status=2)
+
+    class FakeTel:
+        speed_kph = 150
+
+    st.tel = [FakeTel(), FakeTel()]
+    st.motion = [p_mot, opp_right]
+    st.lap = [p_lap, opp_lap]
+
+    # During suppression window (now=101.5), spotter yields None
+    call = spotter.process(st, now=101.5)
+    assert call is None
+
+    # After suppression window expires (now=104.0), spotter can process overlap
+    call_after = spotter.process(st, now=104.0)
+    assert call_after is not None
+    assert "right" in call_after.lower()

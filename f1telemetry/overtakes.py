@@ -168,6 +168,7 @@ class OvertakeCandidate:
     forced_off: bool = False
     overtake_mode_active: bool = False
     slipstream: bool = False
+    is_backmarker: bool = False
 
 
 class OvertakeDetector:
@@ -322,11 +323,12 @@ class OvertakeDetector:
                         del self._candidates[i]
                         continue
 
-                    candidate_dir = "pass" if sign == 1 else "loss"
-
-                    # Filters
+                    candidate_dir = "pass" if sign > 0 else "loss"
                     is_rejected = False
                     reject_reason = ""
+                    is_backmarker = False
+                    if candidate_dir == "pass" and my_lap_num > other.lap_num:
+                        is_backmarker = True
 
                     # 1. Other car in pit lane or just exited (< 5s)
                     if other.pit_status != 0 or (now - self._pit_exit_time.get(i, 0) < 5.0):
@@ -339,7 +341,7 @@ class OvertakeDetector:
                         reject_reason = "not_active"
 
                     # 3. Lapped / lapping
-                    elif abs(my_lap_num - other.lap_num) >= 1 or (track_len > 0 and abs(abs_gap - track_len) < 200):
+                    elif (my_lap_num < other.lap_num) or (candidate_dir == "loss" and other.lap_num > my_lap_num) or (track_len > 0 and abs(abs_gap - track_len) < 200):
                         is_rejected = True
                         reject_reason = "lapped_traffic"
 
@@ -440,6 +442,7 @@ class OvertakeDetector:
                             slipstream=(self._slipstream_duration.get(i, 0.0) >= 3.0),
                             other_warnings_start=getattr(other, "corner_cutting_warnings", 0),
                             other_invalid_start=getattr(other, "lap_invalid", False),
+                            is_backmarker=is_backmarker,
                         )
 
                         # Motion gap and overlap at turn-in
@@ -535,9 +538,11 @@ class OvertakeDetector:
         direction: str = "pass",
         side: str = "inside",
         overtake_mode_active: bool = False,
-        location: str = "straight",
+        location: str | None = None,
         **kwargs: Any,
     ) -> str:
+        if location is None:
+            location = features.get("location")
         if is_inside_corner is None:
             is_inside_corner = kwargs.get("is_inside_braking", True)
         if corner_or_zone is None and "zone" in kwargs:
@@ -554,6 +559,8 @@ class OvertakeDetector:
 
         if is_stricken:
             return "passed_stricken_car"
+        if kwargs.get("is_backmarker") or kwargs.get("backmarker"):
+            return "backmarker_pass"
         if switchback:
             return "overtake_switchback"
 
@@ -562,6 +569,10 @@ class OvertakeDetector:
             # Overtake Mode pass on straight
             if overtake_mode_active and location == "straight" and not contact:
                 return "overtake_mode_pass"
+
+            # Clean pass on straight without overtake mode
+            if location == "straight" and not contact:
+                return "overtake_straight"
 
             if not is_inside_corner or corner_or_zone is None:
                 return "clean"
@@ -705,6 +716,7 @@ class OvertakeDetector:
             side=cand_side,
             overtake_mode_active=overtake_mode,
             location=cand_loc,
+            is_backmarker=getattr(cand, "is_backmarker", False),
         )
 
         record = {

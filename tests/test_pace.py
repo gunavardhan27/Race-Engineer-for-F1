@@ -516,3 +516,161 @@ def test_quiet_mode_suppresses_pace_remarks(pace_setup):
     analyzer.quiet_mode = True
     c = analyzer.trigger_pace_remark("slower_lap", {"delta": "1.0"}, lap_num=2)
     assert c is None
+
+
+# ==============================================================================
+# 8. Relative Gaps (2-3s Window), Pace Deltas & Tyre Intel
+# ==============================================================================
+
+def test_evaluate_relative_gaps_catching_car_ahead(pace_setup):
+    """When catching car ahead (0.4-3.5s gap, player faster), trigger catching_car_ahead with tyre info."""
+    config, state, personality, analyzer = pace_setup
+    # Race session (session_type=10)
+    state.session = type("Session", (), {"session_type": 10, "track_id": 1, "total_laps": 50, "safety_car": 0})()
+    state.player = 0
+
+    # Laps: player (P2), car 1 ahead (P1)
+    state.lap = [
+        type("Lap", (), {"position": 2, "gap_to_car_ahead_ms": 2200, "result_status": 2, "last_lap_ms": 89000})(),
+        type("Lap", (), {"position": 1, "gap_to_car_ahead_ms": 0, "result_status": 2, "last_lap_ms": 89500})(),
+    ]
+    state.names = {0: "Player", 1: "Lando Norris"}
+
+    # Car status: compounds (16=softs), tyre ages (player=7 laps, Norris=12 laps)
+    state.status = [
+        type("Status", (), {"visual_compound": 16, "tyre_age_laps": 7})(),
+        type("Status", (), {"visual_compound": 16, "tyre_age_laps": 12})(),
+    ]
+
+    rec = LapRecord(
+        lap=5, lap_time_ms=89000, invalid=False, position=2,
+        ahead_idx=1, gap_ahead_ms=2200, behind_idx=None, gap_behind_ms=None,
+        fuel_kg=15.0, tyre_wear=None, stint=0,
+    )
+    state.laps.append(rec)
+
+    callout = analyzer.evaluate_relative_gaps_and_tyres(rec)
+    assert callout is not None
+    assert "Norris" in callout.text or "hunt" in callout.text or "catch" in callout.text or "2.2" in callout.text
+    # Verify tyre intel was included
+    assert "softs" in callout.text or "older" in callout.text or "laps" in callout.text
+
+
+def test_evaluate_relative_gaps_car_ahead_pulling_away(pace_setup):
+    """When car ahead is within 2-3s but pulling away (delta <= -0.15s), urge player to fasten pace."""
+    config, state, personality, analyzer = pace_setup
+    state.session = type("Session", (), {"session_type": 10, "track_id": 1, "total_laps": 50, "safety_car": 0})()
+    state.player = 0
+
+    state.lap = [
+        type("Lap", (), {"position": 2, "gap_to_car_ahead_ms": 2800, "result_status": 2, "last_lap_ms": 90500})(),
+        type("Lap", (), {"position": 1, "gap_to_car_ahead_ms": 0, "result_status": 2, "last_lap_ms": 89800})(),
+    ]
+    state.names = {0: "Player", 1: "Max Verstappen"}
+    state.status = [
+        type("Status", (), {"visual_compound": 17, "tyre_age_laps": 10})(),
+        type("Status", (), {"visual_compound": 16, "tyre_age_laps": 5})(),
+    ]
+
+    rec = LapRecord(
+        lap=6, lap_time_ms=90500, invalid=False, position=2,
+        ahead_idx=1, gap_ahead_ms=2800, behind_idx=None, gap_behind_ms=None,
+        fuel_kg=14.0, tyre_wear=None, stint=0,
+    )
+    state.laps.append(rec)
+
+    callout = analyzer.evaluate_relative_gaps_and_tyres(rec)
+    assert callout is not None
+    assert "Verstappen" in callout.text or "pulling away" in callout.text or "pace" in callout.text or "Speed up" in callout.text
+
+
+def test_evaluate_relative_gaps_dropping_car_behind(pace_setup):
+    """When car behind is within 2-3s and player is lapping faster, praise driver pace."""
+    config, state, personality, analyzer = pace_setup
+    state.session = type("Session", (), {"session_type": 10, "track_id": 1, "total_laps": 50, "safety_car": 0})()
+    state.player = 0
+
+    # Player is P3, car 2 is P4 (gap behind is 2.4s)
+    state.lap = [
+        type("Lap", (), {"position": 3, "gap_to_car_ahead_ms": 5000, "result_status": 2, "last_lap_ms": 89000})(),
+        type("Lap", (), {"position": 2, "gap_to_car_ahead_ms": 1000, "result_status": 2, "last_lap_ms": 89000})(),
+        type("Lap", (), {"position": 4, "gap_to_car_ahead_ms": 2400, "result_status": 2, "last_lap_ms": 89600})(),
+    ]
+    state.names = {0: "Player", 2: "Charles Leclerc"}
+    state.status = [
+        type("Status", (), {"visual_compound": 17, "tyre_age_laps": 8})(),
+        type("Status", (), {"visual_compound": 17, "tyre_age_laps": 8})(),
+        type("Status", (), {"visual_compound": 18, "tyre_age_laps": 15})(),
+    ]
+
+    rec = LapRecord(
+        lap=8, lap_time_ms=89000, invalid=False, position=3,
+        ahead_idx=1, gap_ahead_ms=5000, behind_idx=2, gap_behind_ms=2400,
+        fuel_kg=12.0, tyre_wear=None, stint=0,
+    )
+    state.laps.append(rec)
+
+    callout = analyzer.evaluate_relative_gaps_and_tyres(rec)
+    assert callout is not None
+    assert "pulling away" in callout.text or "pace" in callout.text or "slower" in callout.text or "Leclerc" in callout.text
+
+
+def test_evaluate_relative_gaps_car_behind_closing(pace_setup):
+    """When car behind is within 2-3s and lapping faster, warn driver to fasten pace / defend."""
+    config, state, personality, analyzer = pace_setup
+    state.session = type("Session", (), {"session_type": 10, "track_id": 1, "total_laps": 50, "safety_car": 0})()
+    state.player = 0
+
+    state.lap = [
+        type("Lap", (), {"position": 2, "gap_to_car_ahead_ms": 6000, "result_status": 2, "last_lap_ms": 90200})(),
+        type("Lap", (), {"position": 1, "gap_to_car_ahead_ms": 0, "result_status": 2, "last_lap_ms": 89000})(),
+        type("Lap", (), {"position": 3, "gap_to_car_ahead_ms": 1900, "result_status": 2, "last_lap_ms": 89400})(),
+    ]
+    state.names = {0: "Player", 2: "George Russell"}
+    state.status = [
+        type("Status", (), {"visual_compound": 17, "tyre_age_laps": 14})(),
+        type("Status", (), {"visual_compound": 16, "tyre_age_laps": 10})(),
+        type("Status", (), {"visual_compound": 16, "tyre_age_laps": 4})(),
+    ]
+
+    rec = LapRecord(
+        lap=9, lap_time_ms=90200, invalid=False, position=2,
+        ahead_idx=1, gap_ahead_ms=6000, behind_idx=2, gap_behind_ms=1900,
+        fuel_kg=11.0, tyre_wear=None, stint=0,
+    )
+    state.laps.append(rec)
+
+    callout = analyzer.evaluate_relative_gaps_and_tyres(rec)
+    assert callout is not None
+    assert "defend" in callout.text or "Russell" in callout.text or "closing" in callout.text or "Speed up" in callout.text or "pace" in callout.text
+
+
+def test_tyre_compound_and_age_in_state_snapshot():
+    """State snapshot exposes tyre compound and tyre age for rivals ahead and behind for LLM tactical queries."""
+    state = RaceState()
+    state.player = 0
+    state.session = packets.Session(
+        weather=0, track_temp=30, air_temp=25, total_laps=50, track_length_m=5000,
+        session_type=10, track_id=1, time_left_s=1000, pit_speed_limit=60, paused=False,
+        safety_car=0, forecast=[], pit_ideal_lap=15, pit_latest_lap=20, pit_rejoin_pos=10
+    )
+    state.lap = [
+        type("Lap", (), {"position": 2, "lap_num": 10, "gap_to_car_ahead_ms": 2500, "result_status": 2, "last_lap_ms": 80000, "num_pit_stops": 0})(),
+        type("Lap", (), {"position": 1, "lap_num": 10, "gap_to_car_ahead_ms": 0, "result_status": 2, "last_lap_ms": 80000, "num_pit_stops": 0})(),
+        type("Lap", (), {"position": 3, "lap_num": 10, "gap_to_car_ahead_ms": 1800, "result_status": 2, "last_lap_ms": 80000, "num_pit_stops": 0})(),
+    ]
+    state.status = [
+        type("Status", (), {"visual_compound": 17, "tyre_age_laps": 8, "fuel_in_tank": 10.0, "fuel_laps_delta": 0.5, "ers_store_j": 1e6})(),
+        type("Status", (), {"visual_compound": 16, "tyre_age_laps": 12, "fuel_in_tank": 10.0, "fuel_laps_delta": 0.5, "ers_store_j": 1e6})(),
+        type("Status", (), {"visual_compound": 18, "tyre_age_laps": 4, "fuel_in_tank": 10.0, "fuel_laps_delta": 0.5, "ers_store_j": 1e6})(),
+    ]
+    state.names = {0: "Player", 1: "Norris", 2: "Russell"}
+
+    snap = state.snapshot()
+    assert snap["car_ahead"]["name"] == "Norris"
+    assert snap["car_ahead"]["tyre_compound"] == "softs"
+    assert snap["car_ahead"]["tyre_age_laps"] == 12
+
+    assert snap["car_behind"]["name"] == "Russell"
+    assert snap["car_behind"]["tyre_compound"] == "hards"
+    assert snap["car_behind"]["tyre_age_laps"] == 4

@@ -346,3 +346,35 @@ forced_off_by:
 overtake_divebomb_contact:
 - text: You hit him. That's a divebomb, expect the stewards to look at it.
 - text: Contact on that move. Not clever. Give the place back if they ask.
+
+overtake_straight:
+- text: "Easy pass, good job."
+- text: "Easy pass on {name}. Good job."
+- text: "Straight past {name}. Easy pass, good job."
+- text: "Cruised past {name} on the straight. Easy pass, good job, mate."
+
+backmarker_pass:
+- text: "Clean pass."
+- text: "Clean pass on the backmarker."
+- text: "Clean pass. Clear of the lapped car."
+- text: "Clean pass on {name}. Blue flag clear."
+
+catching_car_ahead:
+- text: "You're catching {name}, gap is {gap} seconds. {tyre_info} You can do it, hunt him down."
+- text: "Gap to {name} is down to {gap} seconds. You're lapping faster. {tyre_info} Catch up, you've got this."
+- text: "{name} ahead is within {gap}s. {tyre_info} You're reeling him in, keep pushing."
+
+car_ahead_pulling_away:
+- text: "{name} ahead is pulling away, gap is {gap} seconds. {tyre_info} Pick up the pace, push now."
+- text: "{name} is faster by {delta}s a lap. Gap is {gap}s. {tyre_info} Speed up, we can't let him go."
+- text: "He's pulling away, {gap}s ahead. {tyre_info} Fasten your pace, let's close this down."
+
+dropping_car_behind:
+- text: "Great pace! You're pulling away from {name}, gap is {gap} seconds. {tyre_info} Keep it up."
+- text: "{name} behind is lapping slower. Gap extended to {gap}s. {tyre_info} Mega drive."
+- text: "Pulling away from {name}, {gap}s in hand. {tyre_info} Outstanding pace, keep flying."
+
+car_behind_closing:
+- text: "{name} behind is within {gap} seconds and lapping faster. {tyre_info} Speed up, we need to defend."
+- text: "Watch your mirrors, {name} is closing, gap is {gap}s. {tyre_info} Pick up the pace!"
+- text: "{name} is catching you by {delta}s a lap. Gap is {gap}s. {tyre_info} Fasten your pace and defend."

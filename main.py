@@ -854,6 +854,11 @@ class Engineer:
                 # 1. Overtake detection
                 ot_records = self.overtake_detector.update(self.state, now=now_ts)
                 for ot in ot_records:
+                    if ot["direction"] == "pass":
+                        if self.spotter:
+                            self.spotter.suppress(3.0, now=now_ts)
+                        if self.player:
+                            self.player.interrupt()
                     sig_name = "overtake_confirmed" if ot["direction"] == "pass" else "overtaken_confirmed"
                     sig_ot = (sig_name, ot)
                     if self.tracker:
