@@ -17,7 +17,7 @@ class AudioPlayer:
     def __init__(
         self,
         device: str | int | None = None,
-        sample_rate: int = 22050,
+        sample_rate: int = 24000,
         start_stream: bool = True,
         volume: float = 1.0,
     ):
@@ -25,7 +25,8 @@ class AudioPlayer:
         self.sample_rate = sample_rate
         self.volume = max(0.0, min(1.0, float(volume)))
         self._stream = None
-        self._lock = threading.Lock()
+        self._stream_lock = threading.Lock()
+        self._play_lock = threading.Lock()
         self._interrupt_flag = False
         if start_stream:
             self.start(sample_rate)
@@ -53,13 +54,14 @@ class AudioPlayer:
             self.sample_rate = sample_rate
         try:
             import sounddevice as sd
-            with self._lock:
+            with self._stream_lock:
                 if self._stream is not None:
                     try:
                         self._stream.stop()
                         self._stream.close()
                     except Exception:
                         pass
+                    self._stream = None
                 self._stream = sd.OutputStream(
                     samplerate=self.sample_rate,
                     channels=1,
@@ -81,6 +83,29 @@ class AudioPlayer:
             True if playback finished completely.
             False if playback was interrupted by PTT, external interrupt, or error.
         """
+        # Acquire playback lock to ensure only one thread writes to audio hardware at a time
+        if not self._play_lock.acquire(timeout=1.0):
+            log.warning("Audio playback lock acquisition timed out")
+            return False
+        try:
+            return self._play_internal(audio, sample_rate, is_interrupted=is_interrupted)
+        finally:
+            self._play_lock.release()
+
+    def play_direct(self, audio: np.ndarray, sample_rate: int) -> bool:
+        """Immediately interrupts any current playback and plays audio to completion without PTT gating."""
+        self.interrupt()
+        # Wait up to 300ms for current block to exit on interrupt
+        if not self._play_lock.acquire(timeout=0.3):
+            log.warning("play_direct lock acquisition timed out")
+            return False
+        try:
+            self._interrupt_flag = False
+            return self._play_internal(audio, sample_rate, is_interrupted=None)
+        finally:
+            self._play_lock.release()
+
+    def _play_internal(self, audio: np.ndarray, sample_rate: int, is_interrupted: Optional[Callable[[], bool]] = None) -> bool:
         if audio is None or len(audio) == 0:
             return True
 
@@ -90,15 +115,30 @@ class AudioPlayer:
         if self.volume != 1.0:
             audio = audio * self.volume
 
-        if self._stream is None or self.sample_rate != sample_rate:
+        with self._stream_lock:
+            stream = self._stream
+
+        if stream is None:
             self.start(sample_rate)
+            with self._stream_lock:
+                stream = self._stream
+
+        # Resample in memory if sample rate differs, avoiding closing/reopening the PortAudio hardware stream
+        if self.sample_rate != sample_rate and len(audio) > 0:
+            num_samples = int(len(audio) * self.sample_rate / sample_rate)
+            if num_samples > 0:
+                audio = np.interp(
+                    np.linspace(0, len(audio), num_samples, endpoint=False),
+                    np.arange(len(audio)),
+                    audio,
+                ).astype(np.float32)
 
         self._interrupt_flag = False
         interrupt_fn = is_interrupted or (lambda: False)
 
         # Fallback for headless environments or when audio driver is unavailable
-        if self._stream is None:
-            duration = len(audio) / sample_rate
+        if stream is None:
+            duration = len(audio) / self.sample_rate
             steps = max(1, int(duration / 0.04))
             for _ in range(steps):
                 if interrupt_fn() or self._interrupt_flag:
@@ -108,33 +148,33 @@ class AudioPlayer:
             return True
 
         # Write in ~40 ms blocks so PTT or spotter interrupts within 40 ms
-        block_size = max(1, int(sample_rate * 0.04))
+        block_size = max(1, int(self.sample_rate * 0.04))
         for i in range(0, len(audio), block_size):
             if interrupt_fn() or self._interrupt_flag:
                 log.info("Playback interrupted")
                 return False
             block = audio[i : i + block_size]
             try:
-                self._stream.write(block)
+                stream.write(block)
             except Exception as e:
                 log.debug("Stream write error: %s", e)
                 return False
 
         return True
 
-    def play_direct(self, audio: np.ndarray, sample_rate: int) -> bool:
-        """Immediately interrupts any current playback and plays audio to completion without PTT gating."""
-        self.interrupt()
-        time.sleep(0.02)  # brief pause for active block to exit
-        return self.play(audio, sample_rate, is_interrupted=None)
-
     def stop(self) -> None:
         """Stops and closes the OutputStream."""
-        with self._lock:
-            if self._stream is not None:
-                try:
-                    self._stream.stop()
-                    self._stream.close()
-                except Exception:
-                    pass
-                self._stream = None
+        self.interrupt()
+        acquired = self._play_lock.acquire(timeout=0.2)
+        try:
+            with self._stream_lock:
+                if self._stream is not None:
+                    try:
+                        self._stream.stop()
+                        self._stream.close()
+                    except Exception:
+                        pass
+                    self._stream = None
+        finally:
+            if acquired:
+                self._play_lock.release()

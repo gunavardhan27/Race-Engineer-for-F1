@@ -169,3 +169,43 @@ def test_normalize_text_for_speech():
     assert normalize_text_for_speech("Target 1:24.") == "Target 1 point 24."
     assert normalize_text_for_speech("Fast lap 0:58.2.") == "Fast lap 58.2."
     assert normalize_text_for_speech("Radio check. Telemetry live.") == "Radio check. Telemetry live."
+
+
+def test_audio_player_concurrent_interruption_thread_safety():
+    """Verify that play() and play_direct() can be called concurrently across threads without crash."""
+    import threading
+    import time
+    player = AudioPlayer(start_stream=False)
+
+    errors = []
+
+    def run_normal():
+        try:
+            audio = np.zeros(int(22050 * 0.2), dtype=np.float32)
+            player.play(audio, 22050)
+        except Exception as e:
+            errors.append(e)
+
+    def run_direct():
+        try:
+            audio = np.zeros(int(24000 * 0.1), dtype=np.float32)
+            player.play_direct(audio, 24000)
+        except Exception as e:
+            errors.append(e)
+
+    t1 = threading.Thread(target=run_normal)
+    t2 = threading.Thread(target=run_direct)
+    t3 = threading.Thread(target=run_direct)
+
+    t1.start()
+    time.sleep(0.01)
+    t2.start()
+    time.sleep(0.01)
+    t3.start()
+
+    t1.join(timeout=2.0)
+    t2.join(timeout=2.0)
+    t3.join(timeout=2.0)
+
+    assert not errors
+

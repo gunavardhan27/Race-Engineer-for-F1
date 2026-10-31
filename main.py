@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import faulthandler
+faulthandler.enable()
 import hashlib
 import json
 import logging
