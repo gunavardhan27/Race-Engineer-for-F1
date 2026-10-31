@@ -23,8 +23,13 @@ log = logging.getLogger("engineer.agent")
 CORE_KEYS = {"lap", "lap_num", "position", "pos", "driver_name", "gear", "speed", "me", "strategy", "battle_pace", "retirements"}
 
 INTENT_MAP = {
-    ("tyre", "tire", "wear", "compound", "pit", "box", "strategy", "plan", "undercut", "overcut", "stop"): {"tyres", "tyre_wear", "weather", "track_temp", "air_temp", "pit_status", "strategy"},
-    ("gap", "behind", "ahead", "delta", "battle", "catch", "drs", "overtake", "fighting"): {"ahead", "behind", "drs", "gap_ahead", "gap_behind", "rival", "battle_pace"},
+    ("tyre", "tire", "wear", "compound", "pit", "box", "strategy", "plan", "undercut", "overcut", "stop"): {
+        "tyres", "tyre_wear", "weather", "track_temp", "air_temp", "pit_status", "pit_window", "strategy",
+        "car_ahead", "car_behind", "fuel", "safety_car", "safety_car_status", "tyre_sets", "total_laps",
+    },
+    ("gap", "behind", "ahead", "delta", "battle", "catch", "drs", "overtake", "fighting"): {
+        "ahead", "behind", "car_ahead", "car_behind", "drs", "gap_ahead", "gap_behind", "rival", "battle_pace",
+    },
     ("engine", "ers", "battery", "fuel", "mode", "deploy", "harvest"): {"engine", "ers", "fuel", "drs"},
     ("weather", "rain", "track", "temp", "conditions", "crossover"): {"weather", "air_temp", "track_temp", "rain_percentage"},
     ("damage", "wing", "puncture", "warning", "penalty", "crash", "retire", "dnf"): {"damage", "car_damage", "penalties", "warnings", "retirements"},

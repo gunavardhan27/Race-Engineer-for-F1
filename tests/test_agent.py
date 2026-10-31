@@ -56,6 +56,36 @@ def test_clean_snapshot_and_prompt_building():
     assert "DRIVER: I'm understeering at Copse" in user
 
 
+def test_clean_snapshot_strategy_intent():
+    """Verify that strategy and pit questions retain pit_window, fuel, strategy, gaps, and tyres."""
+    full_snap = {
+        "lap": 15,
+        "position": 2,
+        "pit_window": {"ideal_lap": 18, "latest_lap": 23},
+        "strategy": {
+            "recommended_plan": "Plan A (1-Stop)",
+            "recommended_stops": ["Lap 18 -> Hard"],
+            "plan_b": "Plan B (2-Stop)",
+            "undercut_opportunity": "Box this lap for the undercut on Norris.",
+        },
+        "tyres": {"compound": "Medium", "age_laps": 15, "wear_pct_per_lap": 2.1},
+        "fuel": {"kg": 35.0, "laps_delta": 0.8},
+        "car_ahead": {"name": "Norris", "gap_s": 1.2, "tyre_compound": "Medium"},
+        "car_behind": {"name": "Russell", "gap_s": 3.4, "tyre_compound": "Hard"},
+        "weather": {"now": "Clear", "next_rain": None},
+        "safety_car": None,
+        "unrelated_setup": {"wing": 22},
+    }
+    cleaned = clean_snapshot(full_snap, question="Strategy check. Should we box or change plan?")
+    assert "strategy" in cleaned
+    assert cleaned["strategy"]["recommended_plan"] == "Plan A (1-Stop)"
+    assert "pit_window" in cleaned
+    assert cleaned["pit_window"]["ideal_lap"] == 18
+    assert "car_ahead" in cleaned
+    assert "fuel" in cleaned
+    assert "unrelated_setup" not in cleaned
+
+
 def test_streaming_sentence_chunks_push_to_radio():
     """Tokens must be accumulated into sentences on .!? and pushed to RadioQueue at priority -1."""
     async def _run():
