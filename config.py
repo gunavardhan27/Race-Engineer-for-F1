@@ -6,6 +6,7 @@ Unknown keys emit warnings rather than raising errors.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,36 @@ from typing import Any
 import yaml
 
 log = logging.getLogger("engineer.config")
+
+
+def load_env_file(dotenv_path: Path | str = ".env") -> None:
+    """Loads key-value pairs from a .env file into os.environ if not already set."""
+    p = Path(dotenv_path)
+    if not p.is_file():
+        return
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(p, override=False)
+        return
+    except ImportError:
+        pass
+
+    try:
+        for line in p.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip("'\"")
+            if k and k not in os.environ:
+                os.environ[k] = v
+    except Exception as e:
+        log.warning("Could not load .env file '%s': %s", p, e)
+
+
+# Automatically load environment variables when config is imported
+load_env_file()
 
 
 @dataclass

@@ -96,3 +96,31 @@ def test_client_warmup():
         assert p2.warmed_up
 
     asyncio.run(_run())
+
+
+def test_load_env_file_and_provider_keys(tmp_path, monkeypatch):
+    """load_env_file loads variables into os.environ and providers consume them."""
+    import os
+    from config import load_env_file
+    from llm import GroqProvider, OpenAICompatibleProvider, create_provider
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("GROQ_API_KEY=gsk_test_groq_12345\nLLAMA_API_KEY=test_llama_67890\n", encoding="utf-8")
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("LLAMA_API_KEY", raising=False)
+
+    load_env_file(env_file)
+
+    assert os.getenv("GROQ_API_KEY") == "gsk_test_groq_12345"
+    assert os.getenv("LLAMA_API_KEY") == "test_llama_67890"
+
+    groq = GroqProvider()
+    assert groq.api_key == "gsk_test_groq_12345"
+
+    llama_prov = OpenAICompatibleProvider()
+    assert llama_prov.api_key == "test_llama_67890"
+    assert llama_prov.client.headers.get("authorization") == "Bearer test_llama_67890"
+
+    prov = create_provider("llama", LLMConfig())
+    assert isinstance(prov, OpenAICompatibleProvider)

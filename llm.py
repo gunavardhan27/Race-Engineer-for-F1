@@ -44,7 +44,12 @@ class GroqProvider:
         usage_guard: Optional[Any] = None,
     ):
         self.model = model
-        self.api_key = api_key or os.getenv("GROQ_API_KEY", "")
+        self.api_key = (
+            api_key
+            or os.getenv("GROQ_API_KEY", "")
+            or os.getenv("GROQ_KEY", "")
+            or (os.getenv("LLAMA_API_KEY", "") if os.getenv("LLAMA_API_KEY", "").startswith("gsk_") else "")
+        )
         self.base_url = "https://api.groq.com/openai/v1"
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=10.0)
         self.usage_guard = usage_guard
@@ -212,12 +217,21 @@ class OllamaProvider:
 
 
 class OpenAICompatibleProvider:
-    """Local OpenAI-compatible provider (e.g. llama.cpp llama-server, LM Studio)."""
+    """Local or remote OpenAI-compatible provider (e.g. llama.cpp llama-server, LM Studio, Llama API)."""
 
-    def __init__(self, base_url: str = "http://localhost:8080/v1", model: str = "local"):
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.client = httpx.AsyncClient(base_url=self.base_url, timeout=10.0)
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8080/v1",
+        model: str = "local",
+        api_key: Optional[str] = None,
+    ):
+        self.base_url = (os.getenv("LOCAL_LLM_URL") or os.getenv("LLAMA_BASE_URL") or base_url).rstrip("/")
+        self.model = os.getenv("LOCAL_LLM_MODEL") or os.getenv("LLAMA_MODEL") or model
+        self.api_key = api_key or os.getenv("LLAMA_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        self.client = httpx.AsyncClient(base_url=self.base_url, headers=headers, timeout=10.0)
 
     async def warmup(self) -> None:
         try:
@@ -280,8 +294,12 @@ def create_provider(name: str, config: LLMConfig, usage_guard: Optional[Any] = N
         return GroqProvider(model=config.groq.model, usage_guard=usage_guard)
     elif name == "ollama":
         return OllamaProvider(base_url=config.ollama.base_url, model=config.ollama.model, num_gpu=config.ollama.num_gpu)
-    elif name == "openai_compatible":
-        return OpenAICompatibleProvider(base_url=config.openai_compatible.base_url, model=config.openai_compatible.model)
+    elif name in ("openai_compatible", "llama"):
+        return OpenAICompatibleProvider(
+            base_url=config.openai_compatible.base_url,
+            model=config.openai_compatible.model,
+            api_key=os.getenv("LLAMA_API_KEY", ""),
+        )
     return None
 
 
