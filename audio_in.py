@@ -133,7 +133,7 @@ class AudioCapture:
             return combined[-self.pre_roll_samples:]
         return combined
 
-    def on_ptt(self, down: bool) -> None:
+    def on_ptt(self, down: bool, ignore_min_duration: bool = False) -> Optional[np.ndarray]:
         """Handles PTT state transitions (True = pressed, False = released)."""
         with self._lock:
             if down:
@@ -143,15 +143,24 @@ class AudioCapture:
                     self._recording_chunks = [pre_roll] if len(pre_roll) > 0 else []
                     self._recording_sample_count = len(pre_roll)
                     log.debug("PTT down: recording started with %d pre-roll samples", len(pre_roll))
+                return None
             else:
                 if self._is_recording:
-                    self._finalize_recording_locked()
+                    return self._finalize_recording_locked(ignore_min_duration=ignore_min_duration)
+                return None
 
-    def _finalize_recording_locked(self) -> None:
+    def capture_now(self, ignore_min_duration: bool = True) -> Optional[np.ndarray]:
+        """Manually finalizes and returns audio from current recording."""
+        with self._lock:
+            if self._is_recording:
+                return self._finalize_recording_locked(ignore_min_duration=ignore_min_duration)
+            return None
+
+    def _finalize_recording_locked(self, ignore_min_duration: bool = False) -> Optional[np.ndarray]:
         """Finalizes and dispatches recorded audio if it meets duration requirements."""
         self._is_recording = False
         if not self._recording_chunks:
-            return
+            return None
 
         audio = np.concatenate(self._recording_chunks)
         self._recording_chunks = []
@@ -162,9 +171,9 @@ class AudioCapture:
             audio = audio[: self.max_samples]
 
         duration_s = len(audio) / self.sample_rate
-        if len(audio) < self.min_samples:
+        if not ignore_min_duration and len(audio) < self.min_samples:
             log.info("PTT press too short (%.2fs < %.2fs); ignored", duration_s, self.min_samples / self.sample_rate)
-            return
+            return None
 
         log.info("Captured transmission: %.2fs (%d samples)", duration_s, len(audio))
         if self.on_audio_recorded:
@@ -173,6 +182,7 @@ class AudioCapture:
                 self.on_audio_recorded(audio)
             except Exception:
                 log.exception("Error in on_audio_recorded callback")
+        return audio
 
     def get_live_level(self) -> dict[str, Any]:
         """Returns peak and RMS levels and clipping flag for live level meters."""

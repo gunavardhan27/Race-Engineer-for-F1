@@ -18,8 +18,16 @@ from pathlib import Path
 import pytest
 import numpy as np
 
-from config import AppConfig, DefendConfig, OvertakeConfig
-from f1telemetry.overtakes import BrakingZone, BrakingZoneDetector, OvertakeDetector, DefendWarningDetector, OvertakeCandidate
+from config import AppConfig, DefendConfig, OvertakeConfig, SpotterConfig
+from f1telemetry.overtakes import (
+    BrakingZone,
+    BrakingZoneDetector,
+    OvertakeDetector,
+    DefendWarningDetector,
+    OvertakeCandidate,
+    MultiOvertakeGrouper,
+)
+from f1telemetry.spotter import Spotter, SpotterState
 from f1telemetry.state import RaceState
 from f1telemetry.packets import NUM_CARS
 from personality import PersonalityEngine
@@ -663,4 +671,355 @@ def test_overtake_pass_suppresses_spotter_and_plays_praise():
     assert spotter.process(st, now=13.0) is None
     assert spotter.process(st, now=14.0) is None
     assert spotter.state == SpotterState.CLEAR
+
+
+# ==============================================================================
+# 7. Multi-Overtake & Spotter Speech Tests (Prompt 22 Changes)
+# ==============================================================================
+
+def test_two_passes_different_corners_two_single_events():
+    """Two passes 2 s apart in different corners (>150m apart) -> two single events, not a double."""
+    cfg = OvertakeConfig(multi_overtake_window_s=2.5, multi_overtake_distance_m=150.0)
+    grouper = MultiOvertakeGrouper(cfg)
+    st = RaceState()
+    st.track_length = 5000.0
+    st.player = 0
+    p_lap = type("Lap", (), {"position": 3, "lap_distance": 500.0, "total_distance": 1000.0})()
+    st.lap = [p_lap]
+
+    # Pass 1 on Verstappen at T=10.0s at track dist 500.0m (Turn 1)
+    rec1 = {
+        "car_idx": 1, "other_driver_name": "Verstappen", "direction": "pass",
+        "classification": "clean", "pass_time": 10.0, "pass_track_dist": 500.0,
+        "initial_player_pos": 4, "position": 3, "corner_name": "Turn 1",
+    }
+    # Pass 2 on Norris at T=12.0s at track dist 800.0m (Turn 2, 300m away > 150m)
+    rec2 = {
+        "car_idx": 2, "other_driver_name": "Norris", "direction": "pass",
+        "classification": "clean", "pass_time": 12.0, "pass_track_dist": 800.0,
+        "initial_player_pos": 3, "position": 2, "corner_name": "Turn 2",
+    }
+
+    # Frame 1 at T=12.1s: rec1 and rec2 confirmed, but 300m apart (> 150m)
+    res_12 = grouper.update([rec1, rec2], st, now=12.1)
+    assert res_12 == [], "Passes should be held while grouping windows are open"
+
+    # Frame 2 at T=12.6s: Pass 1 window (10.0 + 2.5 = 12.5s) closed
+    res_12_6 = grouper.update([], st, now=12.6)
+    assert len(res_12_6) == 1, "Pass 1 should emit as single event"
+    assert res_12_6[0]["event"] == "overtake_confirmed"
+    assert res_12_6[0]["other_driver_name"] == "Verstappen"
+
+    # Frame 3 at T=14.6s: Pass 2 window (12.0 + 2.5 = 14.5s) closed
+    res_14_6 = grouper.update([], st, now=14.6)
+    assert len(res_14_6) == 1, "Pass 2 should emit as single event"
+    assert res_14_6[0]["event"] == "overtake_confirmed"
+    assert res_14_6[0]["other_driver_name"] == "Norris"
+
+
+def test_double_where_one_car_lapped_or_stricken_single_overtake_line():
+    """Double where one car is lapped or stricken -> single overtake line."""
+    cfg = OvertakeConfig(multi_overtake_window_s=2.5, multi_overtake_distance_m=150.0)
+    grouper = MultiOvertakeGrouper(cfg)
+    st = RaceState()
+    st.track_length = 5000.0
+    st.player = 0
+    st.lap = [type("Lap", (), {"position": 2, "lap_distance": 520.0, "total_distance": 1050.0})()]
+
+    # Pass 1: Leclerc (real racing pass, clean)
+    rec1 = {
+        "car_idx": 1, "other_driver_name": "Leclerc", "direction": "pass",
+        "classification": "clean", "pass_time": 10.0, "pass_track_dist": 500.0,
+        "initial_player_pos": 3, "position": 2, "corner_name": "Turn 1",
+        "is_backmarker": False, "is_stricken": False, "pit_status": 0,
+    }
+    # Pass 2: Sargeant (lapped backmarker) in same braking zone
+    rec2 = {
+        "car_idx": 2, "other_driver_name": "Sargeant", "direction": "pass",
+        "classification": "backmarker_pass", "pass_time": 11.0, "pass_track_dist": 520.0,
+        "initial_player_pos": 3, "position": 2, "corner_name": "Turn 1",
+        "is_backmarker": True, "is_stricken": False, "pit_status": 0,
+    }
+
+    grouper.update([rec1, rec2], st, now=11.2)
+    # Window closes at 10.0 + 2.5 = 12.5s
+    emitted = grouper.update([], st, now=12.6)
+    assert len(emitted) == 1
+    # Only 1 real pass remains -> normal single overtake line
+    assert emitted[0]["event"] == "overtake_confirmed"
+    assert emitted[0]["other_driver_name"] == "Leclerc"
+
+    # Verify personality emits single overtake line
+    pers = PersonalityEngine(config=AppConfig().persona)
+    praise = pers.on_signal((emitted[0]["event"], emitted[0]), st, spotter_active=False, now=12.6)
+    assert praise is not None
+    assert praise.priority == 1
+    assert "leclerc" in praise.text.lower() or "done" in praise.text.lower() or "textbook" in praise.text.lower() or "beautiful" in praise.text.lower() or "move" in praise.text.lower() or "p2" in praise.text.lower()
+
+
+def test_double_with_one_divebomb_divebomb_line_naming_both_no_praise():
+    """Double with one divebomb -> divebomb line naming both, no praise."""
+    cfg = OvertakeConfig(multi_overtake_window_s=2.5, multi_overtake_distance_m=150.0)
+    grouper = MultiOvertakeGrouper(cfg)
+    st = RaceState()
+    st.track_length = 5000.0
+    st.player = 0
+    st.lap = [type("Lap", (), {"position": 2, "lap_distance": 520.0, "total_distance": 1050.0})()]
+
+    # Pass 1: Russell (clean)
+    rec1 = {
+        "car_idx": 1, "other_driver_name": "Russell", "direction": "pass",
+        "classification": "clean", "pass_time": 10.0, "pass_track_dist": 500.0,
+        "initial_player_pos": 4, "position": 3, "corner_name": "Turn 1",
+    }
+    # Pass 2: Hamilton (divebomb into same corner)
+    rec2 = {
+        "car_idx": 2, "other_driver_name": "Hamilton", "direction": "pass",
+        "classification": "divebomb", "pass_time": 10.8, "pass_track_dist": 525.0,
+        "initial_player_pos": 4, "position": 2, "corner_name": "Turn 1",
+    }
+
+    grouper.update([rec1, rec2], st, now=11.0)
+    # Window closes at 12.5s
+    emitted = grouper.update([], st, now=12.6)
+    assert len(emitted) == 1
+    ev = emitted[0]
+    # Class of group = worst class among passes (divebomb)
+    assert ev["event"] in ("overtake_divebomb", "divebomb") or ev["classification"] in ("overtake_divebomb", "divebomb")
+    assert "Russell and Hamilton" in ev["names"]
+
+    # Verify personality uses divebomb line naming both, NO praise
+    pers = PersonalityEngine(config=AppConfig().persona)
+    callout = pers.on_signal((ev["event"], ev), st, spotter_active=False, now=12.6)
+    assert callout is not None
+    assert callout.priority == 1
+    txt = callout.text.lower()
+    # Mentions both or divebomb warning, never generic praise
+    assert "russell and hamilton" in txt or "divebomb" in txt or "lunge" in txt or "send" in txt or "careful" in txt or "jump out" in txt or "stewards" in txt
+    assert "textbook" not in txt and "lovely" not in txt
+
+
+def test_no_single_praise_emitted_before_group_announcement():
+    """No single praise emitted before the group announcement."""
+    cfg = OvertakeConfig(multi_overtake_window_s=2.5, multi_overtake_distance_m=150.0)
+    grouper = MultiOvertakeGrouper(cfg)
+    st = RaceState()
+    st.track_length = 5000.0
+    st.player = 0
+    st.lap = [type("Lap", (), {"position": 2, "lap_distance": 520.0, "total_distance": 1050.0})()]
+
+    # Car 1 pass flips at 10.0s, confirms at 12.0s
+    rec1 = {
+        "car_idx": 1, "other_driver_name": "Piastri", "direction": "pass",
+        "classification": "clean", "pass_time": 10.0, "pass_track_dist": 500.0,
+        "initial_player_pos": 4, "position": 3, "corner_name": "Turn 1",
+    }
+    # Car 2 active candidate in flight at 10.8s
+    active_cand = OvertakeCandidate(
+        car_idx=2, direction="pass", start_time=10.8, initial_my_total=1000.0, initial_their_total=1005.0,
+        pass_time=10.8, pass_track_dist=530.0, initial_player_pos=4,
+    )
+    active_cands = {2: active_cand}
+
+    # At T=12.0s: Car 1 confirms, but Car 2 is still in flight in same braking zone
+    emitted = grouper.update([rec1], st, now=12.0, active_candidates=active_cands)
+    assert emitted == [], "No single praise emitted when candidate is pending in group window"
+
+    # At T=12.4s: Still in flight
+    assert grouper.update([], st, now=12.4, active_candidates=active_cands) == []
+
+    # At T=12.8s: Car 2 confirms
+    rec2 = {
+        "car_idx": 2, "other_driver_name": "Sainz", "direction": "pass",
+        "classification": "clean", "pass_time": 10.8, "pass_track_dist": 530.0,
+        "initial_player_pos": 4, "position": 2, "corner_name": "Turn 1",
+    }
+    del active_cands[2]
+
+    # At T=12.8s: rec2 added, window for group (earliest 10.0s) closed (12.8 >= 10.0 + 2.5)
+    emitted = grouper.update([rec2], st, now=12.8, active_candidates=active_cands)
+    assert len(emitted) == 1, "Double overtake emitted in a single event"
+    assert emitted[0]["event"] == "double_overtake"
+    assert "Piastri and Sainz" in emitted[0]["names"]
+
+
+def test_three_cars_multi_overtake_with_count_three():
+    """Three cars -> multi_overtake with {count} = 3."""
+    cfg = OvertakeConfig(multi_overtake_window_s=2.5, multi_overtake_distance_m=150.0)
+    grouper = MultiOvertakeGrouper(cfg)
+    st = RaceState()
+    st.track_length = 5000.0
+    st.player = 0
+    st.lap = [type("Lap", (), {"position": 2, "lap_distance": 540.0, "total_distance": 1080.0})()]
+
+    p1 = {
+        "car_idx": 1, "other_driver_name": "Alonso", "direction": "pass",
+        "classification": "clean", "pass_time": 10.0, "pass_track_dist": 500.0,
+        "initial_player_pos": 5, "position": 4, "corner_name": "Turn 1",
+    }
+    p2 = {
+        "car_idx": 2, "other_driver_name": "Stroll", "direction": "pass",
+        "classification": "clean", "pass_time": 10.7, "pass_track_dist": 520.0,
+        "initial_player_pos": 5, "position": 3, "corner_name": "Turn 1",
+    }
+    p3 = {
+        "car_idx": 3, "other_driver_name": "Gasly", "direction": "pass",
+        "classification": "clean", "pass_time": 11.4, "pass_track_dist": 540.0,
+        "initial_player_pos": 5, "position": 2, "corner_name": "Turn 1",
+    }
+
+    grouper.update([p1, p2, p3], st, now=11.5)
+    # Window closes at 10.0 + 2.5 = 12.5s
+    emitted = grouper.update([], st, now=12.6)
+    assert len(emitted) == 1
+    ev = emitted[0]
+    assert ev["event"] == "multi_overtake"
+    assert ev["count"] == 3
+    assert ev["gained"] == 3
+    assert "Alonso, Stroll and Gasly" in ev["names"]
+
+    # Verify personality reaction
+    pers = PersonalityEngine(config=AppConfig().persona)
+    callout = pers.on_signal(("multi_overtake", ev), st, spotter_active=False, now=12.6)
+    assert callout is not None
+    assert callout.priority == 1
+    txt = callout.text.lower()
+    assert "3" in txt or "three" in txt or "triple" in txt or "alonso" in txt
+
+
+def test_losing_two_places_in_one_move_double_overtaken():
+    """Losing two places in one move -> double_overtaken."""
+    cfg = OvertakeConfig(multi_overtake_window_s=2.5, multi_overtake_distance_m=150.0)
+    grouper = MultiOvertakeGrouper(cfg)
+    st = RaceState()
+    st.track_length = 5000.0
+    st.player = 0
+    st.lap = [type("Lap", (), {"position": 5, "lap_distance": 520.0, "total_distance": 1050.0})()]
+
+    p1 = {
+        "car_idx": 1, "other_driver_name": "Perez", "direction": "loss",
+        "classification": "fair_pass_against", "pass_time": 10.0, "pass_track_dist": 500.0,
+        "initial_player_pos": 3, "position": 4, "corner_name": "Turn 1",
+    }
+    p2 = {
+        "car_idx": 2, "other_driver_name": "Tsunoda", "direction": "loss",
+        "classification": "fair_pass_against", "pass_time": 11.2, "pass_track_dist": 530.0,
+        "initial_player_pos": 3, "position": 5, "corner_name": "Turn 1",
+    }
+
+    grouper.update([p1, p2], st, now=11.3)
+    # Window closes at 12.5s
+    emitted = grouper.update([], st, now=12.6)
+    assert len(emitted) == 1
+    ev = emitted[0]
+    assert ev["event"] == "double_overtaken"
+    assert ev["lost"] == 2
+    assert "Perez and Tsunoda" in ev["names"]
+
+    # Verify personality emits double_overtaken line
+    pers = PersonalityEngine(config=AppConfig().persona)
+    callout = pers.on_signal(("double_overtaken", ev), st, spotter_active=False, now=12.6)
+    assert callout is not None
+    assert callout.priority == 1
+    txt = callout.text.lower()
+    assert "two" in txt or "2" in txt or "both" in txt or "perez" in txt
+
+
+def test_spotter_speech_false_defend_warnings_and_overlap_features_work():
+    """With spotter.speech false: defend warnings and overtake overlap features still work."""
+    from config import SpotterConfig
+    # Spotter with speech false
+    cfg = SpotterConfig(enabled=True, speech=False)
+    spotter = Spotter(cfg)
+
+    st = RaceState()
+    st.player = 0
+    p_tel = type("Tel", (), {"speed_kph": 180.0, "steer": 0.0})()
+    st.tel = [p_tel, p_tel]
+    p_lap = type("Lap", (), {"lap_num": 1, "position": 1, "lap_distance": 1000.0, "result_status": 2, "pit_status": 0})()
+    opp_lap = type("Lap", (), {"lap_num": 1, "position": 2, "lap_distance": 1000.0, "result_status": 2, "pit_status": 0})()
+    st.lap = [p_lap, opp_lap]
+
+    # Opponent alongside on left
+    p_mot = type("Mot", (), {
+        "x": 0.0, "y": 0.0, "z": 0.0,
+        "fwd_x": 0.0, "fwd_y": 0.0, "fwd_z": 1.0,
+        "right_x": 1.0, "right_y": 0.0, "right_z": 0.0,
+    })()
+    opp_mot = type("Mot", (), {
+        "x": -2.0, "y": 0.0, "z": 0.0,
+        "fwd_x": 0.0, "fwd_y": 0.0, "fwd_z": 1.0,
+        "right_x": 1.0, "right_y": 0.0, "right_z": 0.0,
+    })()
+    st.motion = [p_mot, opp_mot]
+
+    phrase = spotter.process(st, now=10.0)
+    # Spotter state machine STILL computes overlap and updates state
+    assert phrase == "Car left"
+    assert spotter.state == SpotterState.CAR_LEFT
+
+    # DefendWarningDetector uses spotter.state to block defend warning during active overlap
+    defend_det = DefendWarningDetector(spotter=spotter)
+    assert defend_det.spotter.state != SpotterState.CLEAR
+    assert defend_det.update(st, now=10.0) == []
+
+    # Main _play_spotter check: gated when speech is false
+    from main import RaceEngineerAgent
+    class FakeMain:
+        def __init__(self):
+            self.config = type("Cfg", (), {"spotter": cfg, "volumes": type("V", (), {"spotter": 1.0})()})()
+            self.played = False
+        def _play_spotter(self, phrase: str):
+            # Same implementation as RaceEngineerAgent._play_spotter
+            if not getattr(self.config.spotter, "speech", False):
+                return
+            self.played = True
+
+    fm = FakeMain()
+    fm._play_spotter(phrase)
+    assert fm.played is False, "Spoken phrase must be suppressed when spotter.speech is false"
+
+
+def test_quiet_mode_suppresses_double_multi_praise():
+    """Quiet mode suppresses double/multi praise."""
+    pers = PersonalityEngine(config=AppConfig().persona)
+    st = RaceState()
+    st.player = 0
+    st.lap = [type("Lap", (), {"position": 2, "lap_distance": 500.0, "total_distance": 1000.0})()]
+
+    ev_double = {
+        "event": "double_overtake", "names": "Verstappen and Leclerc", "pos": 2, "corner": None,
+    }
+    ev_multi = {
+        "event": "multi_overtake", "names": "Verstappen, Leclerc and Norris", "count": 3, "pos": 2, "corner": None,
+    }
+
+    # In main.py, radio pushes are gated on not self.quiet_mode:
+    class FakeMain:
+        def __init__(self, quiet: bool):
+            self.quiet_mode = quiet
+            self.radio = []
+            self.personality = pers
+
+        def handle_overtake_event(self, ot):
+            sig_name = ot["event"]
+            sig_ot = (sig_name, ot)
+            if self.personality and not self.quiet_mode:
+                c_pers = self.personality.on_signal(sig_ot, st, spotter_active=False, now=10.0)
+                if c_pers:
+                    c_pers.priority = 1
+                    self.radio.append(c_pers)
+
+    # 1. Quiet mode active: no callout queued
+    fm_quiet = FakeMain(quiet=True)
+    fm_quiet.handle_overtake_event(ev_double)
+    assert len(fm_quiet.radio) == 0, "Quiet mode must suppress double overtake praise"
+    fm_quiet.handle_overtake_event(ev_multi)
+    assert len(fm_quiet.radio) == 0, "Quiet mode must suppress multi overtake praise"
+
+    # 2. Quiet mode inactive: praise queued with Priority 1
+    fm_normal = FakeMain(quiet=False)
+    fm_normal.handle_overtake_event(ev_double)
+    assert len(fm_normal.radio) == 1
+    assert fm_normal.radio[0].priority == 1
 

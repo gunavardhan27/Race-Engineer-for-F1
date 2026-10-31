@@ -500,6 +500,21 @@ class RaceState:
         return cars[self.player]
 
     @property
+    def has_telemetry(self) -> bool:
+        """Returns True if telemetry has been received or populated for a live, replay, or demo session."""
+        if getattr(self, "is_demo", False):
+            return True
+        if self.session is not None or self.last_packet_time > 0:
+            return True
+        if self.lap is not None or self.tel is not None or self.status is not None or self.damage is not None:
+            return True
+        if self.my_setup is not None or getattr(self, "best_setup_info", None) is not None:
+            return True
+        if getattr(self, "biggest_loss_segment", None) or getattr(self, "fastest_sectors", None):
+            return True
+        return False
+
+    @property
     def my_tel2(self) -> packets.CarTelemetry2 | None:
         return self._mine(self.tel2)
 

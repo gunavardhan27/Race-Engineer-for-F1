@@ -54,6 +54,7 @@ from personality import PersonalityEngine
 from radio_check import RadioCheckManager
 from radio_fx import apply_radio_fx
 from sound_test import SoundTestManager
+from radio_test import RadioTestManager, start_radio_test_joystick_listener
 from stt import SpeechToText, build_initial_prompt
 from tts import TTSProvider, create_tts_engine
 from storage import SessionStorage, LapTraceCollector
@@ -240,6 +241,7 @@ class Engineer:
 
         self.radio_check = RadioCheckManager(config=self.config.radio_check)
         self.quiet_mode: bool = False
+        self._current_callout: Callout | None = None
         self.sound_test = SoundTestManager(
             tts=self.tts,
             player=self.player,
@@ -249,6 +251,28 @@ class Engineer:
             is_session_live_fn=self.is_session_live,
             config_path=self.config_path,
         )
+
+        self.radio_test = RadioTestManager(
+            engineer=self,
+            tts=self.tts,
+            player=self.player,
+            capture=self.audio_capture,
+            stt=self.stt,
+            agent=self.agent,
+            state=self.state,
+            personality=self.personality,
+            broadcaster=self.broadcaster,
+            latency=self.latency,
+            config=self.config,
+            is_session_live_fn=self.is_session_live,
+        )
+        self._radio_test_joystick_thread = None
+        if getattr(self.config.radio_test, "joystick_button", None) is not None:
+            self._radio_test_joystick_thread = start_radio_test_joystick_listener(
+                self.radio_test,
+                joystick_index=self.config.radio_test.joystick_index,
+                button_index=self.config.radio_test.joystick_button,
+            )
 
         self.braking_zones = BrakingZoneDetector(knowledge_base=self.knowledge)
         self.track_model_storage = TrackModelStorage()
@@ -397,6 +421,9 @@ class Engineer:
         """Pre-renders spotter audio clips to bypass TTS latency during wheel-to-wheel battles."""
         if not self.tts:
             return
+        if not getattr(self.config.spotter, "speech", False):
+            log.info("Spotter speech is disabled (spotter.speech: false); skipping spotter pre-rendering.")
+            return
         log.info("Pre-rendering spotter phrases for instant zero-latency playback...")
         self.audio_cache.register_static_phrases(SPOTTER_PHRASES)
         for phrase in SPOTTER_PHRASES:
@@ -442,6 +469,8 @@ class Engineer:
         log.info("Pre-rendered %d static persona lines", len(self.personality.prerendered_audio))
 
     def _play_spotter(self, phrase: str):
+        if not getattr(self.config.spotter, "speech", False):
+            return
         if self.broadcaster:
             self.broadcaster.broadcast_radio("engineer", phrase)
         if phrase in self.spotter_audio and self.player:
@@ -899,28 +928,38 @@ class Engineer:
                             if new_m.is_ready:
                                 self.track_model_storage.save_model(new_m)
 
-                # 1. Overtake detection
-                ot_records = self.overtake_detector.update(self.state, now=now_ts)
+                # 1. Overtake detection (grouped within 2.5s window and 150m)
+                ot_records = self.overtake_detector.update_grouped(self.state, now=now_ts)
                 for ot in ot_records:
                     if ot["direction"] == "pass":
                         if self.spotter:
                             self.spotter.suppress(4.0, now=now_ts)
-                        if self.player:
+                        # Never interrupt safety car, damage or penalty calls
+                        should_interrupt = True
+                        cur = getattr(self, "_current_callout", None)
+                        if cur is not None:
+                            if cur.priority == 0:
+                                should_interrupt = False
+                            elif any(kw in cur.text.lower() for kw in ("safety car", "vsc", "damage", "penalty")):
+                                should_interrupt = False
+                        if should_interrupt and self.player:
                             self.player.interrupt()
-                    sig_name = "overtake_confirmed" if ot["direction"] == "pass" else "overtaken_confirmed"
+                    sig_name = ot.get("event") or ("overtake_confirmed" if ot["direction"] == "pass" else "overtaken_confirmed")
                     sig_ot = (sig_name, ot)
                     if self.tracker:
                         self.tracker.on_overtake(ot)
                     if self.broadcaster:
                         self.broadcaster.broadcast("overtake", ot)
                     c_pers = None
-                    if self.personality:
+                    if self.personality and not self.quiet_mode:
                         spotter_active = False if ot["direction"] == "pass" else ((self.spotter.state != SpotterState.CLEAR) if self.spotter else False)
                         c_pers = self.personality.on_signal(sig_ot, self.state, spotter_active=spotter_active, now=now_ts)
                         if c_pers:
+                            c_pers.priority = 1
                             self.radio.push(c_pers)
-                    if not c_pers:
+                    if not c_pers and not self.quiet_mode:
                         for c in self.callouts.process(sig_ot, self.state):
+                            c.priority = 1
                             self.radio.push(c)
 
                 # 2. Defend warning detection
@@ -1209,46 +1248,50 @@ class Engineer:
         while not self.stopping:
             c = self.radio.pop()
             if c:
-                if self.broadcaster:
-                    latency_ms = None
-                    if c.priority == -1:
-                        avgs = self.latency.rolling_averages()
-                        latency_ms = avgs.get("total_turnaround")
-                    self.broadcaster.broadcast_radio("engineer", c.text, latency_ms=latency_ms)
-
-                if self.tts and self.player:
-                    try:
-                        if self.personality and c.text in self.personality.prerendered_audio:
-                            audio, sr = self.personality.prerendered_audio[c.text]
-                        else:
-                            audio, sr = await self.tts.synth(c.text)
-                            if self.config.tts.radio_fx:
-                                audio = apply_radio_fx(audio, sr, enable_clicks=True)
-
-                        eff_vol = getattr(self.config.volumes, "engineer", 1.0)
-                        if eff_vol != 1.0:
-                            audio = audio * eff_vol
-
+                self._current_callout = c
+                try:
+                    if self.broadcaster:
+                        latency_ms = None
                         if c.priority == -1:
-                            self.latency.record("tts_first_audio")
+                            avgs = self.latency.rolling_averages()
+                            latency_ms = avgs.get("total_turnaround")
+                        self.broadcaster.broadcast_radio("engineer", c.text, latency_ms=latency_ms)
 
-                        # Play audio and monitor for PTT interruption
-                        completed = await asyncio.to_thread(
-                            self.player.play, audio, sr, lambda: self.radio.ptt_down
-                        )
-                        if completed:
+                    if self.tts and self.player:
+                        try:
+                            if self.personality and c.text in self.personality.prerendered_audio:
+                                audio, sr = self.personality.prerendered_audio[c.text]
+                            else:
+                                audio, sr = await self.tts.synth(c.text)
+                                if self.config.tts.radio_fx:
+                                    audio = apply_radio_fx(audio, sr, enable_clicks=True)
+
+                            eff_vol = getattr(self.config.volumes, "engineer", 1.0)
+                            if eff_vol != 1.0:
+                                audio = audio * eff_vol
+
                             if c.priority == -1:
-                                self.latency.record("playback_done")
-                        else:
-                            if c.priority == -1:
-                                self.latency.cancel_active()
-                    except Exception as e:
-                        log.exception("TTS playback failed: %s", e)
-                else:
-                    # Fallback text printing when TTS is disabled/None
-                    print(f"[RADIO] {c.text}", flush=True)
-                    if c.priority == -1:
-                        self.latency.record("playback_done")
+                                self.latency.record("tts_first_audio")
+
+                            # Play audio and monitor for PTT interruption
+                            completed = await asyncio.to_thread(
+                                self.player.play, audio, sr, lambda: self.radio.ptt_down
+                            )
+                            if completed:
+                                if c.priority == -1:
+                                    self.latency.record("playback_done")
+                            else:
+                                if c.priority == -1:
+                                    self.latency.cancel_active()
+                        except Exception as e:
+                            log.exception("TTS playback failed: %s", e)
+                    else:
+                        # Fallback text printing when TTS is disabled/None
+                        print(f"[RADIO] {c.text}", flush=True)
+                        if c.priority == -1:
+                            self.latency.record("playback_done")
+                finally:
+                    self._current_callout = None
             await asyncio.sleep(0.05)
 
 

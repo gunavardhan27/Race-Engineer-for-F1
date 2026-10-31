@@ -85,6 +85,13 @@ class SoundTestConfig:
 
 
 @dataclass
+class RadioTestConfig:
+    enabled: bool = True
+    joystick_index: int = 0
+    joystick_button: Optional[int] = None
+
+
+@dataclass
 class AudioConfig:
     input_device: str | int | None = None
     output_device: str | int | None = None
@@ -171,6 +178,7 @@ class DashboardConfig:
 @dataclass
 class SpotterConfig:
     enabled: bool = True
+    speech: bool = False
     lateral_distance_m: float = 3.6
     longitudinal_distance_m: float = 4.8
     still_there_interval_s: float = 2.5
@@ -224,6 +232,8 @@ class OvertakeConfig:
     forced_off_speed_drop_kph: float = 25.0
     ran_deep_min_speed_delta_kph: float = 15.0
     ran_deep_exit_speed_delta_kph: float = 10.0
+    multi_overtake_window_s: float = 2.5
+    multi_overtake_distance_m: float = 150.0
 
 
 @dataclass
@@ -314,6 +324,7 @@ class AppConfig:
     usage: UsageConfig = field(default_factory=UsageConfig)
     radio_check: RadioCheckConfig = field(default_factory=RadioCheckConfig)
     sound_test: SoundTestConfig = field(default_factory=SoundTestConfig)
+    radio_test: RadioTestConfig = field(default_factory=RadioTestConfig)
     volumes: VolumesConfig = field(default_factory=VolumesConfig)
     pace: PaceConfig = field(default_factory=PaceConfig)
     quali: QualiConfig = field(default_factory=QualiConfig)

@@ -400,3 +400,75 @@ rival_pitted_cover:
 tyre_cliff:
 - text: "Tyres are dropping off the cliff! We can't stay out. Box this lap, box box."
 - text: "Tyres are cooked, massive drop-off. Box now, box this lap."
+
+double_overtake:
+- text: "Two for one! Beautiful move on {names}. P{pos}."
+- text: "Both of them in one go! Past {names} into {corner}. P{pos}."
+- text: "Clean double pass on {names}. That's how it's done. P{pos}."
+- text: "Double overtake! Passed {name1} and {name2}. Mega job, P{pos}."
+- text: "Bloody hell, two cars in one move! Mega pass on {names} into {corner}."
+  level: mild
+- text: "Two for the price of one! Bloody brilliant pass on {names}."
+  level: mild
+- text: "Took them both! Sliced right past {names}, damn good move, P{pos}."
+  level: mild
+- text: "Holy fucking shit, what a double move on {names} into {corner}!"
+  level: strong
+- text: "Two cars in one fucking corner! Absolute masterclass on {names}."
+  level: strong
+- text: "Fucking mega! Passed {names} in one go. P{pos}."
+  level: strong
+
+multi_overtake:
+- text: "Triple pass! Sliced past {names}. Up to P{pos}."
+- text: "{count} cars in one move! Past {names}. P{pos}."
+- text: "Past {names}, that's {count} positions gained into {corner}! P{pos}."
+- text: "Masterclass! Cleared {count} cars in one go. P{pos}."
+- text: "Bloody hell, {count} cars in one move! Cleared {names}. P{pos}."
+  level: mild
+- text: "Holy hell! Passed {count} cars in one go! {names} had no answer."
+  level: mild
+- text: "What a move! {count} cars passed into {corner}, bloody unreal! P{pos}."
+  level: mild
+- text: "Are you fucking kidding me?! {count} cars in one move! Past {names}! P{pos}."
+  level: strong
+- text: "Holy fucking hell, {count} cars gone into {corner}! Sliced past {names}!"
+  level: strong
+- text: "Fucking legendary! {count} cars in one swoop. P{pos}."
+  level: strong
+
+double_overtaken:
+- text: "Lost two places there to {names}. P{pos} now, let's fight back."
+- text: "Both {names} got past into {corner}. Regroup."
+- text: "Two cars through, {name1} and {name2}. Settle down and get them back."
+- text: "Down two spots. {names} walked right by. P{pos}."
+- text: "Bloody hell, you just let {names} both walk past into {corner}."
+  level: mild
+- text: "Two places gone in one go. Bloody wake up! P{pos}."
+  level: mild
+- text: "Lost out to {names}. Bit asleep at the wheel there."
+  level: mild
+- text: "What the fuck was that? {names} both just strolled past you into {corner}."
+  level: strong
+- text: "Lost two fucking positions in one corner! Wake the fuck up."
+  level: strong
+- text: "Are you fucking sleeping? {names} walked right by. P{pos}."
+  level: strong
+
+multi_overtaken:
+- text: "Lost {count} positions in that move. P{pos} now. Focus."
+- text: "Cleared by {count} cars: {names}. Let's get them back."
+- text: "Down to P{pos}. {count} cars through into {corner}. Settle down."
+- text: "Lost {count} places in that move to {names}. P{pos}."
+- text: "Bloody hell, {count} cars just swarmed past you! Wake up! P{pos}."
+  level: mild
+- text: "Lost {count} places in one go to {names}. That was bloody amateur."
+  level: mild
+- text: "Slammed backwards, {count} cars through into {corner}. Bloody hell."
+  level: mild
+- text: "What the fuck! You just lost {count} positions to {names}!"
+  level: strong
+- text: "Fucking disaster, {count} cars strolled by into {corner}! What are you doing?!"
+  level: strong
+- text: "Lost {count} fucking places in one move to {names}. Complete cock-up."
+  level: strong

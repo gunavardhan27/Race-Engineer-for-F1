@@ -169,6 +169,10 @@ class OvertakeCandidate:
     overtake_mode_active: bool = False
     slipstream: bool = False
     is_backmarker: bool = False
+    pass_time: float = 0.0
+    pass_track_dist: float = 0.0
+    initial_player_pos: int = 0
+    pit_status: int = 0
 
 
 class OvertakeDetector:
@@ -212,6 +216,9 @@ class OvertakeDetector:
 
         # Overtake mode active history: deque of (time, bool)
         self._overtake_mode_history: deque[tuple[float, bool]] = deque(maxlen=120)
+
+        # Multi-overtake grouper
+        self.grouper = MultiOvertakeGrouper(self.config, self.storage)
 
     def set_track_model(self, model: TrackModel):
         self.track_model = model
@@ -457,6 +464,10 @@ class OvertakeDetector:
                             other_warnings_start=getattr(other, "corner_cutting_warnings", 0),
                             other_invalid_start=getattr(other, "lap_invalid", False),
                             is_backmarker=is_backmarker,
+                            pass_time=now,
+                            pass_track_dist=my_lap_dist,
+                            initial_player_pos=getattr(me, "position", 0),
+                            pit_status=getattr(other, "pit_status", 0),
                         )
 
                         # Motion gap and overlap at turn-in
@@ -754,6 +765,13 @@ class OvertakeDetector:
             "side": features["side"],
             "raw_features": features,
             "position": getattr(state.me, "position", 0) if state.me else 0,
+            "pass_time": getattr(cand, "pass_time", getattr(cand, "start_time", now)),
+            "pass_track_dist": getattr(cand, "pass_track_dist", getattr(state.me, "lap_distance", 0.0) if state.me else 0.0),
+            "initial_player_pos": getattr(cand, "initial_player_pos", getattr(state.me, "position", 0) if state.me else 0),
+            "is_backmarker": getattr(cand, "is_backmarker", False),
+            "is_stricken": getattr(cand, "is_stricken", False),
+            "pit_status": getattr(cand, "pit_status", 0),
+            "group_id": None,
         }
 
         self._recent_overtakes.append(record)
@@ -766,6 +784,268 @@ class OvertakeDetector:
             self.storage.save_overtake(record)
 
         return record
+
+    def update_grouped(self, state: RaceState, now: float | None = None) -> list[dict[str, Any]]:
+        """Evaluates live telemetry and returns grouped overtake events (window 2.5s, 150m)."""
+        raw = self.update(state, now=now)
+        return self.grouper.update(raw, state, now=now, active_candidates=self._candidates)
+
+
+@dataclass
+class HeldPassGroup:
+    group_id: str
+    direction: str                     # "pass" or "loss"
+    earliest_pass_time: float          # min pass_time (order flip time)
+    first_pass_track_dist: float       # track distance of first pass
+    initial_pos: int = 0
+    passes: list[dict[str, Any]] = field(default_factory=list)
+
+
+class MultiOvertakeGrouper:
+    """Groups passes by order flip time within 2.5s and 150m track distance, holding until window closes."""
+
+    def __init__(self, config: OvertakeConfig | None = None, storage: Any | None = None):
+        self.config = config or OvertakeConfig()
+        self.storage = storage
+        self._pending_groups: list[HeldPassGroup] = []
+        self._recent_announced_passes: dict[int, tuple[float, str]] = {}  # car_idx -> (announced_time, driver_name)
+        self._counter: int = 0
+
+    def reset(self):
+        self._pending_groups.clear()
+        self._recent_announced_passes.clear()
+        self._counter = 0
+
+    def update(
+        self,
+        confirmed_records: list[dict[str, Any]],
+        state: RaceState,
+        now: float | None = None,
+        active_candidates: dict[int, OvertakeCandidate] | None = None,
+    ) -> list[dict[str, Any]]:
+        if now is None:
+            now = time.monotonic()
+
+        window_s = getattr(self.config, "multi_overtake_window_s", 2.5)
+        dist_m = getattr(self.config, "multi_overtake_distance_m", 150.0)
+        track_len = state.track_length if state else 0.0
+
+        # Check if any incoming loss is a switchback (< 5s after announcement of pass on that car)
+        for rec in confirmed_records:
+            if rec.get("direction") == "loss":
+                c_idx = rec.get("car_idx") if rec.get("car_idx") is not None else rec.get("other_vehicle_idx")
+                if c_idx in self._recent_announced_passes:
+                    ann_t, ann_name = self._recent_announced_passes[c_idx]
+                    if now - ann_t <= 5.0:
+                        rec["classification"] = "overtake_switchback"
+                        rec["switchback"] = 1
+                        rec["other_driver_name"] = ann_name
+
+        # Add incoming confirmed passes to matching pending groups, or create new ones
+        for rec in confirmed_records:
+            rec_dir = rec.get("direction", "pass")
+            rec_pass_time = rec.get("pass_time", rec.get("timestamp", now))
+            rec_dist = rec.get("pass_track_dist", 0.0)
+
+            matched_group = None
+            for g in self._pending_groups:
+                if g.direction == rec_dir:
+                    if abs(rec_pass_time - g.earliest_pass_time) <= window_s:
+                        d_diff = abs(rec_dist - g.first_pass_track_dist)
+                        if track_len > 0:
+                            d_diff = min(d_diff, track_len - d_diff)
+                        if d_diff <= dist_m:
+                            matched_group = g
+                            break
+
+            if matched_group is not None:
+                matched_group.passes.append(rec)
+                matched_group.earliest_pass_time = min(matched_group.earliest_pass_time, rec_pass_time)
+            else:
+                self._counter += 1
+                gid = f"{state.session_uid}_{self._counter}" if (state and state.session_uid) else f"grp_{self._counter}"
+                init_pos = rec.get("initial_player_pos", getattr(state.me, "position", 0) if state.me else 0)
+                g = HeldPassGroup(
+                    group_id=gid,
+                    direction=rec_dir,
+                    earliest_pass_time=rec_pass_time,
+                    first_pass_track_dist=rec_dist,
+                    initial_pos=init_pos,
+                    passes=[rec],
+                )
+                self._pending_groups.append(g)
+
+        # Check which groups are ready to emit
+        emitted_events: list[dict[str, Any]] = []
+        remaining_groups: list[HeldPassGroup] = []
+
+        for g in self._pending_groups:
+            # Check if any unconfirmed candidate could still join this group
+            has_matching_candidate = False
+            if active_candidates:
+                for c in active_candidates.values():
+                    if c.direction == g.direction:
+                        c_time = getattr(c, "pass_time", c.start_time)
+                        c_dist = getattr(c, "pass_track_dist", 0.0)
+                        if abs(c_time - g.earliest_pass_time) <= window_s:
+                            d_diff = abs(c_dist - g.first_pass_track_dist)
+                            if track_len > 0:
+                                d_diff = min(d_diff, track_len - d_diff)
+                            if d_diff <= dist_m:
+                                has_matching_candidate = True
+                                break
+
+            # Window is closed if time elapsed >= window_s and no matching candidates in flight
+            if (now >= g.earliest_pass_time + window_s) and not has_matching_candidate:
+                event = self._build_group_event(g, state, now)
+                if event:
+                    emitted_events.append(event)
+            else:
+                remaining_groups.append(g)
+
+        self._pending_groups = remaining_groups
+        return emitted_events
+
+    def _build_group_event(self, group: HeldPassGroup, state: RaceState, now: float) -> dict[str, Any] | None:
+        if not group.passes:
+            return None
+
+        # Exclude non-real passes: lapped/lapping, stricken, and pitting cars
+        def is_real(p: dict[str, Any]) -> bool:
+            cls = p.get("classification", "")
+            if cls in ("passed_stricken_car", "backmarker_pass"):
+                return False
+            if p.get("is_stricken") or p.get("is_backmarker"):
+                return False
+            if p.get("pit_status", 0) != 0:
+                return False
+            return True
+
+        real_passes = [p for p in group.passes if is_real(p)]
+
+        # Tag each individual pass with group_id and group_count in storage
+        for p in group.passes:
+            p["group_id"] = group.group_id
+            p["group_count"] = len(group.passes)
+            if self.storage and hasattr(self.storage, "save_overtake"):
+                try:
+                    self.storage.save_overtake(p)
+                except Exception:
+                    pass
+
+        final_pos = getattr(state.me, "position", group.initial_pos) if state.me else group.initial_pos
+        initial_pos = group.initial_pos
+        positions_gained = max(1, initial_pos - final_pos)
+        positions_lost = max(1, final_pos - initial_pos)
+
+        real_count = len(real_passes)
+
+        # Record announced passes for 5s switchback check
+        if group.direction == "pass":
+            for p in real_passes:
+                c_idx = p.get("car_idx") if p.get("car_idx") is not None else p.get("other_vehicle_idx")
+                d_name = p.get("other_driver_name", "he")
+                if c_idx is not None:
+                    self._recent_announced_passes[c_idx] = (now, d_name)
+
+        # If only one real pass remains, emit as standard single overtake
+        if real_count <= 1:
+            target_pass = real_passes[0] if real_count == 1 else group.passes[0]
+            sig_name = "overtake_confirmed" if group.direction == "pass" else "overtaken_confirmed"
+            res = dict(target_pass)
+            res["event"] = sig_name
+            res["pos"] = final_pos
+            res["position"] = final_pos
+            res["gained"] = positions_gained
+            res["lost"] = positions_lost
+            return res
+
+        # Multiple real passes: calculate worst class
+        # Class severity: divebomb_contact > divebomb > brave > clean
+        SEV = {
+            "divebomb_contact": 4,
+            "overtake_divebomb_contact": 4,
+            "divebomb": 3,
+            "overtake_divebomb": 3,
+            "brave": 2,
+            "overtake_brave": 2,
+        }
+        max_sev = 1
+        for p in real_passes:
+            c = p.get("classification", "clean")
+            s = SEV.get(c, 1)
+            if s > max_sev:
+                max_sev = s
+
+        driver_names = [p.get("other_driver_name", "Car") for p in real_passes]
+        if real_count == 2:
+            names_str = f"{driver_names[0]} and {driver_names[1]}"
+        else:
+            names_str = ", ".join(driver_names[:-1]) + f" and {driver_names[-1]}"
+
+        # Corner name
+        corners = [
+            p.get("corner_name") for p in real_passes
+            if p.get("corner_name") and p.get("corner_name") not in ("Straight", "None", "", None)
+        ]
+        corner = corners[0] if corners and all(c == corners[0] for c in corners) else (corners[0] if corners else None)
+
+        # 2 cars
+        if real_count == 2:
+            if group.direction == "pass":
+                if max_sev >= 3:
+                    # Divebomb or contact uses divebomb line naming both drivers, not praise!
+                    ev_type = "divebomb_contact" if max_sev == 4 else "overtake_divebomb"
+                else:
+                    ev_type = "double_overtake"
+            else:
+                ev_type = "double_overtaken"
+
+            return {
+                "event": ev_type,
+                "classification": ev_type,
+                "direction": group.direction,
+                "name": names_str,
+                "names": names_str,
+                "name1": driver_names[0],
+                "name2": driver_names[1],
+                "count": 2,
+                "pos": final_pos,
+                "position": final_pos,
+                "gained": positions_gained,
+                "lost": positions_lost,
+                "corner": corner,
+                "corner_name": corner,
+                "group_id": group.group_id,
+                "passes": group.passes,
+            }
+
+        # 3+ cars
+        else:
+            if group.direction == "pass":
+                if max_sev >= 3:
+                    ev_type = "divebomb_contact" if max_sev == 4 else "overtake_divebomb"
+                else:
+                    ev_type = "multi_overtake"
+            else:
+                ev_type = "multi_overtaken"
+
+            return {
+                "event": ev_type,
+                "classification": ev_type,
+                "direction": group.direction,
+                "name": names_str,
+                "names": names_str,
+                "count": real_count,
+                "pos": final_pos,
+                "position": final_pos,
+                "gained": positions_gained,
+                "lost": positions_lost,
+                "corner": corner,
+                "corner_name": corner,
+                "group_id": group.group_id,
+                "passes": group.passes,
+            }
 
 
 class DefendWarningDetector:

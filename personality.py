@@ -31,10 +31,15 @@ BIG_MOMENTS = {
     "practice_finish", "quali_pole", "quali_finish",
     "retirement", "beat_teammate", "lost_to_teammate",
     "box_this_lap", "rival_pitted_cover",
+    "double_overtake", "multi_overtake", "double_overtaken", "multi_overtaken",
 }
 BLUNDER_EVENTS = {"spin", "collision", "flashback", "penalty", "lost_positions"}
 
 BASE_COOLDOWNS = {
+    "double_overtake": 0.0,
+    "multi_overtake": 0.0,
+    "double_overtaken": 0.0,
+    "multi_overtaken": 0.0,
     "overtake_made": 20.0,
     "overtaken": 20.0,
     "defended": 40.0,
@@ -428,7 +433,8 @@ class PersonalityEngine:
         - Big moments override cooldowns.
         """
         kind = sig[0]
-        if (spotter_active and kind != "overtake_confirmed") or (state and state.ptt_down):
+        pass_kinds = ("overtake_confirmed", "double_overtake", "multi_overtake", "overtake_divebomb", "divebomb_contact")
+        if (spotter_active and kind not in pass_kinds) or (state and state.ptt_down):
             return None
         if now is None:
             now = time.monotonic()
@@ -439,7 +445,7 @@ class PersonalityEngine:
 
         p = state.player
         me = state.me
-        current_lap = me.lap_num if me else 1
+        current_lap = getattr(me, "lap_num", 1) if me else 1
 
         # 1. Overtake / Overtaken
         if kind == "event":
@@ -697,11 +703,13 @@ class PersonalityEngine:
         elif kind == "overtake_confirmed":
             rec = sig[1]
             cls_name = rec.get("classification", "clean")
-            name = rec.get("other_driver_name", "he")
-            corner = rec.get("corner_name", "the corner")
-            pos = rec.get("position", state.me.position if state.me else 0)
+            name = rec.get("names") or rec.get("other_driver_name", "he")
+            corner = rec.get("corner") or rec.get("corner_name")
+            if corner in ("Straight", "None", "", "the corner"):
+                corner = None
+            pos = rec.get("pos", rec.get("position", state.me.position if state.me else 0))
 
-            ctx = {"name": name, "pos": pos, "corner": corner}
+            ctx = {"name": name, "names": name, "pos": pos, "corner": corner, "gained": rec.get("gained", 1)}
             ev_name = "overtake_clean"
             if cls_name == "passed_stricken_car":
                 ev_name = "passed_stricken_car"
@@ -715,7 +723,7 @@ class PersonalityEngine:
                 ev_name = "overtake_mode_pass"
             elif cls_name == "around_the_outside":
                 ev_name = "around_the_outside"
-            elif cls_name == "divebomb":
+            elif cls_name in ("divebomb", "overtake_divebomb"):
                 self._last_divebomb_time = now
                 self._last_divebomb_driver = name
                 ev_name = "overtake_divebomb"
@@ -739,15 +747,137 @@ class PersonalityEngine:
                 res.priority = 1
             return res
 
+        elif kind in ("overtake_divebomb", "divebomb_contact"):
+            rec = sig[1]
+            name = rec.get("names") or rec.get("name", "both cars")
+            corner = rec.get("corner") or rec.get("corner_name")
+            if corner in ("Straight", "None", "", "the corner"):
+                corner = None
+            pos = rec.get("pos", rec.get("position", state.me.position if state.me else 0))
+            ctx = {
+                "name": name,
+                "names": name,
+                "name1": rec.get("name1", "car 1"),
+                "name2": rec.get("name2", "car 2"),
+                "pos": pos,
+                "corner": corner,
+            }
+            ev_name = "divebomb_contact" if kind == "divebomb_contact" else "overtake_divebomb"
+            self._last_divebomb_time = now
+            self._last_divebomb_driver = name
+            res = self.trigger(ev_name, state, ctx, now=now, bypass_cooldown=True)
+            if res:
+                res.priority = 1
+            return res
+
+        elif kind == "double_overtake":
+            rec = sig[1]
+            name = rec.get("names") or rec.get("name", "both cars")
+            corner = rec.get("corner") or rec.get("corner_name")
+            if corner in ("Straight", "None", "", "the corner"):
+                corner = None
+            pos = rec.get("pos", rec.get("position", state.me.position if state.me else 0))
+            ctx = {
+                "name": name,
+                "names": name,
+                "name1": rec.get("name1", "car 1"),
+                "name2": rec.get("name2", "car 2"),
+                "pos": pos,
+                "corner": corner,
+                "gained": rec.get("gained", 2),
+            }
+            res = self.trigger("double_overtake", state, ctx, now=now, bypass_cooldown=True)
+            if not res:
+                res = self.trigger("overtake_made", state, ctx, now=now, bypass_cooldown=True)
+            if res:
+                res.priority = 1
+            return res
+
+        elif kind == "multi_overtake":
+            rec = sig[1]
+            name = rec.get("names") or rec.get("name", "the cars")
+            corner = rec.get("corner") or rec.get("corner_name")
+            if corner in ("Straight", "None", "", "the corner"):
+                corner = None
+            pos = rec.get("pos", rec.get("position", state.me.position if state.me else 0))
+            count = rec.get("count", 3)
+            ctx = {
+                "name": name,
+                "names": name,
+                "count": count,
+                "pos": pos,
+                "corner": corner,
+                "gained": rec.get("gained", count),
+            }
+            res = self.trigger("multi_overtake", state, ctx, now=now, bypass_cooldown=True)
+            if not res:
+                res = self.trigger("overtake_made", state, ctx, now=now, bypass_cooldown=True)
+            if res:
+                res.priority = 1
+            return res
+
+        elif kind == "double_overtaken":
+            rec = sig[1]
+            name = rec.get("names") or rec.get("name", "both cars")
+            corner = rec.get("corner") or rec.get("corner_name")
+            if corner in ("Straight", "None", "", "the corner"):
+                corner = None
+            pos = rec.get("pos", rec.get("position", state.me.position if state.me else 0))
+            ctx = {
+                "name": name,
+                "names": name,
+                "name1": rec.get("name1", "car 1"),
+                "name2": rec.get("name2", "car 2"),
+                "pos": pos,
+                "corner": corner,
+                "lost": rec.get("lost", 2),
+            }
+            res = self.trigger("double_overtaken", state, ctx, now=now, bypass_cooldown=True)
+            if not res:
+                res = self.trigger("overtaken", state, ctx, now=now, bypass_cooldown=True)
+            if res:
+                res.priority = 1
+            return res
+
+        elif kind == "multi_overtaken":
+            rec = sig[1]
+            name = rec.get("names") or rec.get("name", "the cars")
+            corner = rec.get("corner") or rec.get("corner_name")
+            if corner in ("Straight", "None", "", "the corner"):
+                corner = None
+            pos = rec.get("pos", rec.get("position", state.me.position if state.me else 0))
+            count = rec.get("count", 3)
+            ctx = {
+                "name": name,
+                "names": name,
+                "count": count,
+                "pos": pos,
+                "corner": corner,
+                "lost": rec.get("lost", count),
+            }
+            res = self.trigger("multi_overtaken", state, ctx, now=now, bypass_cooldown=True)
+            if not res:
+                res = self.trigger("overtaken", state, ctx, now=now, bypass_cooldown=True)
+            if res:
+                res.priority = 1
+            return res
+
         elif kind == "overtaken_confirmed":
             rec = sig[1]
             cls_name = rec.get("classification", "fair_pass_against")
             name = rec.get("other_driver_name", "he")
-            corner = rec.get("corner_name", "the corner")
+            corner = rec.get("corner") or rec.get("corner_name")
+            if corner in ("Straight", "None", "", "the corner"):
+                corner = None
             pos = rec.get("position", state.me.position if state.me else 0)
             ctx = {"name": name, "pos": pos, "corner": corner}
 
-            if cls_name == "divebombed_by":
+            if cls_name == "overtake_switchback":
+                res = self.trigger("overtake_switchback", state, ctx, now=now, bypass_cooldown=True)
+                if res:
+                    res.priority = 1
+                return res
+            elif cls_name == "divebombed_by":
                 return self.trigger("divebombed_by", state, ctx, now=now)
             elif cls_name == "forced_off_by":
                 return self.trigger("forced_off_by", state, ctx, now=now)

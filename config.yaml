@@ -66,6 +66,7 @@ dashboard:
 
 spotter:
   enabled: true
+  speech: false
   lateral_distance_m: 3.6
   longitudinal_distance_m: 4.8
   still_there_interval_s: 2.5
@@ -142,6 +143,11 @@ radio_check:
 
 sound_test:
   on_app_start: true                                  # Startup chime/speech: "Engineer online." on app open
+
+radio_test:
+  enabled: true
+  joystick_index: 0
+  joystick_button: null                               # Direct controller button for radio test PTT (e.g. 0), or null
 
 volumes:
   engineer: 1.0                                       # Volume factor for engineer voice (0.0 to 1.0)

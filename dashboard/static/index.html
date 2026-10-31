@@ -25,6 +25,7 @@
       <a href="#setups" id="tab-btn-setups" class="nav-tab" data-view="setups">Setups</a>
       <a href="#tracks" id="tab-btn-tracks" class="nav-tab" data-view="tracks">Tracks</a>
       <a href="#usage" id="tab-btn-usage" class="nav-tab" data-view="usage">AI usage</a>
+      <a href="#radio-test" id="tab-btn-radio-test" class="nav-tab" data-view="radio-test">Radio test</a>
       <a href="#settings" id="tab-btn-settings" class="nav-tab" data-view="settings">Settings</a>
     </nav>
 
@@ -1090,6 +1091,198 @@
               <span class="help" id="seed-feedback-msg" style="margin-right:auto;align-self:center">Last import: Ready</span>
               <button class="btn secondary" id="btn-reimport-seed" type="button">Re-run Seed Import</button>
             </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         VIEW 7: RADIO TEST BENCH
+         ====================================================================== -->
+    <section class="view hidden" id="view-radio-test" aria-labelledby="radio-test-h">
+      <h1 class="sr-only" id="radio-test-h">Radio Test Bench</h1>
+
+      <!-- Live Session Running Alert (Prompt 27 requirement 7) -->
+      <div class="alert-banner bad hidden" id="radio-test-live-warning" style="margin-bottom:16px">
+        <span class="banner-icon" style="font-size:20px">⚠️</span>
+        <div class="banner-text">
+          <strong>Live session running: use your wheel push-to-talk.</strong>
+          <span>Radio test bench is locked to prevent talking over live race callouts.</span>
+        </div>
+      </div>
+
+      <!-- Demo Data Banner (Prompt 27 requirement 4) -->
+      <div class="demo-banner hidden" id="radio-test-demo-banner" style="margin-bottom:16px">
+        <div class="demo-badge">DEMO DATA</div>
+        <div class="demo-desc">
+          <strong>Simulated session active:</strong> Bahrain GP, P2, lap 10 of 15. Real car telemetry is not affected.
+        </div>
+      </div>
+
+      <!-- Top Header & Controls -->
+      <div class="settings-head" style="margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+        <div>
+          <h2 style="font-size:20px;font-weight:700;margin:0 0 4px 0">Radio Test Bench</h2>
+          <p class="help" style="margin:0">Talk to the race engineer with no game running and verify the entire audio pipeline end-to-end.</p>
+        </div>
+        <div class="demo-toggle-wrap" style="display:flex;align-items:center;gap:10px;background:var(--card-bg, #18181b);padding:6px 14px;border-radius:20px;border:1px solid var(--border)">
+          <span style="font-size:13px;font-weight:600">Demo mode</span>
+          <label class="switch" style="position:relative;display:inline-block;width:38px;height:20px;margin:0">
+            <input type="checkbox" id="radio-test-demo-toggle" style="opacity:0;width:0;height:0">
+            <span class="slider" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:#3f3f46;transition:.3s;border-radius:20px"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="radio-test-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(340px, 1fr));gap:20px">
+        <!-- Card 1: Push-To-Talk & Voice Input -->
+        <div class="card ptt-card" style="display:flex;flex-direction:column;gap:16px">
+          <div class="card-head">
+            <h3 style="font-size:16px;font-weight:600;margin:0">Push-to-Talk</h3>
+            <span class="chip ok" id="radio-test-ptt-status">Ready</span>
+          </div>
+
+          <!-- Large Hold-to-Talk Button -->
+          <div class="ptt-button-container" style="display:flex;justify-content:center;padding:12px 0">
+            <button id="radio-test-hold-btn" class="ptt-hold-button" type="button" aria-label="Hold to talk">
+              <div class="ptt-icon-circle">
+                <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="22"/>
+                </svg>
+              </div>
+              <div class="ptt-text-group">
+                <span class="ptt-primary-text" id="radio-test-btn-label">HOLD TO TALK</span>
+                <span class="ptt-secondary-text" id="radio-test-btn-sublabel">Press &amp; hold to transmit</span>
+              </div>
+            </button>
+          </div>
+
+          <!-- PTT Shortcuts Hints -->
+          <div class="ptt-hints" style="font-size:12px;color:var(--text-2);text-align:center;display:flex;flex-direction:column;gap:4px">
+            <span>Hold <kbd style="background:var(--surface, #27272a);padding:2px 6px;border-radius:4px;border:1px solid var(--border);font-family:inherit">Space</kbd> while on this page</span>
+            <span id="radio-test-joy-hint" class="dim">Controller button: <strong id="radio-test-joy-btn-name">None configured</strong></span>
+          </div>
+
+          <!-- Live Mic Level Meter -->
+          <div class="meter-box" style="background:var(--surface, #1e1e24);padding:12px;border-radius:8px;border:1px solid var(--border)">
+            <div style="display:flex;justify-content:space-between;font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:6px">
+              <span>MIC LIVE LEVEL</span>
+              <span id="radio-test-level-text">-100.0 dB</span>
+            </div>
+            <div class="meter-bar-track" style="height:10px;background:#27272a;border-radius:5px;overflow:hidden;position:relative">
+              <div id="radio-test-level-bar" style="height:100%;width:0%;background:linear-gradient(90deg, #22c55e 0%, #eab308 70%, #ef4444 95%);transition:width 0.05s ease"></div>
+            </div>
+            <div id="radio-test-clipping-warning" class="hidden" style="color:#ef4444;font-size:11px;font-weight:600;margin-top:6px;display:flex;align-items:center;gap:4px">
+              <span>⚠️</span> <span>Microphone clipping detected! Reduce input gain.</span>
+            </div>
+          </div>
+
+          <!-- Typed Question Box (Bypasses STT) -->
+          <div class="typed-box" style="margin-top:auto">
+            <label for="radio-test-text-input" style="display:block;font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:6px">
+              Type a question (bypasses STT to isolate mic issues):
+            </label>
+            <div style="display:flex;gap:8px">
+              <input type="text" id="radio-test-text-input" class="input" style="flex:1" placeholder="e.g. Radio check / Gap ahead? / How are tyres?">
+              <button id="radio-test-send-btn" class="btn primary" type="button" style="white-space:nowrap">Send</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 2: Transmission Diagnostics Step List -->
+        <div class="card diag-card" style="display:flex;flex-direction:column;gap:12px">
+          <div class="card-head" style="display:flex;justify-content:space-between;align-items:center">
+            <h3 style="font-size:16px;font-weight:600;margin:0">Pipeline Diagnostics</h3>
+            <span class="chip" id="radio-test-turnaround-chip" style="font-size:11px">Total: -- ms</span>
+          </div>
+
+          <div class="diag-steps-list" id="radio-test-steps" style="display:flex;flex-direction:column;gap:8px">
+            <!-- Step 1: Mic -->
+            <div class="diag-step-row" id="step-row-mic">
+              <span class="step-status" id="step-status-mic">⚪</span>
+              <div class="step-content">
+                <div class="step-head">
+                  <strong>1. Microphone Input</strong>
+                  <span class="step-time" id="step-time-mic"></span>
+                </div>
+                <div class="step-desc" id="step-desc-mic">Ready for transmission</div>
+              </div>
+            </div>
+
+            <!-- Step 2: STT -->
+            <div class="diag-step-row" id="step-row-stt">
+              <span class="step-status" id="step-status-stt">⚪</span>
+              <div class="step-content">
+                <div class="step-head">
+                  <strong>2. Speech-to-Text</strong>
+                  <span class="step-time" id="step-time-stt"></span>
+                </div>
+                <div class="step-desc" id="step-desc-stt">Awaiting speech or typed question</div>
+              </div>
+            </div>
+
+            <!-- Step 3: Routing -->
+            <div class="diag-step-row" id="step-row-routing">
+              <span class="step-status" id="step-status-routing">⚪</span>
+              <div class="step-content">
+                <div class="step-head">
+                  <strong>3. Query Routing</strong>
+                  <span class="step-time" id="step-time-routing"></span>
+                </div>
+                <div class="step-desc" id="step-desc-routing">Deterministic intent or AI handoff</div>
+              </div>
+            </div>
+
+            <!-- Step 4: Reply Text -->
+            <div class="diag-step-row" id="step-row-reply">
+              <span class="step-status" id="step-status-reply">⚪</span>
+              <div class="step-content">
+                <div class="step-head">
+                  <strong>4. Engineer Reply</strong>
+                  <span class="step-time" id="step-time-reply"></span>
+                </div>
+                <div class="step-desc" id="step-desc-reply">No transmissions yet</div>
+              </div>
+            </div>
+
+            <!-- Step 5: TTS -->
+            <div class="diag-step-row" id="step-row-tts">
+              <span class="step-status" id="step-status-tts">⚪</span>
+              <div class="step-content">
+                <div class="step-head">
+                  <strong>5. Text-to-Speech</strong>
+                  <span class="step-time" id="step-time-tts"></span>
+                </div>
+                <div class="step-desc" id="step-desc-tts">Synthesizes voice audio</div>
+              </div>
+            </div>
+
+            <!-- Step 6: Playback -->
+            <div class="diag-step-row" id="step-row-playback">
+              <span class="step-status" id="step-status-playback">⚪</span>
+              <div class="step-content">
+                <div class="step-head">
+                  <strong>6. Radio FX &amp; Playback</strong>
+                  <span class="step-time" id="step-time-playback"></span>
+                </div>
+                <div class="step-desc" id="step-desc-playback">Plays over configured output device</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 3: Guided Verification Checklist -->
+        <div class="card checklist-card" style="display:flex;flex-direction:column;gap:12px">
+          <div class="card-head" style="display:flex;justify-content:space-between;align-items:center">
+            <h3 style="font-size:16px;font-weight:600;margin:0">Guided Verification Checklist</h3>
+            <span class="chip ok" id="radio-test-progress-badge">0 / 5 Passed</span>
+          </div>
+          <p class="help" style="margin:0">Work through each test to confirm the whole communication chain:</p>
+
+          <div class="guided-checklist-list" id="radio-test-checklist-list" style="display:flex;flex-direction:column;gap:8px">
+            <!-- Items injected by app.js -->
           </div>
         </div>
       </div>

@@ -144,6 +144,18 @@ class PortsUpdateRequest(BaseModel):
     ask_port: bool | None = None
 
 
+class RadioTestTextRequest(BaseModel):
+    text: str
+
+
+class RadioTestDemoModeRequest(BaseModel):
+    enabled: bool
+
+
+class RadioTestPageStateRequest(BaseModel):
+    open: bool
+
+
 def build_live_payload(
     state: RaceState,
     track_map: TrackMapManager | None = None,
@@ -293,13 +305,20 @@ class Broadcaster:
         self.push_message(payload)
         return True
 
-    def broadcast_radio(self, sender: str, text: str, latency_ms: float | None = None):
+    def broadcast_radio(
+        self,
+        sender: str,
+        text: str,
+        latency_ms: float | None = None,
+        source: str | None = None,
+    ):
         """Pushes radio log message to all clients."""
         msg = {
             "type": "radio",
             "sender": sender,
             "text": text,
             "latency_ms": latency_ms,
+            "source": source or "live",
             "timestamp": time.time(),
         }
         self._radio_history.append(msg)
@@ -404,7 +423,7 @@ def print_dashboard_banner(host: str, port: int, token: str):
 def create_app(
     state: RaceState,
     broadcaster: Broadcaster,
-    token: str,
+    token: str = "",
     track_map: TrackMapManager | None = None,
     storage: SessionStorage | None = None,
     setups_storage: SetupsStorage | None = None,
@@ -415,6 +434,7 @@ def create_app(
     usage_guard: Any | None = None,
     positions_broadcaster: PositionsBroadcaster | None = None,
     replay_controller: ReplayController | None = None,
+    radio_test_manager: Any | None = None,
 ) -> FastAPI:
     """Creates the FastAPI app instance."""
     app = FastAPI(title="Race Engineer Live Dashboard", docs_url=None, redoc_url=None)
@@ -422,6 +442,7 @@ def create_app(
     knowledge_base = knowledge or KnowledgeBase()
     pos_bcast = positions_broadcaster or (getattr(engineer, "positions_broadcaster", None) if engineer else None) or PositionsBroadcaster()
     replay_ctrl = replay_controller or (getattr(engineer, "replay_controller", None) if engineer else None) or ReplayController(engineer)
+    rt_manager = radio_test_manager or (getattr(engineer, "radio_test", None) if engineer else None)
 
     def check_token(
         token_param: str | None = None,
@@ -1519,6 +1540,119 @@ def create_app(
             return st_mgr.capture.get_live_level()
         return {"peak": 0.0, "rms": 0.0, "peak_db": -100.0, "clipping": False, "is_recording": False}
 
+    # =========================================================================
+    # RADIO TEST BENCH ENDPOINTS
+    # =========================================================================
+    @app.post("/api/radio_test/ptt/start")
+    async def post_radio_test_ptt_start(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        rt_mgr = rt_manager or getattr(engineer, "radio_test", None)
+        if rt_mgr:
+            res = rt_mgr.start_ptt()
+            if res.get("status") == "blocked":
+                raise HTTPException(status_code=409, detail=res.get("message", "Live session running: use your wheel push-to-talk"))
+            return res
+        return {"status": "error", "message": "Radio test manager not initialized"}
+
+    @app.post("/api/radio_test/ptt/stop")
+    async def post_radio_test_ptt_stop(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        rt_mgr = rt_manager or getattr(engineer, "radio_test", None)
+        if rt_mgr:
+            res = await rt_mgr.stop_ptt()
+            if res.get("status") == "blocked":
+                raise HTTPException(status_code=409, detail=res.get("message", "Live session running: use your wheel push-to-talk"))
+            return res
+        return {"status": "error", "message": "Radio test manager not initialized"}
+
+    @app.post("/api/radio_test/submit_text")
+    async def post_radio_test_submit_text(
+        req: RadioTestTextRequest,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        rt_mgr = rt_manager or getattr(engineer, "radio_test", None)
+        if rt_mgr:
+            res = await rt_mgr.submit_typed_text(req.text)
+            if res.get("status") == "blocked":
+                raise HTTPException(status_code=409, detail=res.get("message", "Live session running: use your wheel push-to-talk"))
+            return res
+        return {"status": "error", "message": "Radio test manager not initialized"}
+
+    @app.post("/api/radio_test/demo_mode")
+    async def post_radio_test_demo_mode(
+        req: RadioTestDemoModeRequest,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        rt_mgr = rt_manager or getattr(engineer, "radio_test", None)
+        if rt_mgr:
+            return rt_mgr.set_demo_mode(req.enabled)
+        return {"status": "error", "message": "Radio test manager not initialized"}
+
+    @app.get("/api/radio_test/mic/level")
+    async def get_radio_test_mic_level(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        rt_mgr = rt_manager or getattr(engineer, "radio_test", None)
+        if rt_mgr and rt_mgr.capture and hasattr(rt_mgr.capture, "get_live_level"):
+            return rt_mgr.capture.get_live_level()
+        return {"peak": 0.0, "rms": 0.0, "peak_db": -100.0, "clipping": False, "is_recording": False}
+
+    @app.get("/api/radio_test/state")
+    async def get_radio_test_state(
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        rt_mgr = rt_manager or getattr(engineer, "radio_test", None)
+        if rt_mgr:
+            return rt_mgr.get_state()
+        return {"page_open": False, "demo_mode": False, "session_live": False, "checklist": [], "latest_diagnostics": None}
+
+    @app.post("/api/radio_test/page_state")
+    async def post_radio_test_page_state(
+        req: RadioTestPageStateRequest,
+        token_param: str | None = Query(None, alias="token"),
+        authorization: str | None = Header(None),
+        x_token: str | None = Header(None),
+    ):
+        if not check_token(token_param, authorization, x_token):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        rt_mgr = rt_manager or getattr(engineer, "radio_test", None)
+        if rt_mgr:
+            return rt_mgr.set_page_open(req.open)
+        return {"status": "error", "message": "Radio test manager not initialized"}
+
     @app.get("/api/audio/devices")
     async def get_audio_devices_endpoint(
         token_param: str | None = Query(None, alias="token"),
@@ -1740,6 +1874,9 @@ def create_app(
 
             snap["radio_history"] = radio_hist
             snap["overtakes"] = overtakes_hist
+            rt_mgr = rt_manager or getattr(engineer, "radio_test", None)
+            if rt_mgr:
+                snap["radio_test"] = rt_mgr.get_state()
             snap["history"] = {
                 "laps": laps_history,
                 "radio_log": radio_hist,

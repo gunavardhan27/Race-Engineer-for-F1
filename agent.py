@@ -173,6 +173,9 @@ def build_prompt(
         system_prompt += f"\n\nProfanity guidelines: {prof_inst}"
 
     clean_state = clean_snapshot(snapshot, question=question)
+    if not clean_state:
+        system_prompt += "\n\nImportant: If STATE is empty or has no car data, you have no telemetry. State that you have no data instead of inventing numbers."
+
     state_json = json.dumps(clean_state, separators=(",", ":"))
 
     user_parts = [f"STATE:\n{state_json}"]
@@ -288,6 +291,94 @@ class RaceEngineerAgent:
         # Validate numbers against telemetry state
         check_number_guardrail(full_reply, snapshot_json, question)
         return full_reply
+
+    async def answer_with_diagnostics(
+        self,
+        question: str,
+        snapshot: dict,
+        knowledge_text: str = "",
+        fallback_text: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Streams LLM reply, captures TTFT and total duration, checks numbers, and returns diagnostics without pushing to radio queue."""
+        system, user = build_prompt(
+            question,
+            snapshot,
+            knowledge_text,
+            persona_name=self.persona_name,
+            profanity=self.profanity,
+        )
+        snapshot_json = json.dumps(clean_snapshot(snapshot))
+
+        t0 = time.monotonic()
+        first_token_time: Optional[float] = None
+        buffer = ""
+        sentences = []
+
+        primary_name = getattr(self.llm, "primary_name", "groq") if self.llm else "groq"
+        fallback_name = getattr(self.llm, "fallback_name", "ollama") if self.llm else "ollama"
+
+        if self.llm:
+            try:
+                async for token in self.llm.stream(system, user):
+                    if first_token_time is None and token.strip():
+                        first_token_time = time.monotonic()
+
+                    buffer += token
+
+                    # Split sentences on . ! ?
+                    while True:
+                        match = re.search(r"(?<=[^0-9\s])[.!?](?:\s+|$)", buffer)
+                        if not match:
+                            break
+
+                        sentence_raw = buffer[: match.end()].strip()
+                        buffer = buffer[match.end() :]
+
+                        cleaned = clean_for_speech(sentence_raw)
+                        if cleaned:
+                            if is_refusal_or_empty(cleaned):
+                                sentences = [cleaned]
+                                break
+                            sentences.append(cleaned)
+
+                        if len(sentences) >= 2:
+                            break
+
+                    if len(sentences) >= 2 or (sentences and is_refusal_or_empty(sentences[0])):
+                        break
+
+                if len(sentences) < 2 and buffer.strip():
+                    cleaned = clean_for_speech(buffer.strip())
+                    if cleaned:
+                        if is_refusal_or_empty(cleaned):
+                            sentences = [cleaned]
+                        else:
+                            sentences.append(cleaned)
+            except Exception as e:
+                log.warning("answer_with_diagnostics LLM error: %s", e)
+
+        t_end = time.monotonic()
+        ttft_ms = round((first_token_time - t0) * 1000.0, 1) if first_token_time else round((t_end - t0) * 1000.0, 1)
+        total_ms = round((t_end - t0) * 1000.0, 1)
+
+        full_reply = " ".join(sentences).strip()
+        if is_refusal_or_empty(full_reply):
+            full_reply = fallback_text or ("Radio check, say again." if not full_reply else "Copy, keep pushing.")
+
+        check_number_guardrail(full_reply, snapshot_json, question)
+
+        provider_used = getattr(self.llm, "last_provider_used", primary_name) if self.llm else primary_name
+        fallback_used = (provider_used == fallback_name and fallback_name != primary_name)
+
+        return {
+            "reply_text": full_reply,
+            "ttft_ms": ttft_ms,
+            "total_ms": total_ms,
+            "provider": provider_used,
+            "fallback_used": fallback_used,
+            "fallback_name": fallback_name if fallback_used else None,
+        }
+
 
     async def generate_post_race_message(
         self,

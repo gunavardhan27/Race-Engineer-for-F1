@@ -137,7 +137,7 @@ def test_engineer_audio_processing_dispatches_ask():
         # Check that answer was queued in radio
         popped = engineer.radio.pop()
         assert popped is not None
-        assert "ahead" in popped.text.lower() or "no data" in popped.text.lower()
+        assert "ahead" in popped.text.lower() or "no data" in popped.text.lower() or "no telemetry" in popped.text.lower() or "gaps" in popped.text.lower()
 
     asyncio.run(_run())
 

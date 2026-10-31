@@ -40,7 +40,7 @@ _INTENTS = [(name, re.compile(p, re.I)) for name, p in [
     ("gap_ahead", r"\b(ahead|in front|gap)\b"),
     ("am_i_through", r"\b(am i through|are we through|am i safe|are we safe|in the drop zone|eliminated)\b"),
     ("teammate", r"\b(where('s| is) my teammate|where('s| is) (the )?other car|how am i doing vs teammate|how('s| is) my teammate doing|teammate pace|vs teammate)\b"),
-    ("car_capability", r"\b(what('s| is) the car capable of|what can the car do|what should we be doing|car potential|expected position)\b"),
+    ("car_capability", r"\b(what('s| is) the car capable of|what can the car do|what should we be doing|car potential|expected position|car capability)\b"),
     ("delta_best", r"\b(losing time|how was my (?:last )?lap|pace vs best|delta to best)\b"),
     ("battle_pace", r"\b(lap times?|battle pace|pace vs (?:ahead|behind)|who am i fighting|gaps? and lap times?|how are my lap times|what lap times)\b"),
     ("retirements", r"\b(who('s| is)? (?:crashed|out|retired)|any (?:crashes|retirements|dnfs?)|how many cars (?:out|running)|did anyone crash)\b"),
@@ -65,6 +65,8 @@ def _trend(t, closing: str, opening: str):
 
 
 def _gap_ahead(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No telemetry, I can't see the gaps."
     idx, ms = st.gap_ahead()
     if st.me and st.me.position == 1:
         return "You're leading. " + _gap_behind(st)
@@ -74,6 +76,8 @@ def _gap_ahead(st: RaceState):
 
 
 def _gap_behind(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No telemetry, I can't see the gaps."
     idx, ms = st.gap_behind()
     if idx is None:
         return "Nobody behind." if st.me else NO_DATA
@@ -82,6 +86,8 @@ def _gap_behind(st: RaceState):
 
 
 def _fuel(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No car data yet."
     s = st.my_status
     if not s:
         return NO_DATA
@@ -94,6 +100,8 @@ def _fuel(st: RaceState):
 
 
 def _tyres(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No car data yet."
     s, d = st.my_status, st.my_damage
     if not s or not d:
         return NO_DATA
@@ -106,6 +114,8 @@ def _tyres(st: RaceState):
 
 
 def _damage(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No car data yet."
     if not st.my_damage:
         return NO_DATA
     parts = st.damage_parts()
@@ -115,6 +125,8 @@ def _damage(st: RaceState):
 
 
 def _weather(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No car data yet."
     s = st.session
     if not s:
         return NO_DATA
@@ -125,6 +137,8 @@ def _weather(st: RaceState):
 
 
 def _position(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No car data yet."
     me, s = st.me, st.session
     if not me:
         return NO_DATA
@@ -154,6 +168,8 @@ def _position(st: RaceState):
 
 
 def _laps(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No car data yet."
     me, s = st.me, st.session
     if not me or not s or not s.total_laps:
         return NO_DATA
@@ -161,6 +177,8 @@ def _laps(st: RaceState):
 
 
 def _pit_window(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No car data yet."
     s = st.session
     if not s or not s.pit_ideal_lap:
         return "No pit window showing."
@@ -168,6 +186,8 @@ def _pit_window(st: RaceState):
 
 
 def _delta_best(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No lap data yet."
     comp = st.last_lap_vs_best
     pb = st.personal_best
     if not comp or comp.get("delta_s") is None:
@@ -192,6 +212,8 @@ def _delta_best(st: RaceState):
 
 
 def _setup(st: RaceState, text: str = "") -> str:
+    if not getattr(st, "has_telemetry", True):
+        return "No setup data yet."
     my = st.my_setup
     best = getattr(st, "best_setup_info", None)
     is_best_query = bool(re.search(r"\bbest\b", text, re.I))
@@ -221,6 +243,8 @@ def _radio_check(st: RaceState, text: str = "") -> str:
 
 
 def _gap_to_pole(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No telemetry, I can't see the gaps."
     gap = st.gap_to_pole_s()
     if gap is None:
         return "No pole time set yet."
@@ -230,6 +254,8 @@ def _gap_to_pole(st: RaceState):
 
 
 def _am_i_through(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No qualifying data yet."
     pos = st.quali_position()
     cutoff = st.elimination_cutoff()
     if pos is None:
@@ -241,6 +267,8 @@ def _am_i_through(st: RaceState):
 
 
 def _teammate(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No session data yet."
     t_idx = st.teammate_idx()
     if t_idx is None:
         return "No teammate in this session."
@@ -263,6 +291,8 @@ def _teammate(st: RaceState):
 
 
 def _car_capability(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No session data yet."
     t_idx = st.teammate_idx()
     if t_idx is not None:
         t_best = st.get_car_best_lap_s(t_idx)
@@ -276,6 +306,8 @@ def _car_capability(st: RaceState):
 
 
 def _drs(st: RaceState):
+    if not getattr(st, "has_telemetry", True):
+        return "No car data yet."
     tel2 = st.my_tel2
     regs_2026 = (tel2.regs_2026 if tel2 else False) or (getattr(st.session, "formula", 0) == 13)
     if regs_2026:
@@ -291,6 +323,8 @@ def _drs(st: RaceState):
 
 
 def _where_slow(st: RaceState, text: str = ""):
+    if not getattr(st, "has_telemetry", True):
+        return "No lap data yet."
     loss = getattr(st, "biggest_loss_segment", None)
     if loss:
         name = loss.get("name", "that section")
@@ -302,6 +336,8 @@ def _where_slow(st: RaceState, text: str = ""):
 
 
 def _fastest_sector(st: RaceState, text: str = ""):
+    if not getattr(st, "has_telemetry", True):
+        return "No lap data yet."
     m = re.search(r"\b(?:sector|s)\s*([123])\b", text, re.I)
     s_num = int(m.group(1)) if m else 2
     f_sectors = getattr(st, "fastest_sectors", {}) or {}
@@ -317,6 +353,8 @@ def _fastest_sector(st: RaceState, text: str = ""):
 
 
 def _ideal_lap(st: RaceState, text: str = ""):
+    if not getattr(st, "has_telemetry", True):
+        return "No lap data yet."
     ideal = getattr(st, "my_theoretical_best", None)
     if ideal and ideal.get("has_data"):
         t_str = ideal.get("theoretical_best_str", "")
@@ -335,6 +373,8 @@ def _format_lap_time(s: float | None) -> str:
 
 def _battle_pace(st: RaceState) -> str:
     """Answers driver query for their own lap times and relative battle pace against rivals within 3-4s."""
+    if not getattr(st, "has_telemetry", True):
+        return "No car data yet."
     b = st.battle_summary(max_gap_s=4.0)
     my_avg = b.get("my_avg_pace_s")
     my_last = b.get("my_last_lap_s")
@@ -382,6 +422,8 @@ def _battle_pace(st: RaceState) -> str:
 
 def _retirements(st: RaceState) -> str:
     """Answers driver query on crashes, retirements, and DNFs."""
+    if not getattr(st, "has_telemetry", True):
+        return "No session data yet."
     ret = st.retirements_summary()
     total = ret.get("total_retired", 0)
     running = ret.get("cars_running", 0)
@@ -557,13 +599,46 @@ class Callouts:
             rec = sig[1]
             if rec.get("direction") == "pass":
                 cls_name = rec.get("classification", "clean")
-                other_name = rec.get("other_driver_name", "car")
+                other_name = rec.get("names") or rec.get("other_driver_name", "car")
                 if cls_name == "backmarker_pass":
                     return [_c(1, f"Clean pass on {other_name}.", ttl=5.0)]
                 elif cls_name == "overtake_straight":
                     return [_c(1, f"Easy pass on {other_name}, good job.", ttl=5.0)]
                 else:
                     return [_c(1, f"Good pass on {other_name}.", ttl=5.0)]
+        elif kind == "double_overtake":
+            rec = sig[1]
+            names = rec.get("names", "both cars")
+            pos = rec.get("pos", st.me.position if st.me else 0)
+            return [_c(1, f"Double overtake on {names}. P{pos}.", ttl=5.0)]
+        elif kind == "multi_overtake":
+            rec = sig[1]
+            names = rec.get("names", "the cars")
+            count = rec.get("count", 3)
+            pos = rec.get("pos", st.me.position if st.me else 0)
+            return [_c(1, f"Overtook {count} cars: {names}. P{pos}.", ttl=5.0)]
+        elif kind == "double_overtaken":
+            rec = sig[1]
+            names = rec.get("names", "both cars")
+            pos = rec.get("pos", st.me.position if st.me else 0)
+            return [_c(1, f"Lost two places to {names}. P{pos}.", ttl=5.0)]
+        elif kind == "multi_overtaken":
+            rec = sig[1]
+            names = rec.get("names", "the cars")
+            count = rec.get("count", 3)
+            pos = rec.get("pos", st.me.position if st.me else 0)
+            return [_c(1, f"Lost {count} places to {names}. P{pos}.", ttl=5.0)]
+        elif kind in ("overtake_divebomb", "divebomb_contact"):
+            rec = sig[1]
+            names = rec.get("names", "car")
+            return [_c(1, f"Divebomb on {names}. Careful with the stewards.", ttl=5.0)]
+        elif kind == "overtaken_confirmed":
+            rec = sig[1]
+            cls_name = rec.get("classification", "")
+            name = rec.get("other_driver_name", "car")
+            if cls_name == "overtake_switchback":
+                return [_c(1, f"{name} got the switchback.", ttl=5.0)]
+            return [_c(1, f"{name} passed you.", ttl=5.0)]
         elif kind == "flashback":
             if self.pending_debrief and self.pending_debrief.lap_num > sig[1]:
                 self.pending_debrief = None

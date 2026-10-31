@@ -135,8 +135,10 @@
     // Tabs
     tabBtnLive: document.getElementById('tab-btn-live'),
     tabBtnLaps: document.getElementById('tab-btn-laps'),
+    tabBtnRadioTest: document.getElementById('tab-btn-radio-test'),
     viewLive: document.getElementById('view-live'),
     viewLaps: document.getElementById('view-laps'),
+    viewRadioTest: document.getElementById('view-radio-test'),
 
     // Laps Filters & Summary
     filterTrack: document.getElementById('laps-filter-track'),
@@ -3036,8 +3038,22 @@
           if (typeof refreshMinisectorData === 'function') {
             refreshMinisectorData();
           }
+        } else if (payload.type === 'radio_test_diagnostic') {
+          if (typeof handleRadioTestDiagnosticEvent === 'function') {
+            handleRadioTestDiagnosticEvent(payload.data || payload);
+          }
+        } else if (payload.type === 'radio_test_demo_mode') {
+          if (typeof handleRadioTestDemoModeEvent === 'function') {
+            handleRadioTestDemoModeEvent(payload.data || payload);
+          }
         } else {
           const isLive = !!payload.session_live;
+          if (typeof updateRadioTestLiveState === 'function') {
+            updateRadioTestLiveState(isLive);
+          }
+          if (payload.radio_test && typeof updateRadioTestFromSnapshot === 'function') {
+            updateRadioTestFromSnapshot(payload.radio_test);
+          }
           const now = Date.now();
           if (isLive !== lastLiveLoggedState || (now - lastConsoleLogTime > 2500)) {
             lastConsoleLogTime = now;
@@ -3102,8 +3118,8 @@
     if (!el.tabBtnLive || !el.tabBtnLaps) return;
 
     function switchTab(activeBtn, activeView) {
-      const tabs = [el.tabBtnLive, el.tabBtnLaps, el.tabBtnSetups, el.tabBtnTracks, el.tabBtnUsage, el.tabBtnSettings];
-      const views = [el.viewLive, el.viewLaps, el.viewSetups, el.viewTracks, el.viewUsage, el.viewSettings];
+      const tabs = [el.tabBtnLive, el.tabBtnLaps, el.tabBtnSetups, el.tabBtnTracks, el.tabBtnUsage, el.tabBtnRadioTest, el.tabBtnSettings];
+      const views = [el.viewLive, el.viewLaps, el.viewSetups, el.viewTracks, el.viewUsage, el.viewRadioTest, el.viewSettings];
       tabs.forEach(t => { 
         if (t) {
           t.classList.toggle('active', t === activeBtn);
@@ -3156,6 +3172,8 @@
         viewKey = 'tracks';
       } else if (clean === 'usage') {
         viewKey = 'usage';
+      } else if (clean === 'radio-test') {
+        viewKey = 'radio-test';
       } else {
         viewKey = 'live';
       }
@@ -3166,6 +3184,7 @@
         setups: { btn: el.tabBtnSetups, view: el.viewSetups },
         tracks: { btn: el.tabBtnTracks, view: el.viewTracks },
         usage: { btn: el.tabBtnUsage, view: el.viewUsage },
+        'radio-test': { btn: el.tabBtnRadioTest, view: el.viewRadioTest },
         settings: { btn: el.tabBtnSettings, view: el.viewSettings },
       };
 
@@ -3183,6 +3202,9 @@
         } else if (viewKey === 'usage') {
           fetchUsageStatus();
           fetchUsageHistory();
+        } else if (viewKey === 'radio-test') {
+          if (typeof fetchRadioTestState === 'function') fetchRadioTestState();
+          if (typeof setRadioTestPageState === 'function') setRadioTestPageState(true);
         } else if (viewKey === 'settings') {
           fetchPersonaSettings();
           fetchAudioDevices();
@@ -3193,6 +3215,9 @@
           if (subSec) {
             setTimeout(() => activateSettingsSubnav(subSec), 100);
           }
+        }
+        if (viewKey !== 'radio-test' && typeof setRadioTestPageState === 'function') {
+          setRadioTestPageState(false);
         }
       }
     }
@@ -3296,6 +3321,14 @@
         switchTab(el.tabBtnUsage, el.viewUsage);
         fetchUsageStatus();
         fetchUsageHistory();
+      });
+    }
+
+    if (el.tabBtnRadioTest) {
+      el.tabBtnRadioTest.addEventListener('click', () => {
+        switchTab(el.tabBtnRadioTest, el.viewRadioTest);
+        if (typeof fetchRadioTestState === 'function') fetchRadioTestState();
+        if (typeof setRadioTestPageState === 'function') setRadioTestPageState(true);
       });
     }
 
@@ -7325,6 +7358,515 @@
     onMapCanvasPointerMove(e);
   }
 
+  // ==========================================================================
+  // RADIO TEST BENCH CLIENT LOGIC (Prompt 27)
+  // ==========================================================================
+  let isRadioTestRecording = false;
+  let isRadioTestSpaceHeld = false;
+  let isRadioTestSessionLive = false;
+  let radioTestMicMeterTimer = null;
+  let currentRadioTestChecklist = [];
+
+  function initRadioTestBench() {
+    const holdBtn = document.getElementById('radio-test-hold-btn');
+    const sendBtn = document.getElementById('radio-test-send-btn');
+    const textInput = document.getElementById('radio-test-text-input');
+    const demoToggle = document.getElementById('radio-test-demo-toggle');
+
+    if (holdBtn) {
+      holdBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        if (isRadioTestSessionLive) return;
+        startRadioTestPTT();
+      });
+
+      const handleRelease = (e) => {
+        if (isRadioTestRecording) {
+          e.preventDefault();
+          stopRadioTestPTT();
+        }
+      };
+
+      holdBtn.addEventListener('pointerup', handleRelease);
+      holdBtn.addEventListener('pointercancel', handleRelease);
+      holdBtn.addEventListener('mouseleave', handleRelease);
+      holdBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
+
+    // Spacebar listener for PTT when view-radio-test is active
+    window.addEventListener('keydown', (e) => {
+      if (e.key === ' ' || e.code === 'Space') {
+        const activeTab = document.querySelector('.nav-tab.active');
+        const isRadioTabActive = activeTab && activeTab.id === 'tab-btn-radio-test';
+        if (!isRadioTabActive) return;
+
+        // If user is focused on the text input or any other input/textarea, let them type space
+        const tag = (document.activeElement && document.activeElement.tagName) || '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+          return;
+        }
+
+        e.preventDefault();
+        if (!isRadioTestSpaceHeld && !isRadioTestSessionLive && !e.repeat) {
+          isRadioTestSpaceHeld = true;
+          startRadioTestPTT();
+        }
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.key === ' ' || e.code === 'Space') {
+        if (isRadioTestSpaceHeld) {
+          e.preventDefault();
+          isRadioTestSpaceHeld = false;
+          if (isRadioTestRecording) {
+            stopRadioTestPTT();
+          }
+        }
+      }
+    });
+
+    // Send text input
+    if (sendBtn && textInput) {
+      const doSubmit = () => {
+        if (isRadioTestSessionLive) return;
+        const text = textInput.value.trim();
+        if (!text) return;
+        submitRadioTestText(text);
+        textInput.value = '';
+      };
+
+      sendBtn.addEventListener('click', doSubmit);
+      textInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          doSubmit();
+        }
+      });
+    }
+
+    // Demo mode toggle
+    if (demoToggle) {
+      demoToggle.addEventListener('change', () => {
+        setRadioTestDemoMode(demoToggle.checked);
+      });
+    }
+
+    // Initial fetch
+    fetchRadioTestState();
+  }
+
+  function fetchRadioTestState() {
+    const token = getToken();
+    const url = `/api/radio_test/state?token=${encodeURIComponent(token)}`;
+    fetch(url)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        updateRadioTestFromSnapshot(data);
+      })
+      .catch((err) => {
+        console.warn('[Dashboard] Could not fetch radio test state:', err);
+      });
+  }
+
+  function setRadioTestPageState(open) {
+    const token = getToken();
+    const url = `/api/radio_test/page_state?token=${encodeURIComponent(token)}`;
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ open: !!open }),
+    }).catch(() => {});
+  }
+
+  function setRadioTestDemoMode(enabled) {
+    const token = getToken();
+    const url = `/api/radio_test/demo_mode?token=${encodeURIComponent(token)}`;
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !!enabled }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        handleRadioTestDemoModeEvent(data);
+      })
+      .catch((err) => {
+        console.error('[Dashboard] Error setting demo mode:', err);
+      });
+  }
+
+  function startRadioTestPTT() {
+    if (isRadioTestRecording) return;
+    isRadioTestRecording = true;
+
+    const holdBtn = document.getElementById('radio-test-hold-btn');
+    const label = document.getElementById('radio-test-btn-label');
+    const sublabel = document.getElementById('radio-test-btn-sublabel');
+    const pttStatus = document.getElementById('radio-test-ptt-status');
+
+    if (holdBtn) holdBtn.classList.add('transmitting');
+    if (label) label.textContent = 'TRANSMITTING...';
+    if (sublabel) sublabel.textContent = 'Release to send';
+    if (pttStatus) {
+      pttStatus.className = 'chip warn';
+      pttStatus.textContent = 'Transmitting';
+    }
+
+    // Start live mic meter polling
+    startRadioTestMicPolling();
+
+    const token = getToken();
+    const url = `/api/radio_test/ptt/start?token=${encodeURIComponent(token)}`;
+    fetch(url, { method: 'POST' }).catch((err) => {
+      console.warn('[Dashboard] Error starting radio test PTT:', err);
+    });
+  }
+
+  function stopRadioTestPTT() {
+    if (!isRadioTestRecording) return;
+    isRadioTestRecording = false;
+
+    const holdBtn = document.getElementById('radio-test-hold-btn');
+    const label = document.getElementById('radio-test-btn-label');
+    const sublabel = document.getElementById('radio-test-btn-sublabel');
+    const pttStatus = document.getElementById('radio-test-ptt-status');
+
+    if (holdBtn) holdBtn.classList.remove('transmitting');
+    if (label) label.textContent = 'PROCESSING...';
+    if (sublabel) sublabel.textContent = 'Synthesizing response';
+    if (pttStatus) {
+      pttStatus.className = 'chip';
+      pttStatus.textContent = 'Processing';
+    }
+
+    stopRadioTestMicPolling();
+
+    const token = getToken();
+    const url = `/api/radio_test/ptt/stop?token=${encodeURIComponent(token)}`;
+    fetch(url, { method: 'POST' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (label) label.textContent = 'HOLD TO TALK';
+        if (sublabel) sublabel.textContent = 'Press & hold to transmit';
+        if (pttStatus) {
+          pttStatus.className = 'chip ok';
+          pttStatus.textContent = 'Ready';
+        }
+        if (data.status === 'blocked') {
+          updateRadioTestLiveState(true);
+        } else if (data.diagnostic) {
+          renderRadioTestDiagnostics(data.diagnostic);
+          if (data.checklist) {
+            renderRadioTestChecklist(data.checklist);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error('[Dashboard] Error stopping radio test PTT:', err);
+        if (label) label.textContent = 'HOLD TO TALK';
+        if (sublabel) sublabel.textContent = 'Press & hold to transmit';
+        if (pttStatus) {
+          pttStatus.className = 'chip bad';
+          pttStatus.textContent = 'Error';
+        }
+      });
+  }
+
+  function submitRadioTestText(text) {
+    const label = document.getElementById('radio-test-btn-label');
+    const sublabel = document.getElementById('radio-test-btn-sublabel');
+    const pttStatus = document.getElementById('radio-test-ptt-status');
+    const sendBtn = document.getElementById('radio-test-send-btn');
+
+    if (label) label.textContent = 'PROCESSING...';
+    if (sublabel) sublabel.textContent = 'Querying engineer';
+    if (pttStatus) {
+      pttStatus.className = 'chip';
+      pttStatus.textContent = 'Processing';
+    }
+    if (sendBtn) sendBtn.disabled = true;
+
+    const token = getToken();
+    const url = `/api/radio_test/submit_text?token=${encodeURIComponent(token)}`;
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (sendBtn) sendBtn.disabled = false;
+        if (label) label.textContent = 'HOLD TO TALK';
+        if (sublabel) sublabel.textContent = 'Press & hold to transmit';
+        if (pttStatus) {
+          pttStatus.className = 'chip ok';
+          pttStatus.textContent = 'Ready';
+        }
+        if (data.status === 'blocked') {
+          updateRadioTestLiveState(true);
+        } else if (data.diagnostic) {
+          renderRadioTestDiagnostics(data.diagnostic);
+          if (data.checklist) {
+            renderRadioTestChecklist(data.checklist);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error('[Dashboard] Error submitting typed text:', err);
+        if (sendBtn) sendBtn.disabled = false;
+        if (label) label.textContent = 'HOLD TO TALK';
+        if (sublabel) sublabel.textContent = 'Press & hold to transmit';
+      });
+  }
+
+  function startRadioTestMicPolling() {
+    stopRadioTestMicPolling();
+    const bar = document.getElementById('radio-test-level-bar');
+    const text = document.getElementById('radio-test-level-text');
+    const clipWarn = document.getElementById('radio-test-clipping-warning');
+
+    const poll = () => {
+      if (!isRadioTestRecording) return;
+      const token = getToken();
+      fetch(`/api/radio_test/mic/level?token=${encodeURIComponent(token)}`)
+        .then((res) => res.json())
+        .then((lvl) => {
+          if (!isRadioTestRecording) return;
+          const peakDb = typeof lvl.peak_db === 'number' ? lvl.peak_db : -100.0;
+          const clipping = !!lvl.clipping;
+
+          const pct = Math.max(0, Math.min(100, Math.round(((peakDb + 60) / 60) * 100)));
+          if (bar) bar.style.width = pct + '%';
+          if (text) text.textContent = `${peakDb.toFixed(1)} dB`;
+          if (clipWarn) clipWarn.classList.toggle('hidden', !clipping);
+        })
+        .catch(() => {});
+    };
+
+    radioTestMicMeterTimer = setInterval(poll, 70);
+  }
+
+  function stopRadioTestMicPolling() {
+    if (radioTestMicMeterTimer) {
+      clearInterval(radioTestMicMeterTimer);
+      radioTestMicMeterTimer = null;
+    }
+  }
+
+  function updateRadioTestLiveState(isLive) {
+    isRadioTestSessionLive = !!isLive;
+    const banner = document.getElementById('radio-test-live-warning');
+    const holdBtn = document.getElementById('radio-test-hold-btn');
+    const sendBtn = document.getElementById('radio-test-send-btn');
+    const textInput = document.getElementById('radio-test-text-input');
+    const pttStatus = document.getElementById('radio-test-ptt-status');
+    const label = document.getElementById('radio-test-btn-label');
+    const sublabel = document.getElementById('radio-test-btn-sublabel');
+
+    if (banner) {
+      banner.classList.toggle('hidden', !isRadioTestSessionLive);
+    }
+    if (holdBtn) {
+      holdBtn.disabled = isRadioTestSessionLive;
+      if (isRadioTestSessionLive) holdBtn.classList.add('disabled');
+      else holdBtn.classList.remove('disabled');
+    }
+    if (sendBtn) sendBtn.disabled = isRadioTestSessionLive;
+    if (textInput) textInput.disabled = isRadioTestSessionLive;
+
+    if (isRadioTestSessionLive) {
+      if (pttStatus) {
+        pttStatus.className = 'chip bad';
+        pttStatus.textContent = 'Session Live';
+      }
+      if (label) label.textContent = 'PTT DISABLED';
+      if (sublabel) sublabel.textContent = 'Live session running: use your wheel push-to-talk';
+    } else {
+      if (pttStatus && pttStatus.textContent === 'Session Live') {
+        pttStatus.className = 'chip ok';
+        pttStatus.textContent = 'Ready';
+      }
+      if (label && label.textContent === 'PTT DISABLED') {
+        label.textContent = 'HOLD TO TALK';
+        sublabel.textContent = 'Press & hold to transmit';
+      }
+    }
+  }
+
+  function handleRadioTestDemoModeEvent(data) {
+    const demoBanner = document.getElementById('radio-test-demo-banner');
+    const demoToggle = document.getElementById('radio-test-demo-toggle');
+    const enabled = !!data.demo_mode;
+
+    if (demoBanner) demoBanner.classList.toggle('hidden', !enabled);
+    if (demoToggle && demoToggle.checked !== enabled) demoToggle.checked = enabled;
+  }
+
+  function handleRadioTestDiagnosticEvent(data) {
+    if (data.diagnostic) {
+      renderRadioTestDiagnostics(data.diagnostic);
+    }
+    if (data.checklist) {
+      renderRadioTestChecklist(data.checklist);
+    }
+  }
+
+  function updateRadioTestFromSnapshot(data) {
+    if (!data) return;
+    if (typeof data.session_live === 'boolean') {
+      updateRadioTestLiveState(data.session_live);
+    }
+    if (typeof data.demo_mode === 'boolean') {
+      handleRadioTestDemoModeEvent({ demo_mode: data.demo_mode });
+    }
+    const joyBtn = document.getElementById('radio-test-joy-btn-name');
+    if (joyBtn && data.joystick_button !== undefined) {
+      joyBtn.textContent = data.joystick_button !== null ? `Button ${data.joystick_button}` : 'None configured';
+    }
+    if (data.latest_diagnostics) {
+      renderRadioTestDiagnostics(data.latest_diagnostics);
+    }
+    if (data.checklist) {
+      renderRadioTestChecklist(data.checklist);
+    }
+  }
+
+  function renderRadioTestDiagnostics(diag) {
+    if (!diag) return;
+
+    // Total turnaround
+    const chip = document.getElementById('radio-test-turnaround-chip');
+    if (chip && diag.total_turnaround_ms !== undefined) {
+      chip.textContent = `Total: ${diag.total_turnaround_ms} ms`;
+      chip.className = 'chip ' + (diag.total_turnaround_ms < 1500 ? 'ok' : 'warn');
+    }
+
+    const applyStep = (stepKey, stepData, customHeadTime) => {
+      const row = document.getElementById(`step-row-${stepKey}`);
+      const statusEl = document.getElementById(`step-status-${stepKey}`);
+      const timeEl = document.getElementById(`step-time-${stepKey}`);
+      const descEl = document.getElementById(`step-desc-${stepKey}`);
+
+      if (!row || !statusEl || !descEl || !stepData) return;
+
+      const ok = stepData.ok;
+      const status = stepData.status;
+
+      row.classList.remove('step-pass', 'step-fail', 'step-skipped');
+      if (status === 'skipped') {
+        row.classList.add('step-skipped');
+        statusEl.textContent = '—';
+        statusEl.className = 'step-status skip';
+      } else if (ok && status === 'pass') {
+        row.classList.add('step-pass');
+        statusEl.textContent = '✓';
+        statusEl.className = 'step-status ok';
+      } else {
+        row.classList.add('step-fail');
+        statusEl.textContent = '✗';
+        statusEl.className = 'step-status bad';
+      }
+
+      if (timeEl) {
+        timeEl.textContent = customHeadTime || '';
+      }
+
+      let desc = stepData.message || '';
+      if (stepKey === 'mic') {
+        const peakStr = typeof stepData.peak_db === 'number' ? `${stepData.peak_db.toFixed(1)} dB` : '';
+        desc = `[${stepData.device_name || 'Mic'}] Peak: ${peakStr}. ${stepData.message || ''}`;
+      } else if (stepKey === 'stt') {
+        if (stepData.skipped) {
+          desc = 'Typed question: bypassed STT to isolate microphone';
+        } else {
+          desc = `"${stepData.transcript || ''}" (${stepData.message || ''})`;
+        }
+      } else if (stepKey === 'routing') {
+        if (stepData.kind === 'deterministic') {
+          desc = `Intent: ${stepData.intent} (deterministic rule)`;
+        } else {
+          const fb = stepData.fallback ? ` [Fallback: ${stepData.fallback}]` : '';
+          desc = `AI Route: ${stepData.provider || 'AI'}${fb}`;
+        }
+      } else if (stepKey === 'reply') {
+        desc = `"${stepData.text || ''}"`;
+      } else if (stepKey === 'playback' && stepData.fallback_info) {
+        desc = `${stepData.message} (${stepData.fallback_info})`;
+      }
+
+      descEl.textContent = desc;
+    };
+
+    // Step 1: Mic
+    applyStep('mic', diag.mic);
+
+    // Step 2: STT
+    const sttTime = diag.stt?.duration_ms ? `${diag.stt.duration_ms} ms` : '';
+    applyStep('stt', diag.stt, sttTime);
+
+    // Step 3: Routing
+    applyStep('routing', diag.routing);
+
+    // Step 4: Reply
+    let replyTime = '';
+    if (diag.reply?.ttft_ms) {
+      replyTime = `TTFT: ${diag.reply.ttft_ms} ms | Total: ${diag.reply.total_ms || 0} ms`;
+    }
+    applyStep('reply', diag.reply, replyTime);
+
+    // Step 5: TTS
+    const ttsTime = diag.tts?.duration_ms ? `${diag.tts.duration_ms} ms` : '';
+    applyStep('tts', diag.tts, ttsTime);
+
+    // Step 6: Playback
+    applyStep('playback', diag.playback);
+  }
+
+  function renderRadioTestChecklist(checklist) {
+    if (!checklist || !Array.isArray(checklist)) return;
+    currentRadioTestChecklist = checklist;
+
+    const listEl = document.getElementById('radio-test-checklist-list');
+    const badgeEl = document.getElementById('radio-test-progress-badge');
+
+    const passedCount = checklist.filter((item) => item.passed).length;
+    const totalCount = checklist.length;
+
+    if (badgeEl) {
+      badgeEl.textContent = `${passedCount} / ${totalCount} Passed`;
+      badgeEl.className = 'chip ' + (passedCount === totalCount ? 'ok' : 'neutral');
+    }
+
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    checklist.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'checklist-item-row ' + (item.passed ? 'passed' : 'pending');
+
+      const statusBadge = item.passed
+        ? '<span class="chip ok" style="font-size:11px">✓ Passed</span>'
+        : '<span class="chip" style="font-size:11px;opacity:0.7">○ Incomplete</span>';
+
+      row.innerHTML = `
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px">
+            <span>${item.title}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:2px">
+            Expected: ${item.expected}
+          </div>
+        </div>
+        <div>${statusBadge}</div>
+      `;
+      listEl.appendChild(row);
+    });
+  }
+
   // --- Init on DOM Load ---
   window.addEventListener('DOMContentLoaded', () => {
     function safeRun(label, fn) {
@@ -7340,6 +7882,7 @@
     safeRun('initSetupsTab', initSetupsTab);
     safeRun('initTracksTab', initTracksTab);
     safeRun('initMinisectorSystem', initMinisectorSystem);
+    safeRun('initRadioTestBench', initRadioTestBench);
     safeRun('fetchPersonaSettings', fetchPersonaSettings);
     safeRun('fetchPortSettings', fetchPortSettings);
     safeRun('fetchAudioCacheStats', fetchAudioCacheStats);
